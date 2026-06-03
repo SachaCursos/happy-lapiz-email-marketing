@@ -8,7 +8,8 @@
       "Bash(git commit *)",
       "Bash(git push *)",
       "Bash(pip install *)",
-      "Bash(set PYTHONIOENCODING=utf-8)"
+      "Bash(set PYTHONIOENCODING=utf-8)",
+      "mcp__f7901b9a-5cc1-4063-ae3c-3bdfee4222a6__klaviyo_list_email_templates"
     ]
   }
 }
