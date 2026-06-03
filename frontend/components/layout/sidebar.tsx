@@ -63,7 +63,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             <span className="text-white font-bold text-sm">H</span>
           </div>
           <div>
-            <p className="text-white font-semibold text-sm">HotBoat</p>
+            <p className="text-white font-semibold text-sm">Happy Lápiz</p>
             <p className="text-gray-500 text-xs">Email Marketing</p>
           </div>
         </div>

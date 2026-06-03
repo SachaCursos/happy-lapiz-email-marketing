@@ -573,14 +573,14 @@ function ObjectsTab({ contactId }: { contactId: number }) {
         <Anchor size={48} className="text-gray-400" />
       </div>
       <p className="text-sm font-medium text-gray-600">Este cliente no tiene reservas registradas</p>
-      <p className="text-xs text-gray-400 mt-1">Las reservas de HotBoat aparecerán aquí automáticamente al sincronizar</p>
+      <p className="text-xs text-gray-400 mt-1">Los pedidos de Happy Lápiz aparecerán aquí automáticamente al sincronizar</p>
     </div>
   );
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between mb-1">
-        <p className="text-xs text-gray-400">{bookings.length} reserva{bookings.length !== 1 ? "s" : ""} encontradas en HotBoat</p>
+        <p className="text-xs text-gray-400">{bookings.length} pedido{bookings.length !== 1 ? "s" : ""} encontrados en Shopify</p>
         <button
           onClick={() => {
             const anyOpen = bookings.some((_, i) => expanded[i]);

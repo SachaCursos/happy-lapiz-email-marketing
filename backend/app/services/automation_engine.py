@@ -159,7 +159,7 @@ def _check_abandoned_booking(auto: Automation, session: Session) -> None:
         _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
 
 
-_BATCH_ORIGINS = {"Formulario T&C", "Sincronización HotBoat", ""}
+_BATCH_ORIGINS = {"Formulario T&C", "Sincronización Shopify", "importación CSV", ""}
 
 
 def _check_welcome(auto: Automation, session: Session) -> None:

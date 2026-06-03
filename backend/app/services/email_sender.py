@@ -28,7 +28,7 @@ RATE_DELAY = 0.25  # 4 emails/segundo — límite de Resend es 5/segundo
 _FOOTER = """<div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
 text-align:center;font-size:12px;color:#9ca3af;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-Recibiste este correo porque eres cliente de <strong style="color:#6b7280">HotBoat</strong>.
+Recibiste este correo porque eres cliente de <strong style="color:#6b7280">Happy Lápiz</strong>.
 &nbsp;&middot;&nbsp;
 <a href="{url}" style="color:#9ca3af;text-decoration:underline;">Cancelar suscripción</a>
 </div>"""
