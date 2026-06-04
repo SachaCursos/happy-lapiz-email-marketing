@@ -53,10 +53,13 @@ def _send_email(
 
     vars_ = {
         "nombre": _fmt_nombre(contact.name, contact.email),
+        "first_name": _fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
         "email": contact.email,
-        "veces_hotboat": contact.veces_hotboat,
+        "orders_count": contact.orders_count,
         "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
         "ticket_medio": contact.ticket_medio or 0,
+        "total_spent": contact.total_spent or 0,
+        "shipping_city": contact.shipping_city or "",
         **(extra_vars or {}),
     }
     html = _inject_footer(JTemplate(tpl.html_content).render(**vars_), contact.email)

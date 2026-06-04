@@ -318,7 +318,7 @@ def import_csv(
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
 ):
-    """Importa contactos desde CSV. Columnas requeridas: email. Opcionales: name, phone, language, origin_utm."""
+    """Importa contactos desde CSV. Columnas requeridas: email. Opcionales: name, phone, origin_utm."""
     content = file.file.read().decode("utf-8")
     reader = csv.DictReader(io.StringIO(content))
     created = 0
@@ -336,7 +336,6 @@ def import_csv(
             email=email,
             name=row.get("name", "").strip() or None,
             phone=row.get("phone", "").strip() or None,
-            language=row.get("language", "").strip() or None,
             origin_utm=row.get("origin_utm", "").strip() or None,
             opted_in=True,
             opted_in_at=datetime.utcnow(),

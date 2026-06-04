@@ -5,19 +5,26 @@ from app.models.contact import Contact
 
 # Campos permitidos en condiciones de segmento
 FIELD_MAP = {
-    "id":            Contact.id,
-    "email":          Contact.email,
-    "language":       Contact.language,
-    "origin_utm":     Contact.origin_utm,
-    "opted_in":       Contact.opted_in,
-    "veces_hotboat":  Contact.veces_hotboat,
-    "ultima_visita":  Contact.ultima_visita,
-    "ha_alojamiento": Contact.ha_alojamiento,
-    "ticket_medio":   Contact.ticket_medio,
-    "name":           Contact.name,
+    "id":               Contact.id,
+    "email":            Contact.email,
+    "origin_utm":       Contact.origin_utm,
+    "opted_in":         Contact.opted_in,
+    "ultima_visita":    Contact.ultima_visita,
+    "ticket_medio":     Contact.ticket_medio,
+    "name":             Contact.name,
+    "location":         Contact.location,
+    "shipping_city":    Contact.shipping_city,
+    "shipping_province":Contact.shipping_province,
+    # Ecommerce
+    "orders_count":     Contact.orders_count,
+    "total_spent":      Contact.total_spent,
+    "last_purchase":    Contact.last_purchase,
+    # Klaviyo
+    "accepts_marketing":Contact.accepts_marketing,
+    "last_event_date":  Contact.last_event_date,
 }
 
-STRING_FIELDS = {"email", "language", "origin_utm", "name"}
+STRING_FIELDS = {"email", "origin_utm", "name", "location", "shipping_city", "shipping_province"}
 
 OPS = {
     "eq":       lambda col, v: col == v,
