@@ -58,6 +58,36 @@ def recent_campaigns(session: Session = Depends(get_session), _: User = Depends(
     return result
 
 
+@router.get("/klaviyo-campaigns")
+def klaviyo_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+    rows = session.exec(text("""
+        SELECT id, name, status, send_time, subject, recipients, delivered,
+               open_rate, opens_unique, click_rate, clicks_unique,
+               conversion_rate, conversions, conversion_value,
+               average_order_value, revenue_per_recipient, audience
+        FROM klaviyo_campaigns
+        ORDER BY send_time DESC NULLS LAST
+    """)).all()
+    return [
+        {
+            "id": r[0], "name": r[1], "status": r[2],
+            "send_time": r[3].isoformat() if r[3] else None,
+            "subject": r[4], "recipients": r[5], "delivered": r[6],
+            "open_rate": float(r[7]) if r[7] else None,
+            "opens_unique": r[8],
+            "click_rate": float(r[9]) if r[9] else None,
+            "clicks_unique": r[10],
+            "conversion_rate": float(r[11]) if r[11] else None,
+            "conversions": r[12],
+            "conversion_value": float(r[13]) if r[13] else None,
+            "average_order_value": float(r[14]) if r[14] else None,
+            "revenue_per_recipient": float(r[15]) if r[15] else None,
+            "audience": r[16],
+        }
+        for r in rows
+    ]
+
+
 @router.get("/asuntos")
 def asuntos(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
     rows = session.exec(text("""

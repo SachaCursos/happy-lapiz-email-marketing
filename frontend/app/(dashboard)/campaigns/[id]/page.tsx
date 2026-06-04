@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { campaignsApi, contactsApi, segmentsApi, templatesApi } from "@/lib/api";
-import { Campaign, CampaignStats, Segment, Template } from "@/lib/types";
-import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Calendar, UserMinus } from "lucide-react";
+import { Campaign, CampaignStats, CampaignConversions, Segment, Template } from "@/lib/types";
+import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Calendar, UserMinus, BarChart2, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
 
@@ -71,6 +71,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
+  const [activeTab, setActiveTab] = useState<"overview" | "analytics" | "recipients">("overview");
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<{
     name: string; subject: string; preview_text: string;
@@ -145,6 +146,13 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     enabled: sends.length > 0 || campaign?.status === "sent" || campaign?.status === "sending",
   });
 
+  const { data: conversions } = useQuery<CampaignConversions>({
+    queryKey: ["campaign-conversions", id],
+    queryFn: () => campaignsApi.conversions(id, 90).then((r) => r.data),
+    enabled: campaign?.status === "sent",
+    staleTime: 15 * 60_000,
+  });
+
   const failedCount = sends.filter(isFailed).length;
 
   const { data: progress } = useQuery<SendProgress>({
@@ -191,12 +199,12 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     : 0;
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-8 max-w-4xl">
       <Link href="/campaigns" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 mb-6">
         <ArrowLeft size={15} /> Volver a campañas
       </Link>
 
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex items-start justify-between mb-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{campaign.name}</h1>
           <p className="text-gray-500 text-sm mt-1">{campaign.subject}</p>
@@ -228,6 +236,99 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
           </span>
         </div>
       </div>
+
+      {/* ── Tabs ─────────────────────────────────────────────────────────── */}
+      <div className="flex border-b border-gray-200 mb-6 gap-0">
+        {[
+          { key: "overview", label: "Resumen", icon: Mail },
+          { key: "analytics", label: "Análisis", icon: BarChart2 },
+          { key: "recipients", label: "Destinatarios", icon: Users },
+        ].map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setActiveTab(key as typeof activeTab)}
+            className={`flex items-center gap-1.5 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              activeTab === key ? "border-brand-600 text-brand-600" : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}>
+            <Icon size={13} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Analytics tab ────────────────────────────────────────────────── */}
+      {activeTab === "analytics" && (
+        <div className="space-y-5">
+          {/* KPIs */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: "Enviados", value: stats?.total?.toLocaleString("es-CL") ?? "—", icon: Send, color: "text-gray-900" },
+              { label: "Open rate", value: stats ? `${stats.open_rate.toFixed(1)}%` : "—", icon: Mail, color: "text-brand-600" },
+              { label: "Click rate", value: stats ? `${stats.click_rate.toFixed(2)}%` : "—", icon: MousePointer, color: "text-indigo-600" },
+              { label: "Bounce rate", value: stats ? `${stats.bounce_rate.toFixed(2)}%` : "—", icon: AlertTriangle, color: "text-red-500" },
+            ].map(({ label, value, icon: Icon, color }) => (
+              <div key={label} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-1"><Icon size={13} className="text-gray-400" /><p className="text-xs text-gray-500">{label}</p></div>
+                <p className={`text-2xl font-bold ${color}`}>{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Placed Order */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <ShoppingCart size={16} className="text-green-600" />
+              <p className="font-semibold text-gray-800">Placed Order (90 días)</p>
+            </div>
+            {conversions ? (
+              <div className="grid grid-cols-3 gap-6">
+                <div>
+                  <p className="text-3xl font-bold text-green-600">${Math.round(conversions.revenue).toLocaleString("es-CL")}</p>
+                  <p className="text-xs text-gray-400 mt-1">Revenue atribuido</p>
+                </div>
+                <div>
+                  <p className="text-3xl font-bold text-gray-900">{conversions.bookings}</p>
+                  <p className="text-xs text-gray-400 mt-1">Pedidos generados</p>
+                </div>
+                <div>
+                  <p className="text-3xl font-bold text-gray-900">{conversions.converted_contacts}</p>
+                  <p className="text-xs text-gray-400 mt-1">Contactos convertidos</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">
+                {campaign.status === "sent" ? "Calculando conversiones..." : "Disponible después del envío"}
+              </p>
+            )}
+          </div>
+
+          {/* Funnel */}
+          {stats && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <p className="font-semibold text-gray-800 mb-4">Embudo de conversión</p>
+              <div className="space-y-3">
+                {[
+                  { label: "Entregados", value: stats.delivered, color: "bg-gray-400" },
+                  { label: "Abiertos", value: stats.opened, color: "bg-brand-500" },
+                  { label: "Clics", value: stats.clicked, color: "bg-indigo-500" },
+                  { label: "Pedidos", value: conversions?.bookings ?? 0, color: "bg-green-500" },
+                ].map(({ label, value, color }) => (
+                  <div key={label}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-gray-600">{label}</span>
+                      <span className="font-semibold">{value.toLocaleString("es-CL")}
+                        <span className="text-gray-400 font-normal text-xs ml-1">
+                          ({stats.total > 0 ? ((value / stats.total) * 100).toFixed(1) : "0"}%)
+                        </span>
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full">
+                      <div className={`h-full ${color} rounded-full`} style={{ width: `${stats.total > 0 ? (value / stats.total) * 100 : 0}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Edit panel ──────────────────────────────────────────────────── */}
       {editing && editForm && (
@@ -407,8 +508,8 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
         </div>
       )}
 
-      {/* ── Estadísticas ─────────────────────────────────────────────────── */}
-      {stats && (
+      {/* ── Overview + Recipients tabs content ──────────────────────────── */}
+      {(activeTab === "overview" || activeTab === "recipients") && stats && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
           <h2 className="font-semibold text-gray-900 mb-5">Estadísticas</h2>
 
