@@ -1,16 +1,30 @@
 """
 Recibe webhooks de Shopify y dispara automatizaciones de email.
 
-Eventos manejados:
-  checkouts/create  → guarda carrito pendiente
-  checkouts/update  → actualiza carrito (puede marcar como recuperado)
-  orders/create     → Placed Order → dispara automatización post-compra
-  orders/fulfilled  → Fulfilled Order → dispara automatización envío
-  orders/cancelled  → Cancelled Order
-  orders/updated    → actualiza estado
+Triggers cubiertos (espejo de Klaviyo):
+  Desde Shopify:
+    checkout_started       checkouts/create
+    abandoned_cart         checkouts/create (sin orden tras X horas)
+    placed_order           orders/create
+    ordered_product        orders/create (por cada line_item)
+    fulfilled_order        orders/fulfilled
+    fulfilled_partial_order orders/partially_fulfilled
+    confirmed_shipment     orders/fulfilled con tracking_number
+    delivered_shipment     orders/updated con fulfillment status=delivered
+    cancelled_order        orders/cancelled
+    refunded_order         refunds/create
+    added_to_cart          carts/create / carts/update
 
-El motor de automatización verifica cada 15 min los carritos abandonados (sin
-orden asociada) y dispara el flujo correspondiente.
+  Internos (no-webhook):
+    subscribed_to_email_marketing  → welcome flow
+    subscribed_to_list             → added to segment
+    unsubscribed_from_email_marketing → opt-out
+    coupon_assigned                → coupon_sends insert
+    coupon_used                    → orders/create con discount_codes
+
+  Tracking web (JS pixel → /api/track):
+    viewed_product         POST /api/track {event: viewed_product}
+    active_on_site         POST /api/track {event: active_on_site}
 """
 import hashlib
 import hmac
@@ -19,56 +33,30 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from sqlalchemy import text
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.database import get_session
 from app.models.contact import Contact
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Map Shopify topic → our trigger name
-TOPIC_TRIGGER_MAP = {
-    "orders/create":    "placed_order",
-    "orders/fulfilled": "fulfilled_order",
-    "orders/cancelled": "cancelled_order",
-}
-
 
 def _verify_shopify(body: bytes, hmac_header: str) -> bool:
-    secret = settings.SHOPIFY_WEBHOOK_SECRET if hasattr(settings, "SHOPIFY_WEBHOOK_SECRET") else ""
+    secret = getattr(settings, "SHOPIFY_WEBHOOK_SECRET", "")
     if not secret:
         return True
-    digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
     import base64
-    computed = base64.b64encode(digest).decode()
-    return hmac.compare_digest(computed, hmac_header)
+    digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    return hmac.compare_digest(base64.b64encode(digest).decode(), hmac_header)
 
 
-def _get_or_create_contact(session: Session, email: str, payload: dict) -> Contact | None:
-    if not email:
-        return None
-    email = email.lower().strip()
-    contact = session.exec(select(Contact).where(Contact.email == email)).first()
-    if not contact:
-        shipping = payload.get("shipping_address") or payload.get("customer", {}).get("default_address") or {}
-        contact = Contact(
-            email=email,
-            name=(
-                (payload.get("customer", {}).get("first_name", "") + " " +
-                 payload.get("customer", {}).get("last_name", "")).strip() or None
-            ),
-            phone=payload.get("customer", {}).get("phone"),
-            shipping_city=shipping.get("city"),
-            shipping_province=shipping.get("province"),
-            opted_in=True,
-            opted_in_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        )
-        session.add(contact)
-        session.flush()
-    return contact
+def _log_event(cur, topic: str, shopify_id: str, email: str, payload: dict, now: datetime, trigger: str = None):
+    cur.execute("""
+        INSERT INTO shopify_events (topic, shopify_id, email, payload, automation_triggered, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (topic, shopify_id, email or None, json.dumps(payload), trigger, now))
 
 
 @router.post("/webhooks")
@@ -78,10 +66,8 @@ async def shopify_webhook(
     x_shopify_hmac_sha256: str = Header(default="", alias="x-shopify-hmac-sha256"),
 ):
     body = await request.body()
-
     if not _verify_shopify(body, x_shopify_hmac_sha256):
         raise HTTPException(status_code=401, detail="HMAC inválido")
-
     try:
         payload = json.loads(body)
     except Exception:
@@ -90,62 +76,55 @@ async def shopify_webhook(
     topic = x_shopify_topic
     logger.info("Shopify webhook: %s", topic)
 
-    # Use a plain psycopg2 connection for raw inserts (faster, no model mapping)
     import psycopg2
     conn = psycopg2.connect(settings.DATABASE_URL)
     conn.autocommit = True
     cur = conn.cursor()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     email = (
         payload.get("email") or
-        payload.get("customer", {}).get("email") or ""
+        payload.get("customer", {}).get("email") or
+        payload.get("contact_email") or ""
     ).lower().strip()
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # ── Cart events → Added to Cart ──────────────────────────────────────────
+    if topic in ("carts/create", "carts/update"):
+        cart_id = str(payload.get("id", payload.get("token", "")))
+        _log_event(cur, topic, cart_id, email, payload, now, "added_to_cart")
 
-    # ── Checkout created/updated ─────────────────────────────────────────────
-    if topic in ("checkouts/create", "checkouts/update"):
-        token = payload.get("token") or payload.get("id") or ""
-        total = payload.get("total_price") or payload.get("subtotal_price") or 0
+    # ── Checkout → Checkout Started + future Abandoned Cart ──────────────────
+    elif topic in ("checkouts/create", "checkouts/update"):
+        token = str(payload.get("token") or payload.get("id") or "")
+        total = float(payload.get("total_price") or payload.get("subtotal_price") or 0)
         items = payload.get("line_items", [])
-
-        # Check if this became an order (completed_at set)
         completed = bool(payload.get("completed_at") or payload.get("order_id"))
 
         cur.execute("""
             INSERT INTO shopify_checkouts (checkout_token, email, cart_total, line_items, recovered, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (checkout_token) DO UPDATE SET
-                email = EXCLUDED.email,
-                cart_total = EXCLUDED.cart_total,
+                email = EXCLUDED.email, cart_total = EXCLUDED.cart_total,
                 line_items = EXCLUDED.line_items,
-                recovered = EXCLUDED.recovered OR %s,
+                recovered = shopify_checkouts.recovered OR %s,
                 updated_at = EXCLUDED.updated_at
-        """, (str(token), email or None, float(total), json.dumps(items), completed, now, completed))
+        """, (token, email or None, total, json.dumps(items), completed, now, completed))
 
-        # Log event
-        cur.execute("""
-            INSERT INTO shopify_events (topic, shopify_id, email, payload, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (topic, str(token), email or None, json.dumps(payload), now))
+        _log_event(cur, topic, token, email, payload, now, "checkout_started")
 
-    # ── Order created (Placed Order) ─────────────────────────────────────────
+    # ── Order created → Placed Order + Ordered Product + Coupon Used ─────────
     elif topic == "orders/create":
         order_id = str(payload.get("id", ""))
         total = float(payload.get("total_price", 0))
         items = payload.get("line_items", [])
+        discount_codes = payload.get("discount_codes", [])
 
-        # Mark any matching checkout as recovered
+        # Mark checkout as recovered
         if email:
             cur.execute("""
                 UPDATE shopify_checkouts SET recovered = TRUE, updated_at = %s
                 WHERE email = %s AND recovered = FALSE
             """, (now, email))
-
-        cur.execute("""
-            INSERT INTO shopify_events (topic, shopify_id, email, payload, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (topic, order_id, email or None, json.dumps(payload), now))
 
         # Update contact stats
         if email:
@@ -159,38 +138,101 @@ async def shopify_webhook(
                 WHERE email = %s
             """, (total, now.date(), total, now, email))
 
-        _trigger_automation(cur, "placed_order", email, payload, now)
+        # placed_order trigger
+        _log_event(cur, topic, order_id, email, payload, now, "placed_order")
 
-    # ── Order fulfilled ──────────────────────────────────────────────────────
+        # ordered_product: one event per line item
+        for item in items:
+            _log_event(cur, "ordered_product", order_id,
+                       email, {**payload, "_item": item}, now, "ordered_product")
+
+        # coupon_used: if discount codes present
+        for dc in discount_codes:
+            code = dc.get("code", "")
+            if code:
+                # Mark coupon as used in our system
+                cur.execute("""
+                    UPDATE coupon_sends SET used = TRUE WHERE code = %s
+                """, (code,))
+                _log_event(cur, "coupon_used", order_id, email,
+                           {**payload, "_coupon": code}, now, "coupon_used")
+
+    # ── Order fulfilled ───────────────────────────────────────────────────────
     elif topic == "orders/fulfilled":
         order_id = str(payload.get("id", ""))
-        cur.execute("""
-            INSERT INTO shopify_events (topic, shopify_id, email, payload, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (topic, order_id, email or None, json.dumps(payload), now))
-        _trigger_automation(cur, "fulfilled_order", email, payload, now)
+        fulfillments = payload.get("fulfillments", [])
+        has_tracking = any(f.get("tracking_number") for f in fulfillments)
+        _log_event(cur, topic, order_id, email, payload, now, "fulfilled_order")
+        if has_tracking:
+            _log_event(cur, "confirmed_shipment", order_id, email, payload, now, "confirmed_shipment")
 
-    # ── Order cancelled ──────────────────────────────────────────────────────
+    # ── Partial fulfillment ───────────────────────────────────────────────────
+    elif topic == "orders/partially_fulfilled":
+        order_id = str(payload.get("id", ""))
+        _log_event(cur, topic, order_id, email, payload, now, "fulfilled_partial_order")
+
+    # ── Order updated → check for delivered shipment ──────────────────────────
+    elif topic == "orders/updated":
+        order_id = str(payload.get("id", ""))
+        for f in payload.get("fulfillments", []):
+            if f.get("shipment_status") == "delivered":
+                _log_event(cur, "delivered_shipment", order_id, email, payload, now, "delivered_shipment")
+                break
+        # marked_out_for_delivery
+        for f in payload.get("fulfillments", []):
+            if f.get("shipment_status") in ("out_for_delivery", "in_transit"):
+                _log_event(cur, "marked_out_for_delivery", order_id, email, payload, now, "marked_out_for_delivery")
+                break
+
+    # ── Order cancelled ───────────────────────────────────────────────────────
     elif topic == "orders/cancelled":
         order_id = str(payload.get("id", ""))
-        cur.execute("""
-            INSERT INTO shopify_events (topic, shopify_id, email, payload, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (topic, order_id, email or None, json.dumps(payload), now))
-        _trigger_automation(cur, "cancelled_order", email, payload, now)
+        _log_event(cur, topic, order_id, email, payload, now, "cancelled_order")
+
+    # ── Refund ────────────────────────────────────────────────────────────────
+    elif topic == "refunds/create":
+        order_id = str(payload.get("order_id", ""))
+        _log_event(cur, topic, order_id, email, payload, now, "refunded_order")
 
     cur.close()
     conn.close()
     return {"ok": True, "topic": topic}
 
 
-def _trigger_automation(cur, trigger_type: str, email: str, payload: dict, now: datetime):
-    """Marca el evento para que el motor de automatización lo procese."""
-    if not email:
-        return
-    cur.execute("""
-        UPDATE shopify_events SET automation_triggered = %s
-        WHERE topic = (
-            SELECT topic FROM shopify_events WHERE email = %s ORDER BY created_at DESC LIMIT 1
-        ) AND email = %s
-    """, (trigger_type, email, email))
+# ── Web tracking pixel ────────────────────────────────────────────────────────
+class TrackEvent(BaseModel):
+    event: str           # viewed_product | active_on_site | added_to_cart
+    email: str = ""
+    product_id: str = ""
+    product_title: str = ""
+    url: str = ""
+    extra: dict = {}
+
+
+@router.post("/track")
+async def track_event(body: TrackEvent):
+    """Recibe eventos de tracking desde el JS pixel en happylapiz.cl."""
+    allowed = {"viewed_product", "active_on_site", "added_to_cart", "subscribed_to_back_in_stock"}
+    if body.event not in allowed:
+        raise HTTPException(status_code=400, detail=f"Evento no permitido: {body.event}")
+
+    import psycopg2
+    conn = psycopg2.connect(settings.DATABASE_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    email = body.email.lower().strip() if body.email else ""
+
+    # Update last_event_date if contact exists
+    if email and body.event == "active_on_site":
+        cur.execute("""
+            UPDATE contacts SET ultima_visita_web = %s, updated_at = %s WHERE email = %s
+        """, (now, now, email))
+
+    _log_event(cur, body.event, body.product_id or "web", email,
+               {"url": body.url, "product_title": body.product_title, **body.extra}, now, body.event)
+
+    cur.close()
+    conn.close()
+    return {"ok": True}

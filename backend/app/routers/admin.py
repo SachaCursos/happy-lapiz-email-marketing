@@ -294,12 +294,17 @@ def register_shopify_webhooks(current_user: User = Depends(require_admin)):
     headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
 
     topics = [
+        # Shopify order lifecycle
         "checkouts/create",
         "checkouts/update",
+        "carts/create",
+        "carts/update",
         "orders/create",
         "orders/fulfilled",
+        "orders/partially_fulfilled",
         "orders/cancelled",
         "orders/updated",
+        "refunds/create",
     ]
 
     results = []

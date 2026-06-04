@@ -347,20 +347,38 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
         session.commit()
 
 
-def _check_placed_order(auto, session):    _check_shopify_event(auto, session, "placed_order")
-def _check_fulfilled_order(auto, session): _check_shopify_event(auto, session, "fulfilled_order")
-def _check_cancelled_order(auto, session): _check_shopify_event(auto, session, "cancelled_order")
+def _make_shopify_handler(trigger_type: str):
+    def handler(auto, session): _check_shopify_event(auto, session, trigger_type)
+    handler.__name__ = f"_check_{trigger_type}"
+    return handler
 
 
 HANDLERS = {
-    "abandoned_booking":  _check_abandoned_booking,
-    "abandoned_cart":     _check_abandoned_cart,
-    "placed_order":       _check_placed_order,
-    "fulfilled_order":    _check_fulfilled_order,
-    "cancelled_order":    _check_cancelled_order,
-    "welcome":            _check_welcome,
-    "post_visit":         _check_post_visit,
-    "reactivation":       _check_reactivation,
+    # Shopify order lifecycle
+    "checkout_started":         _make_shopify_handler("checkout_started"),
+    "abandoned_cart":           _check_abandoned_cart,
+    "placed_order":             _make_shopify_handler("placed_order"),
+    "ordered_product":          _make_shopify_handler("ordered_product"),
+    "fulfilled_order":          _make_shopify_handler("fulfilled_order"),
+    "fulfilled_partial_order":  _make_shopify_handler("fulfilled_partial_order"),
+    "confirmed_shipment":       _make_shopify_handler("confirmed_shipment"),
+    "delivered_shipment":       _make_shopify_handler("delivered_shipment"),
+    "marked_out_for_delivery":  _make_shopify_handler("marked_out_for_delivery"),
+    "cancelled_order":          _make_shopify_handler("cancelled_order"),
+    "refunded_order":           _make_shopify_handler("refunded_order"),
+    "added_to_cart":            _make_shopify_handler("added_to_cart"),
+    # Klaviyo-style internal
+    "coupon_assigned":          _make_shopify_handler("coupon_assigned"),
+    "coupon_used":              _make_shopify_handler("coupon_used"),
+    "subscribed_to_back_in_stock": _make_shopify_handler("subscribed_to_back_in_stock"),
+    # Web tracking
+    "viewed_product":           _make_shopify_handler("viewed_product"),
+    "active_on_site":           _make_shopify_handler("active_on_site"),
+    # Internal
+    "welcome":                  _check_welcome,
+    "post_visit":               _check_post_visit,
+    "reactivation":             _check_reactivation,
+    "abandoned_booking":        _check_abandoned_booking,
 }
 
 

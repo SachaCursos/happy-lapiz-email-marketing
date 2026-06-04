@@ -9,57 +9,31 @@ import { ArrowLeft, Info } from "lucide-react";
 import Link from "next/link";
 
 const TRIGGERS: { value: AutomationTrigger; label: string; description: string; badge: string; fields: JSX.Element }[] = [
-  // ── Shopify triggers ──────────────────────────────────────────────────────
-  {
-    value: "abandoned_cart",
-    label: "Carrito abandonado",
-    badge: "Shopify",
-    description: "Se dispara cuando alguien inició el checkout en Shopify pero no completó la compra. Ideal para recuperar ventas. El email se envía 1 hora después (configurable).",
-    fields: <></>,
-  },
-  {
-    value: "placed_order",
-    label: "Compra realizada (Placed Order)",
-    badge: "Shopify",
-    description: "Se dispara cuando alguien completa una compra en Shopify. Perfecto para emails de confirmación, gracias o cross-sell.",
-    fields: <></>,
-  },
-  {
-    value: "fulfilled_order",
-    label: "Pedido enviado (Fulfilled Order)",
-    badge: "Shopify",
-    description: "Se dispara cuando el pedido pasa a estado fulfillado (enviado). Úsalo para informar el número de seguimiento y generar expectativa.",
-    fields: <></>,
-  },
-  {
-    value: "cancelled_order",
-    label: "Pedido cancelado (Cancelled Order)",
-    badge: "Shopify",
-    description: "Se dispara cuando un pedido es cancelado en Shopify. Útil para retener al cliente con una oferta o entender el motivo.",
-    fields: <></>,
-  },
-  // ── Internal triggers ─────────────────────────────────────────────────────
-  {
-    value: "welcome",
-    label: "Bienvenida a nuevo suscriptor",
-    badge: "Interno",
-    description: "Se dispara cuando se añade un nuevo contacto con opt-in activo (via formulario o importación). Perfecto para series de bienvenida.",
-    fields: <></>,
-  },
-  {
-    value: "reactivation",
-    label: "Reactivación de cliente inactivo",
-    badge: "Interno",
-    description: "Se dispara cuando un cliente no ha comprado en N días. Incluye cooldown para no repetirlo más de una vez por período.",
-    fields: <></>,
-  },
-  {
-    value: "post_visit",
-    label: "Seguimiento post-compra (días)",
-    badge: "Interno",
-    description: "Se dispara N días después de la última compra registrada. Úsalo para pedir reseñas, ofrecer complementos o hacer cross-sell.",
-    fields: <></>,
-  },
+  // ── Shopify: carrito y checkout ───────────────────────────────────────────
+  { value: "abandoned_cart",           badge: "Shopify", label: "Carrito abandonado",                   description: "Checkout iniciado sin completar compra. Email se envía 1h después.", fields: <></> },
+  { value: "checkout_started",         badge: "Shopify", label: "Checkout iniciado",                    description: "Alguien comenzó el proceso de pago en Shopify.", fields: <></> },
+  { value: "added_to_cart",            badge: "Shopify", label: "Producto agregado al carrito",          description: "Alguien agregó un producto al carrito (sin necesariamente pagar).", fields: <></> },
+  // ── Shopify: órdenes ─────────────────────────────────────────────────────
+  { value: "placed_order",             badge: "Shopify", label: "Compra realizada (Placed Order)",       description: "Cliente completó una compra. Para gracias, confirmación o cross-sell.", fields: <></> },
+  { value: "ordered_product",          badge: "Shopify", label: "Producto comprado (Ordered Product)",   description: "Se dispara por cada producto dentro de una orden.", fields: <></> },
+  { value: "fulfilled_order",          badge: "Shopify", label: "Pedido enviado (Fulfilled Order)",      description: "El pedido fue procesado y enviado completamente.", fields: <></> },
+  { value: "fulfilled_partial_order",  badge: "Shopify", label: "Envío parcial",                        description: "Parte del pedido fue enviada (fulfillment parcial).", fields: <></> },
+  { value: "confirmed_shipment",       badge: "Shopify", label: "Envío confirmado con tracking",         description: "El fulfillment incluye un número de seguimiento.", fields: <></> },
+  { value: "delivered_shipment",       badge: "Shopify", label: "Pedido entregado",                     description: "El transportista marcó el paquete como entregado.", fields: <></> },
+  { value: "marked_out_for_delivery",  badge: "Shopify", label: "En camino (Out for Delivery)",          description: "El paquete está en reparto en este momento.", fields: <></> },
+  { value: "cancelled_order",          badge: "Shopify", label: "Pedido cancelado",                     description: "Una orden fue cancelada en Shopify.", fields: <></> },
+  { value: "refunded_order",           badge: "Shopify", label: "Pedido reembolsado",                   description: "Se procesó un reembolso. Útil para retener o pedir feedback.", fields: <></> },
+  // ── Cupones ──────────────────────────────────────────────────────────────
+  { value: "coupon_assigned",          badge: "Cupón",   label: "Cupón asignado",                       description: "Se generó un cupón dinámico para el contacto.", fields: <></> },
+  { value: "coupon_used",              badge: "Cupón",   label: "Cupón usado",                          description: "El cliente usó un código de descuento al pagar.", fields: <></> },
+  // ── Web tracking ─────────────────────────────────────────────────────────
+  { value: "viewed_product",           badge: "Web",     label: "Producto visto",                       description: "El contacto vio un producto en happylapiz.cl (requiere pixel JS).", fields: <></> },
+  { value: "active_on_site",           badge: "Web",     label: "Activo en el sitio",                   description: "El contacto estuvo activo en happylapiz.cl recientemente.", fields: <></> },
+  { value: "subscribed_to_back_in_stock", badge: "Web",  label: "Alerta de stock disponible",           description: "El cliente se suscribió a notificación cuando un producto vuelva a estar disponible.", fields: <></> },
+  // ── Internos ─────────────────────────────────────────────────────────────
+  { value: "welcome",                  badge: "Interno", label: "Bienvenida (nuevo suscriptor)",         description: "Nuevo contacto con opt-in activo. Para series de bienvenida.", fields: <></> },
+  { value: "reactivation",             badge: "Interno", label: "Reactivación (cliente inactivo)",       description: "Sin compra en N días. Incluye cooldown para no repetir.", fields: <></> },
+  { value: "post_visit",               badge: "Interno", label: "Seguimiento post-compra",               description: "N días después de la última compra. Para reseñas o cross-sell.", fields: <></> },
 ];
 
 const TRIGGER_MAP = Object.fromEntries(TRIGGERS.map((t) => [t.value, t]));
