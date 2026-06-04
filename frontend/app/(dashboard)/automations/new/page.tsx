@@ -27,8 +27,8 @@ const TRIGGERS: { value: AutomationTrigger; label: string; description: string; 
   { value: "coupon_assigned",          badge: "Cupón",   label: "Cupón asignado",                       description: "Se generó un cupón dinámico para el contacto.", fields: <></> },
   { value: "coupon_used",              badge: "Cupón",   label: "Cupón usado",                          description: "El cliente usó un código de descuento al pagar.", fields: <></> },
   // ── Web tracking ─────────────────────────────────────────────────────────
-  { value: "viewed_product",           badge: "Web",     label: "Producto visto",                       description: "El contacto vio un producto en happylapiz.cl (requiere pixel JS).", fields: <></> },
-  { value: "active_on_site",           badge: "Web",     label: "Activo en el sitio",                   description: "El contacto estuvo activo en happylapiz.cl recientemente.", fields: <></> },
+  { value: "viewed_product",           badge: "Web",     label: "Producto visto",                       description: "El contacto vio un producto en happylapiz.cl. Pixel ya instalable en Shopify.", fields: <></> },
+  { value: "active_on_site",           badge: "Web",     label: "Activo en el sitio",                   description: "El contacto estuvo activo en happylapiz.cl. Pixel ya instalable en Shopify.", fields: <></> },
   { value: "subscribed_to_back_in_stock", badge: "Web",  label: "Alerta de stock disponible",           description: "El cliente se suscribió a notificación cuando un producto vuelva a estar disponible.", fields: <></> },
   // ── Internos ─────────────────────────────────────────────────────────────
   { value: "welcome",                  badge: "Interno", label: "Bienvenida (nuevo suscriptor)",         description: "Nuevo contacto con opt-in activo. Para series de bienvenida.", fields: <></> },
