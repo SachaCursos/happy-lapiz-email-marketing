@@ -13,6 +13,7 @@ import {
   MousePointerClick,
   Settings,
   LogOut,
+  BarChart2,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,7 @@ const nav = [
   { href: "/campaigns",    label: "Campañas",         icon: Send },
   { href: "/automations",  label: "Automatizaciones", icon: Zap },
   { href: "/forms",        label: "Formularios",      icon: MousePointerClick },
+  { href: "/asuntos",      label: "Asuntos",          icon: BarChart2 },
 ];
 
 interface SidebarProps {

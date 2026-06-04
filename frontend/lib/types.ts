@@ -11,22 +11,33 @@ export interface Contact {
   email: string;
   name: string | null;
   phone: string | null;
-  language: string | null;
   origin_utm: string | null;
   location: string | null;
   opted_in: boolean;
   opted_in_at: string | null;
   opted_out_at: string | null;
-  veces_hotboat: number;
   ultima_visita: string | null;
-  ha_alojamiento: boolean;
-  extras_favoritos: string[] | null;
   ticket_medio: number | null;
-  birthday: string | null;
-  notes: string | null;
-  custom_fields: Record<string, string> | null;
+  custom_fields: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  // Shopify ecommerce data
+  orders_count: number;
+  total_spent: number | null;
+  last_purchase: string | null;
+  products_purchased: { title: string; cantidad_total: number }[] | null;
+  shipping_city: string | null;
+  shipping_province: string | null;
+  all_shipping_cities: string[] | null;
+  // Klaviyo data
+  klaviyo_id: string | null;
+  last_event_date: string | null;
+  klaviyo_properties: Record<string, unknown> | null;
+  klaviyo_location: { city?: string; region?: string; country?: string } | null;
+  ultima_visita_web: string | null;
+  accepts_marketing: boolean | null;
+  smile_points: number | null;
+  expected_next_order: string | null;
 }
 
 export interface ContactBooking {

@@ -176,9 +176,10 @@ function DetailsTab({ contact, onSave, saving }: {
           <div className="space-y-2 mb-5">
             {[
               ["ID único",    String(contact.id)],
-              ["Idioma",      contact.language === "es" ? "es-CL" : contact.language ?? null],
-              ["Ubicación",   contact.location],
-              ["Zona horaria","America/Santiago"],
+              ["Ciudad",      contact.shipping_city],
+              ["Provincia",   contact.shipping_province],
+              ["País",        contact.klaviyo_location?.country ?? null],
+              ["Origen UTM",  contact.origin_utm],
             ].map(([label, value]) => value ? (
               <div key={label} className="flex gap-3 text-sm">
                 <span className="w-28 text-gray-400 shrink-0">{label}</span>
@@ -328,7 +329,7 @@ function MetricsTab({ contact }: { contact: Contact }) {
     : (contact.ticket_medio ?? 0);
 
   // Predictive analytics (computed from available data)
-  const historicCLV   = contact.veces_hotboat * (contact.ticket_medio ?? 0);
+  const historicCLV   = contact.orders_count * (contact.ticket_medio ?? 0);
   const daysSinceVisit = contact.ultima_visita
     ? Math.floor((Date.now() - new Date(contact.ultima_visita).getTime()) / 86_400_000)
     : null;
@@ -341,12 +342,12 @@ function MetricsTab({ contact }: { contact: Contact }) {
     :                         { label: "Crítico",  pct: 95, color: "bg-red-700" };
 
   // Expected next visit: ultima_visita + avg interval (approx 365/veces days)
-  const expectedNext = contact.ultima_visita && contact.veces_hotboat > 0
-    ? new Date(new Date(contact.ultima_visita).getTime() + (365 / Math.max(contact.veces_hotboat, 1)) * 86_400_000)
+  const expectedNext = contact.ultima_visita && contact.orders_count > 0
+    ? new Date(new Date(contact.ultima_visita).getTime() + (365 / Math.max(contact.orders_count, 1)) * 86_400_000)
     : null;
 
-  const predictedCLV = contact.ticket_medio && contact.veces_hotboat > 0
-    ? historicCLV + contact.ticket_medio * Math.max(1, Math.round(contact.veces_hotboat * 0.3))
+  const predictedCLV = contact.ticket_medio && contact.orders_count > 0
+    ? historicCLV + contact.ticket_medio * Math.max(1, Math.round(contact.orders_count * 0.3))
     : null;
 
   return (
@@ -433,7 +434,7 @@ function MetricsTab({ contact }: { contact: Contact }) {
                   />
                 </div>
                 <div className="flex gap-4 text-xs text-gray-500">
-                  <span>✓ CLV histórico (CLP {Math.round(historicCLV).toLocaleString("es-CL")}, {contact.veces_hotboat} reservas)</span>
+                  <span>✓ CLV histórico (CLP {Math.round(historicCLV).toLocaleString("es-CL")}, {contact.orders_count} reservas)</span>
                 </div>
                 {predictedCLV && predictedCLV > historicCLV && (
                   <div className="text-xs text-gray-400">

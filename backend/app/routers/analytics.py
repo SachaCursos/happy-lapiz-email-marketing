@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select, func, text
 from app.database import get_session
 from app.core.deps import get_current_user
 from app.models.user import User
@@ -56,3 +56,26 @@ def recent_campaigns(session: Session = Depends(get_session), _: User = Depends(
             "open_rate": round(opened / total * 100, 1) if total else 0,
         })
     return result
+
+
+@router.get("/asuntos")
+def asuntos(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+    rows = session.exec(text("""
+        SELECT id, subject, preview_text, campaign_name, campaign_id,
+               open_rate, click_rate, recipients, opens_unique, send_time, notas
+        FROM asuntos_email
+        WHERE subject IS NOT NULL AND subject != ''
+        ORDER BY open_rate DESC NULLS LAST
+    """)).all()
+    return [
+        {
+            "id": r[0], "subject": r[1], "preview_text": r[2],
+            "campaign_name": r[3], "campaign_id": r[4],
+            "open_rate": float(r[5]) if r[5] is not None else None,
+            "click_rate": float(r[6]) if r[6] is not None else None,
+            "recipients": r[7], "opens_unique": r[8],
+            "send_time": r[9].isoformat() if r[9] else None,
+            "notas": r[10],
+        }
+        for r in rows
+    ]
