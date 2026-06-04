@@ -1,4 +1,5 @@
 import re
+import httpx
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
@@ -279,3 +280,47 @@ def fix_logo(
             fixed.append(tpl.name)
     session.commit()
     return {"ok": True, "fixed": fixed, "logo_url": logo_url}
+
+
+@router.post("/register-shopify-webhooks")
+def register_shopify_webhooks(current_user: User = Depends(require_admin)):
+    """Registra los webhooks de Shopify en la tienda usando el token del backend."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    if not token:
+        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN no configurado en Railway"}
+
+    domain = settings.SHOPIFY_DOMAIN
+    backend_url = f"{settings.BACKEND_PUBLIC_URL}/api/shopify/webhooks"
+    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+
+    topics = [
+        "checkouts/create",
+        "checkouts/update",
+        "orders/create",
+        "orders/fulfilled",
+        "orders/cancelled",
+        "orders/updated",
+    ]
+
+    results = []
+    for topic in topics:
+        try:
+            r = httpx.post(
+                f"https://{domain}/admin/api/2024-10/webhooks.json",
+                headers=headers,
+                json={"webhook": {"topic": topic, "address": backend_url, "format": "json"}},
+                timeout=10,
+            )
+            if r.status_code in (200, 201):
+                wh = r.json().get("webhook", {})
+                results.append({"topic": topic, "ok": True, "id": wh.get("id")})
+            elif r.status_code == 422:
+                # Already registered
+                results.append({"topic": topic, "ok": True, "note": "ya existía"})
+            else:
+                results.append({"topic": topic, "ok": False, "error": r.text[:100]})
+        except Exception as e:
+            results.append({"topic": topic, "ok": False, "error": str(e)})
+
+    all_ok = all(r["ok"] for r in results)
+    return {"ok": all_ok, "endpoint": backend_url, "webhooks": results}
