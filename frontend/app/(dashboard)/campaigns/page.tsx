@@ -116,16 +116,23 @@ interface KlaviyoCampaign {
   average_order_value: number | null; audience: string | null;
 }
 
+const KLAVIYO_PAGE_SIZE = 20;
+
 function KlaviyoTable({ search }: { search: string }) {
+  const [page, setPage] = useState(0);
+
   const { data: campaigns = [], isLoading } = useQuery<KlaviyoCampaign[]>({
     queryKey: ["klaviyo-campaigns"],
     queryFn: () => api.get("/analytics/klaviyo-campaigns").then((r) => r.data),
     staleTime: 10 * 60_000,
   });
 
-  const filtered = search
+  const filtered = (search
     ? campaigns.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()) || (c.subject ?? "").toLowerCase().includes(search.toLowerCase()))
-    : campaigns;
+    : campaigns);
+
+  const totalPages = Math.ceil(filtered.length / KLAVIYO_PAGE_SIZE);
+  const paginated = filtered.slice(page * KLAVIYO_PAGE_SIZE, (page + 1) * KLAVIYO_PAGE_SIZE);
 
   const totRevenue = campaigns.reduce((s, c) => s + (c.conversion_value ?? 0), 0);
   const totOrders  = campaigns.reduce((s, c) => s + (c.conversions ?? 0), 0);
@@ -141,6 +148,16 @@ function KlaviyoTable({ search }: { search: string }) {
   return (
     <div>
       {/* Summary cards */}
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs text-gray-500">{filtered.length} campañas · mostrando {page * KLAVIYO_PAGE_SIZE + 1}–{Math.min((page + 1) * KLAVIYO_PAGE_SIZE, filtered.length)}</p>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40">← Anterior</button>
+          <span className="text-xs text-gray-500">{page + 1} / {totalPages}</span>
+          <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40">Siguiente →</button>
+        </div>
+      </div>
       <div className="grid grid-cols-3 gap-4 mb-5">
         {[
           { label: "Campañas enviadas", value: campaigns.length, icon: Mail },
@@ -172,7 +189,7 @@ function KlaviyoTable({ search }: { search: string }) {
           </thead>
           <tbody>
             {isLoading ? [...Array(5)].map((_, i) => <SkeletonRow key={i} />) :
-              filtered.map((c) => (
+              paginated.map((c) => (
                 <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="px-5 py-3.5 max-w-xs">
                     <p className="font-medium text-gray-900 truncate">{c.name}</p>

@@ -132,7 +132,7 @@ const hasNextPage = contacts.length === PAGE_SIZE;
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
 
         {/* Search bar */}
-        <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-3">
+        <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-3 sticky top-0 bg-white z-10">
           <div className="relative flex-1 max-w-sm">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -151,17 +151,19 @@ const hasNextPage = contacts.length === PAGE_SIZE;
           )}
         </div>
 
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="text-sm" style={{ minWidth: "900px", width: "100%" }}>
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Perfil</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Teléfono</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Creado</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actualizado</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Última visita</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Ubicación</th>
-              <th className="px-5 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Suscripción</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Perfil</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Email</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Teléfono</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Pedidos</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Total gastado</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Última compra</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Ciudad</th>
+              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Región</th>
+              <th className="px-5 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Suscripción</th>
             </tr>
           </thead>
           <tbody>
@@ -198,7 +200,7 @@ const hasNextPage = contacts.length === PAGE_SIZE;
                   </td>
 
                   {/* Email */}
-                  <td className="px-5 py-3 text-gray-500 text-xs max-w-[180px] truncate">
+                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
                     {c.email}
                   </td>
 
@@ -207,32 +209,35 @@ const hasNextPage = contacts.length === PAGE_SIZE;
                     {c.phone || <span className="text-gray-300">—</span>}
                   </td>
 
-                  {/* Created */}
-                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {formatDateTime(c.created_at)}
+                  {/* Pedidos */}
+                  <td className="px-5 py-3 text-gray-700 text-xs whitespace-nowrap text-center">
+                    {c.orders_count > 0 ? c.orders_count : <span className="text-gray-300">0</span>}
                   </td>
 
-                  {/* Updated */}
-                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {formatDateTime(c.updated_at)}
+                  {/* Total gastado */}
+                  <td className="px-5 py-3 text-xs whitespace-nowrap">
+                    {c.total_spent
+                      ? <span className="font-medium text-gray-800">${Math.round(c.total_spent).toLocaleString("es-CL")}</span>
+                      : <span className="text-gray-300">—</span>}
                   </td>
 
-                  {/* Última visita */}
+                  {/* Última compra */}
                   <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {c.ultima_visita ? (
-                      formatDate(c.ultima_visita)
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
+                    {c.last_purchase ? formatDate(c.last_purchase) : <span className="text-gray-300">—</span>}
                   </td>
 
-                  {/* Ubicación */}
-                  <td className="px-5 py-3 text-gray-500 text-xs">
-                    {c.location || <span className="text-gray-300">—</span>}
+                  {/* Ciudad */}
+                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
+                    {c.shipping_city || <span className="text-gray-300">—</span>}
+                  </td>
+
+                  {/* Región */}
+                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
+                    {c.shipping_province || <span className="text-gray-300">—</span>}
                   </td>
 
                   {/* Suscripción */}
-                  <td className="px-5 py-3 text-center">
+                  <td className="px-5 py-3 text-center whitespace-nowrap">
                     {c.opted_in
                       ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">Activo</span>
                       : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500">Baja</span>}
@@ -242,6 +247,7 @@ const hasNextPage = contacts.length === PAGE_SIZE;
             )}
           </tbody>
         </table>
+        </div>
 
         {/* Pagination */}
         {(hasPrevPage || hasNextPage) && (
