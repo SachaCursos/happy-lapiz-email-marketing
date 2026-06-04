@@ -13,7 +13,7 @@ const TRIGGERS: { value: AutomationTrigger; label: string; description: string; 
     value: "abandoned_booking",
     label: "Reserva abandonada",
     description:
-      "Se dispara cuando alguien inicia una reserva en HotBoat pero no la completa (estado 'pending'). Ideal para recuperar ventas perdidas.",
+      "Se dispara cuando alguien inicia una compra en Happy Lápiz pero no la completa. Ideal para recuperar ventas perdidas.",
     fields: <></>,
   },
   {

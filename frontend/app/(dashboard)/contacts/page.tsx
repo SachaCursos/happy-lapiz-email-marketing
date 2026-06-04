@@ -113,7 +113,7 @@ const hasNextPage = contacts.length === PAGE_SIZE;
       )}
       {syncMutation.isError && (
         <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
-          Error al sincronizar. Verifica que el backend tenga acceso a las tablas de HotBoat.
+          Error al sincronizar. Verifica que el backend esté activo y las variables de entorno configuradas.
         </div>
       )}
       {syncResult && (

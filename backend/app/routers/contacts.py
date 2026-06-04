@@ -70,7 +70,7 @@ def _notify_unsubscribe(contact: Contact) -> None:
             "subject": f"Desuscripción: {name}",
             "html": (
                 f"<p><strong>{name}</strong> ({contact.email}) "
-                f"se ha dado de baja de la lista de HotBoat.</p>"
+                f"se ha dado de baja de la lista de Happy Lápiz.</p>"
                 f"<p style='color:#999;font-size:13px;'>Puedes ver su perfil en "
                 f"<a href='{settings.FRONTEND_URL}/contacts/{contact.id}'>el panel</a>.</p>"
             ),

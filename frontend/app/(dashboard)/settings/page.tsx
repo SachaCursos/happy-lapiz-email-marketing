@@ -81,10 +81,10 @@ export default function SettingsPage() {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 className="font-semibold text-gray-900 mb-1">Sincronización HotBoat</h2>
+          <h2 className="font-semibold text-gray-900 mb-1">Sincronización de contactos</h2>
           <p className="text-gray-500 text-sm mb-4">
-            Importa y actualiza contactos desde <code className="bg-gray-100 px-1 rounded text-xs font-mono">all_appointments</code>, <code className="bg-gray-100 px-1 rounded text-xs font-mono">booknetic_customers</code> y <code className="bg-gray-100 px-1 rounded text-xs font-mono">leads</code>.
-            Calcula automáticamente: experiencias, última visita, alojamiento, ticket medio y extras favoritos.
+            Importa y actualiza contactos desde Shopify.
+            Calcula automáticamente: nº pedidos, última compra y ticket medio.
           </p>
           <button
             onClick={() => { setSyncResult(null); syncMutation.mutate(); }}
@@ -171,7 +171,7 @@ export default function SettingsPage() {
           <p className="text-gray-500 text-sm mb-4">La API key de Resend se configura en las variables de entorno de Railway.</p>
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 font-mono text-xs text-gray-600 space-y-1">
             <p>RESEND_API_KEY=re_xxxxxxxxxxxx</p>
-            <p>RESEND_FROM_EMAIL=HotBoat &lt;hola@hotboat.cl&gt;</p>
+            <p>RESEND_FROM_EMAIL=Happy Lápiz &lt;clientes@happylapiz.cl&gt;</p>
             <p>RESEND_WEBHOOK_SECRET=tu_secreto</p>
             <p className="text-brand-600 mt-2">NOTIFY_EMAIL=tu@email.com &nbsp;<span className="text-gray-400 font-sans not-italic">← recibe alertas de desuscripciones</span></p>
           </div>

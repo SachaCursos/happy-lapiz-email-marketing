@@ -3,9 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons
 
-app = FastAPI(title="HotBoat Email Marketing API", version="1.0.0", redirect_slashes=False)
+app = FastAPI(title="Happy Lápiz Email Marketing API", version="1.0.0", redirect_slashes=False)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +30,7 @@ app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 app.include_router(automations.router, prefix="/api/automations", tags=["automations"])
 app.include_router(forms.router, prefix="/api/forms", tags=["forms"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(coupons.router, prefix="/api/coupons", tags=["coupons"])
 
 
 @app.on_event("startup")

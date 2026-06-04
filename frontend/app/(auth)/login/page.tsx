@@ -34,7 +34,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-12 h-12 bg-brand-600 rounded-xl mb-4">
             <span className="text-white font-bold text-lg">H</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">HotBoat Email</h1>
+          <h1 className="text-2xl font-bold text-white">Happy Lápiz Email</h1>
           <p className="text-gray-400 mt-1 text-sm">Plataforma de email marketing</p>
         </div>
 

@@ -28,7 +28,7 @@ RATE_DELAY = 0.25  # 4 emails/segundo — límite de Resend es 5/segundo
 _FOOTER = """<div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
 text-align:center;font-size:12px;color:#9ca3af;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-Recibiste este correo porque eres cliente de <strong style="color:#6b7280">HotBoat</strong>.
+Recibiste este correo porque eres cliente de <strong style="color:#6b7280">Happy Lápiz</strong>.
 &nbsp;&middot;&nbsp;
 <a href="{url}" style="color:#9ca3af;text-decoration:underline;">Cancelar suscripción</a>
 </div>"""
@@ -54,22 +54,60 @@ def _unsub_headers(email: str) -> dict:
     }
 
 
-def render_html(html_content: str, contact: Contact) -> str:
+def render_html(html_content: str, contact: Contact, coupon_code: str = "") -> str:
     tpl = Jinja2Template(html_content)
     return tpl.render(
         nombre=_fmt_nombre(contact.name, contact.email),
+        first_name=_fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
         email=contact.email,
         ultima_visita=str(contact.ultima_visita) if contact.ultima_visita else "",
-        veces_hotboat=contact.veces_hotboat,
-        ha_alojamiento="sí" if contact.ha_alojamiento else "no",
         ticket_medio=contact.ticket_medio or 0,
-        idioma=contact.language or "es",
+        orders_count=getattr(contact, "orders_count", 0),
+        total_spent=getattr(contact, "total_spent", 0),
+        shipping_city=getattr(contact, "shipping_city", "") or "",
+        coupon_code=coupon_code,
     )
+
+
+def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, session: Session) -> str:
+    """If template uses {{ coupon_code }}, generate a unique Shopify code for this contact."""
+    if "coupon_code" not in template_html and "{% coupon_code" not in template_html:
+        return ""
+    from sqlalchemy import text
+    row = session.exec(text("""
+        SELECT cs.code FROM coupon_sends cs
+        WHERE cs.contact_email = :email AND cs.campaign_id = :cid LIMIT 1
+    """), {"email": contact.email.lower(), "cid": campaign_id}).fetchone()
+    if row:
+        return row[0]
+    row2 = session.exec(text("""
+        SELECT cc.id, cc.prefix FROM coupon_campaigns cc
+        JOIN campaigns c ON c.id = :cid
+        WHERE cc.status = 'active'
+        ORDER BY cc.created_at DESC LIMIT 1
+    """), {"cid": campaign_id}).fetchone()
+    if not row2:
+        return ""
+    import random, string
+    prefix = row2[1] or "HL"
+    code = f"{prefix}-{''.join(random.choices(string.ascii_uppercase+string.digits, k=8))}"
+    try:
+        session.exec(text("""
+            INSERT INTO coupon_sends (coupon_campaign_id, contact_id, contact_email, code, campaign_id)
+            VALUES (:ccid, :cid, :email, :code, :campid)
+            ON CONFLICT DO NOTHING
+        """), {"ccid": row2[0], "cid": contact.id, "email": contact.email.lower(),
+               "code": code, "campid": campaign_id})
+        session.commit()
+    except Exception:
+        pass
+    return code
 
 
 def _send_one(campaign: Campaign, template: Template, contact: Contact, session: Session) -> None:
     resend.api_key = settings.RESEND_API_KEY
-    html = _inject_footer(render_html(template.html_content, contact), contact.email)
+    coupon = _resolve_coupon(template.html_content, contact, campaign.id, session)
+    html = _inject_footer(render_html(template.html_content, contact, coupon_code=coupon), contact.email)
     subject = Jinja2Template(campaign.subject).render(nombre=_fmt_nombre(contact.name, contact.email))
 
     send = session.exec(

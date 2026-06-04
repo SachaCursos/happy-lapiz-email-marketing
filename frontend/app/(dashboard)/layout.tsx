@@ -40,7 +40,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="w-6 h-6 bg-brand-600 rounded flex items-center justify-center">
               <span className="text-white font-bold text-xs">H</span>
             </div>
-            <span className="text-white font-semibold text-sm">HotBoat</span>
+            <span className="text-white font-semibold text-sm">Happy Lápiz</span>
           </div>
         </header>
 

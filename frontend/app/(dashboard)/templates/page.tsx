@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { templatesApi } from "@/lib/api";
 import { Template } from "@/lib/types";
-import { Plus, Copy, Trash2, Eye, X, Search } from "lucide-react";
+import { Plus, Copy, Trash2, Eye, X, Search, Tag, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import { formatDate } from "@/lib/utils";
 
@@ -52,6 +52,61 @@ function PreviewModal({ tpl, onClose }: { tpl: Template; onClose: () => void }) 
   );
 }
 
+function CuponesPanel() {
+  const [open, setOpen] = useState(false);
+  const ejemplos = [
+    { tag: "{% coupon_code 'CYBER30' %}", desc: "Código estático: CYBER30" },
+    { tag: "{{ coupon_code }}", desc: "Cupón dinámico asignado al perfil (Klaviyo)" },
+    { tag: "{% coupon_code 'Cross5k' %}", desc: "Cupón cruzado $5.000" },
+  ];
+  return (
+    <div className="mb-6 bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Tag size={16} className="text-brand-600" />
+          <span className="text-sm font-semibold text-gray-800">Cupones dinámicos — integración Shopify + Klaviyo</span>
+        </div>
+        {open ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+      </button>
+      {open && (
+        <div className="px-5 pb-5 border-t border-gray-100">
+          <p className="text-xs text-gray-500 mt-3 mb-4">
+            Pega estas variables en el HTML de tus plantillas. En Klaviyo los cupones dinámicos se generan desde
+            <strong> Flows → Action → Send Email → Coupon block</strong>, conectado con Shopify discount codes.
+          </p>
+          <div className="space-y-3">
+            {ejemplos.map((e) => (
+              <div key={e.tag} className="flex items-center gap-3 bg-gray-50 rounded-lg px-4 py-2.5">
+                <code className="text-xs font-mono text-brand-700 bg-brand-50 px-2 py-1 rounded flex-1">{e.tag}</code>
+                <span className="text-xs text-gray-500">{e.desc}</span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(e.tag)}
+                  className="text-xs text-gray-400 hover:text-brand-600 transition-colors ml-auto"
+                  title="Copiar"
+                >
+                  <Copy size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <p className="text-xs font-semibold text-amber-800 mb-1">Cómo crear cupones dinámicos en Shopify + Klaviyo</p>
+            <ol className="text-xs text-amber-700 space-y-1 list-decimal pl-4">
+              <li>En Shopify → <strong>Descuentos → Crear código de descuento</strong> (porcentaje o monto fijo)</li>
+              <li>En Klaviyo → <strong>Coupons → Add coupon → conectar con Shopify</strong></li>
+              <li>En el flow o campaña, agrega un bloque <strong>Coupon</strong> y selecciona el descuento</li>
+              <li>Klaviyo genera un código único por persona y lo pone disponible como <code>{"{{ coupon_code }}"}</code></li>
+            </ol>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TemplatesPage() {
   const qc = useQueryClient();
   const [preview, setPreview] = useState<Template | null>(null);
@@ -76,6 +131,8 @@ export default function TemplatesPage() {
   return (
     <div className="p-8">
       {preview && <PreviewModal tpl={preview} onClose={() => setPreview(null)} />}
+
+      <CuponesPanel />
 
       <div className="flex items-center justify-between mb-6">
         <div>

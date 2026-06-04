@@ -50,7 +50,7 @@ function UnsubscribeContent() {
             <h1 className="text-lg font-semibold text-gray-900 mb-2">Cancelación exitosa</h1>
             <p className="text-sm text-gray-500">
               <span className="font-medium text-gray-700">{email}</span> ha sido eliminado de nuestra lista.
-              Ya no recibirás emails de HotBoat.
+              Ya no recibirás emails de Happy Lápiz.
             </p>
           </>
         )}

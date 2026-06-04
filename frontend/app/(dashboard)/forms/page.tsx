@@ -62,7 +62,7 @@ export default function FormsPage() {
           </div>
           <p className="text-gray-900 font-semibold">Sin formularios</p>
           <p className="text-gray-400 text-sm mt-1 mb-6">
-            Crea un pop-up para capturar suscriptores en hotboat.cl
+            Crea un pop-up para capturar suscriptores en happylapiz.cl
           </p>
           <Link
             href="/forms/new"
