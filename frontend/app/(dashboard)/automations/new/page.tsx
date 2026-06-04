@@ -8,32 +8,56 @@ import { Template, AutomationTrigger } from "@/lib/types";
 import { ArrowLeft, Info } from "lucide-react";
 import Link from "next/link";
 
-const TRIGGERS: { value: AutomationTrigger; label: string; description: string; fields: JSX.Element }[] = [
+const TRIGGERS: { value: AutomationTrigger; label: string; description: string; badge: string; fields: JSX.Element }[] = [
+  // ── Shopify triggers ──────────────────────────────────────────────────────
   {
-    value: "abandoned_booking",
-    label: "Reserva abandonada",
-    description:
-      "Se dispara cuando alguien inicia una compra en Happy Lápiz pero no la completa. Ideal para recuperar ventas perdidas.",
+    value: "abandoned_cart",
+    label: "Carrito abandonado",
+    badge: "Shopify",
+    description: "Se dispara cuando alguien inició el checkout en Shopify pero no completó la compra. Ideal para recuperar ventas. El email se envía 1 hora después (configurable).",
     fields: <></>,
   },
+  {
+    value: "placed_order",
+    label: "Compra realizada (Placed Order)",
+    badge: "Shopify",
+    description: "Se dispara cuando alguien completa una compra en Shopify. Perfecto para emails de confirmación, gracias o cross-sell.",
+    fields: <></>,
+  },
+  {
+    value: "fulfilled_order",
+    label: "Pedido enviado (Fulfilled Order)",
+    badge: "Shopify",
+    description: "Se dispara cuando el pedido pasa a estado fulfillado (enviado). Úsalo para informar el número de seguimiento y generar expectativa.",
+    fields: <></>,
+  },
+  {
+    value: "cancelled_order",
+    label: "Pedido cancelado (Cancelled Order)",
+    badge: "Shopify",
+    description: "Se dispara cuando un pedido es cancelado en Shopify. Útil para retener al cliente con una oferta o entender el motivo.",
+    fields: <></>,
+  },
+  // ── Internal triggers ─────────────────────────────────────────────────────
   {
     value: "welcome",
-    label: "Bienvenida a nuevo contacto",
-    description: "Se dispara cuando se añade un nuevo contacto con opt-in activo. Perfecto para series de bienvenida.",
-    fields: <></>,
-  },
-  {
-    value: "post_visit",
-    label: "Seguimiento post-visita",
-    description:
-      "Se dispara N días después de la última visita registrada. Úsalo para pedir reseñas o promover la próxima experiencia.",
+    label: "Bienvenida a nuevo suscriptor",
+    badge: "Interno",
+    description: "Se dispara cuando se añade un nuevo contacto con opt-in activo (via formulario o importación). Perfecto para series de bienvenida.",
     fields: <></>,
   },
   {
     value: "reactivation",
     label: "Reactivación de cliente inactivo",
-    description:
-      "Se dispara cuando un cliente no ha visitado en N días. Incluye cooldown para no enviarlo más de una vez por período.",
+    badge: "Interno",
+    description: "Se dispara cuando un cliente no ha comprado en N días. Incluye cooldown para no repetirlo más de una vez por período.",
+    fields: <></>,
+  },
+  {
+    value: "post_visit",
+    label: "Seguimiento post-compra (días)",
+    badge: "Interno",
+    description: "Se dispara N días después de la última compra registrada. Úsalo para pedir reseñas, ofrecer complementos o hacer cross-sell.",
     fields: <></>,
   },
 ];
@@ -176,8 +200,11 @@ export default function NewAutomationPage() {
                   onChange={() => setTriggerType(t.value)}
                   className="mt-0.5 accent-brand-600"
                 />
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{t.label}</p>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-gray-900">{t.label}</p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${t.badge === "Shopify" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{t.badge}</span>
+                  </div>
                   <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>
                 </div>
               </label>

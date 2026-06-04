@@ -181,7 +181,17 @@ export interface FormSubmission {
   created_at: string;
 }
 
-export type AutomationTrigger = "abandoned_booking" | "welcome" | "post_visit" | "reactivation";
+export type AutomationTrigger =
+  // Shopify triggers
+  | "abandoned_cart"
+  | "placed_order"
+  | "fulfilled_order"
+  | "cancelled_order"
+  // Internal triggers
+  | "welcome"
+  | "post_visit"
+  | "reactivation"
+  | "abandoned_booking";
 export type AutomationStatus = "active" | "paused";
 
 export interface Automation {
