@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     BACKEND_PUBLIC_URL: str = "http://localhost:8000"
     # Si los datos fuente están en otra DB, ponla aquí; si no, usa la misma DATABASE_URL
     HOTBOAT_DATABASE_URL: str = ""
-    NOTIFY_EMAIL: str = ""  # Email del admin que recibe alertas (desuscripciones, etc.)
+    NOTIFY_EMAIL: str = ""
+    SHOPIFY_ACCESS_TOKEN: str = ""
+    SHOPIFY_DOMAIN: str = "happy-lapiz.myshopify.com"
 
     class Config:
         env_file = ".env"

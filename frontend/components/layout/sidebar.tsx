@@ -14,6 +14,7 @@ import {
   Settings,
   LogOut,
   BarChart2,
+  Tag,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,7 @@ const nav = [
   { href: "/automations",  label: "Automatizaciones", icon: Zap },
   { href: "/forms",        label: "Formularios",      icon: MousePointerClick },
   { href: "/asuntos",      label: "Asuntos",          icon: BarChart2 },
+  { href: "/coupons",      label: "Cupones",           icon: Tag },
 ];
 
 interface SidebarProps {
