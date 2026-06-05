@@ -68,7 +68,7 @@ function EditPanel({
   });
 
   function setConfig(key: string, val: string | number) {
-    setForm((f) => ({ ...f, trigger_config: { ...f.trigger_config, [key]: val } }));
+    setForm((f) => ({ ...f, trigger_config: { ...f.trigger_config, [key]: val } as Record<string, number> }));
   }
 
   const cfg = form.trigger_config as Record<string, number>;

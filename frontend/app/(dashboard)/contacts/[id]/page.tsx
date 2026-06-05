@@ -67,17 +67,19 @@ function CustomPropertiesCard({ contact, onSave, saving }: {
   onSave: (fields: Record<string, string>, notes: string, birthday: string) => void;
   saving: boolean;
 }) {
-  const [fields,   setFields]   = useState<Record<string, string>>(contact.custom_fields ?? {});
-  const [notes,    setNotes]    = useState(contact.notes ?? "");
-  const [birthday, setBirthday] = useState(contact.birthday ?? "");
+  const _cf = (contact.custom_fields ?? {}) as Record<string, string>;
+  const { notes: _cfNotes, birthday: _cfBirthday, ...restCF } = _cf;
+  const [fields,   setFields]   = useState<Record<string, string>>(restCF);
+  const [notes,    setNotes]    = useState(_cfNotes ?? "");
+  const [birthday, setBirthday] = useState(_cfBirthday ?? "");
   const [newKey,   setNewKey]   = useState("");
 
-  const predefinedKeys = PREDEFINED.map((p) => p.key);
+  const predefinedKeys = [...PREDEFINED.map((p) => p.key), "notes", "birthday"];
   const customKeys = Object.keys(fields).filter((k) => !predefinedKeys.includes(k));
   const dirty =
-    JSON.stringify(fields) !== JSON.stringify(contact.custom_fields ?? {}) ||
-    notes !== (contact.notes ?? "") ||
-    birthday !== (contact.birthday ?? "");
+    JSON.stringify(fields) !== JSON.stringify(restCF) ||
+    notes !== (_cfNotes ?? "") ||
+    birthday !== (_cfBirthday ?? "");
 
   const set = (key: string, val: string) => setFields((p) => ({ ...p, [key]: val }));
   const remove = (key: string) => setFields((p) => { const n = { ...p }; delete n[key]; return n; });
@@ -654,7 +656,7 @@ function ObjectsTab({ contactId }: { contactId: number }) {
                       {extras.map(([key, val]) => (
                         <span key={key} className="px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-700">
                           <span className="font-medium">{key}</span>
-                          {val && val !== true && val !== "true" && (
+                          {!!val && val !== true && val !== "true" && (
                             <span className="text-gray-400"> · {String(val)}</span>
                           )}
                         </span>
@@ -766,7 +768,7 @@ export default function ContactDetailPage() {
           contact={contact}
           saving={updateMutation.isPending}
           onSave={(fields, notes, birthday) =>
-            updateMutation.mutate({ custom_fields: fields, notes: notes || null, birthday: birthday || null } as Partial<Contact>)
+            updateMutation.mutate({ custom_fields: { ...fields, ...(notes ? { notes } : {}), ...(birthday ? { birthday } : {}) } })
           }
         />
       )}

@@ -5,8 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 const BACKEND = (process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
 async function proxy(req: NextRequest): Promise<NextResponse> {
-  const path = req.nextUrl.pathname;   // e.g. /api/templates/
-  const search = req.nextUrl.search;   // e.g. ?limit=100
+  const path = req.nextUrl.pathname;
+  const search = req.nextUrl.search;
   const target = `${BACKEND}${path}${search}`;
 
   const forward = new Headers();
@@ -18,34 +18,27 @@ async function proxy(req: NextRequest): Promise<NextResponse> {
   }
 
   const hasBody = !["GET", "HEAD"].includes(req.method);
+  // Read body once up-front so it can be reused on redirect
+  const bodyBuffer = hasBody ? await req.arrayBuffer() : undefined;
 
-  try {
-    const upstream = await fetch(target, {
+  async function doFetch(url: string) {
+    return fetch(url, {
       method: req.method,
       headers: forward,
-      body: hasBody ? req.body : undefined,
-      // @ts-expect-error duplex needed for streaming request body in Node 18+
-      duplex: hasBody ? "half" : undefined,
-      redirect: "manual",   // handle redirects ourselves so auth headers are never dropped
+      body: bodyBuffer,
+      redirect: "manual",
     });
+  }
 
-    // If backend sends a redirect (e.g. trailing-slash 307), follow it manually with headers intact
+  try {
+    let upstream = await doFetch(target);
+
+    // Follow 307/308 redirects manually so auth headers are never dropped
     if (upstream.status >= 300 && upstream.status < 400) {
       const location = upstream.headers.get("location");
       if (location) {
         const redirectTarget = location.startsWith("http") ? location : `${BACKEND}${location}`;
-        const redirected = await fetch(redirectTarget, {
-          method: req.method,
-          headers: forward,
-          body: hasBody ? req.body : undefined,
-          // @ts-expect-error
-          duplex: hasBody ? "half" : undefined,
-        });
-        const rHeaders = new Headers();
-        for (const [k, v] of redirected.headers.entries()) {
-          if (!["transfer-encoding", "connection"].includes(k.toLowerCase())) rHeaders.set(k, v);
-        }
-        return new NextResponse(redirected.body, { status: redirected.status, headers: rHeaders });
+        upstream = await doFetch(redirectTarget);
       }
     }
 
@@ -56,10 +49,9 @@ async function proxy(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    return new NextResponse(upstream.body, {
-      status: upstream.status,
-      headers: resHeaders,
-    });
+    // Buffer the response body — streaming through Railway's CDN can drop bytes
+    const resBody = await upstream.arrayBuffer();
+    return new NextResponse(resBody, { status: upstream.status, headers: resHeaders });
   } catch {
     return NextResponse.json({ detail: "Backend no disponible" }, { status: 503 });
   }

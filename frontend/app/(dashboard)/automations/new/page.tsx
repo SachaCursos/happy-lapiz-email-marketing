@@ -8,34 +8,32 @@ import { Template, AutomationTrigger } from "@/lib/types";
 import { ArrowLeft, Info } from "lucide-react";
 import Link from "next/link";
 
-const TRIGGERS: { value: AutomationTrigger; label: string; description: string; fields: JSX.Element }[] = [
-  {
-    value: "abandoned_booking",
-    label: "Reserva abandonada",
-    description:
-      "Se dispara cuando alguien inicia una compra en Happy Lápiz pero no la completa. Ideal para recuperar ventas perdidas.",
-    fields: <></>,
-  },
-  {
-    value: "welcome",
-    label: "Bienvenida a nuevo contacto",
-    description: "Se dispara cuando se añade un nuevo contacto con opt-in activo. Perfecto para series de bienvenida.",
-    fields: <></>,
-  },
-  {
-    value: "post_visit",
-    label: "Seguimiento post-visita",
-    description:
-      "Se dispara N días después de la última visita registrada. Úsalo para pedir reseñas o promover la próxima experiencia.",
-    fields: <></>,
-  },
-  {
-    value: "reactivation",
-    label: "Reactivación de cliente inactivo",
-    description:
-      "Se dispara cuando un cliente no ha visitado en N días. Incluye cooldown para no enviarlo más de una vez por período.",
-    fields: <></>,
-  },
+const TRIGGERS: { value: AutomationTrigger; label: string; description: string; badge: string; fields: JSX.Element }[] = [
+  // ── Shopify: carrito y checkout ───────────────────────────────────────────
+  { value: "abandoned_cart",           badge: "Shopify", label: "Carrito abandonado",                   description: "Checkout iniciado sin completar compra. Email se envía 1h después.", fields: <></> },
+  { value: "checkout_started",         badge: "Shopify", label: "Checkout iniciado",                    description: "Alguien comenzó el proceso de pago en Shopify.", fields: <></> },
+  { value: "added_to_cart",            badge: "Shopify", label: "Producto agregado al carrito",          description: "Alguien agregó un producto al carrito (sin necesariamente pagar).", fields: <></> },
+  // ── Shopify: órdenes ─────────────────────────────────────────────────────
+  { value: "placed_order",             badge: "Shopify", label: "Compra realizada (Placed Order)",       description: "Cliente completó una compra. Para gracias, confirmación o cross-sell.", fields: <></> },
+  { value: "ordered_product",          badge: "Shopify", label: "Producto comprado (Ordered Product)",   description: "Se dispara por cada producto dentro de una orden.", fields: <></> },
+  { value: "fulfilled_order",          badge: "Shopify", label: "Pedido enviado (Fulfilled Order)",      description: "El pedido fue procesado y enviado completamente.", fields: <></> },
+  { value: "fulfilled_partial_order",  badge: "Shopify", label: "Envío parcial",                        description: "Parte del pedido fue enviada (fulfillment parcial).", fields: <></> },
+  { value: "confirmed_shipment",       badge: "Shopify", label: "Envío confirmado con tracking",         description: "El fulfillment incluye un número de seguimiento.", fields: <></> },
+  { value: "delivered_shipment",       badge: "Shopify", label: "Pedido entregado",                     description: "El transportista marcó el paquete como entregado.", fields: <></> },
+  { value: "marked_out_for_delivery",  badge: "Shopify", label: "En camino (Out for Delivery)",          description: "El paquete está en reparto en este momento.", fields: <></> },
+  { value: "cancelled_order",          badge: "Shopify", label: "Pedido cancelado",                     description: "Una orden fue cancelada en Shopify.", fields: <></> },
+  { value: "refunded_order",           badge: "Shopify", label: "Pedido reembolsado",                   description: "Se procesó un reembolso. Útil para retener o pedir feedback.", fields: <></> },
+  // ── Cupones ──────────────────────────────────────────────────────────────
+  { value: "coupon_assigned",          badge: "Cupón",   label: "Cupón asignado",                       description: "Se generó un cupón dinámico para el contacto.", fields: <></> },
+  { value: "coupon_used",              badge: "Cupón",   label: "Cupón usado",                          description: "El cliente usó un código de descuento al pagar.", fields: <></> },
+  // ── Web tracking ─────────────────────────────────────────────────────────
+  { value: "viewed_product",           badge: "Web",     label: "Producto visto",                       description: "El contacto vio un producto en happylapiz.cl. Pixel ya instalable en Shopify.", fields: <></> },
+  { value: "active_on_site",           badge: "Web",     label: "Activo en el sitio",                   description: "El contacto estuvo activo en happylapiz.cl. Pixel ya instalable en Shopify.", fields: <></> },
+  { value: "subscribed_to_back_in_stock", badge: "Web",  label: "Alerta de stock disponible",           description: "El cliente se suscribió a notificación cuando un producto vuelva a estar disponible.", fields: <></> },
+  // ── Internos ─────────────────────────────────────────────────────────────
+  { value: "welcome",                  badge: "Interno", label: "Bienvenida (nuevo suscriptor)",         description: "Nuevo contacto con opt-in activo. Para series de bienvenida.", fields: <></> },
+  { value: "reactivation",             badge: "Interno", label: "Reactivación (cliente inactivo)",       description: "Sin compra en N días. Incluye cooldown para no repetir.", fields: <></> },
+  { value: "post_visit",               badge: "Interno", label: "Seguimiento post-compra",               description: "N días después de la última compra. Para reseñas o cross-sell.", fields: <></> },
 ];
 
 const TRIGGER_MAP = Object.fromEntries(TRIGGERS.map((t) => [t.value, t]));
@@ -176,8 +174,11 @@ export default function NewAutomationPage() {
                   onChange={() => setTriggerType(t.value)}
                   className="mt-0.5 accent-brand-600"
                 />
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{t.label}</p>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-gray-900">{t.label}</p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${t.badge === "Shopify" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{t.badge}</span>
+                  </div>
                   <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>
                 </div>
               </label>

@@ -53,10 +53,13 @@ def _send_email(
 
     vars_ = {
         "nombre": _fmt_nombre(contact.name, contact.email),
+        "first_name": _fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
         "email": contact.email,
-        "veces_hotboat": contact.veces_hotboat,
+        "orders_count": contact.orders_count,
         "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
         "ticket_medio": contact.ticket_medio or 0,
+        "total_spent": contact.total_spent or 0,
+        "shipping_city": contact.shipping_city or "",
         **(extra_vars or {}),
     }
     html = _inject_footer(JTemplate(tpl.html_content).render(**vars_), contact.email)
@@ -245,11 +248,137 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
         _send_email(session, auto, contact, trigger_key)
 
 
+def _check_abandoned_cart(auto: Automation, session: Session) -> None:
+    """Carrito abandonado: checkout creado hace más de delay_hours sin orden asociada."""
+    config = auto.trigger_config or {}
+    delay_hours = int(config.get("delay_hours", 1))
+    lookback_hours = int(config.get("lookback_hours", 24))
+    now = datetime.utcnow()
+    cutoff_old = now - timedelta(hours=delay_hours)
+    cutoff_recent = now - timedelta(hours=lookback_hours)
+
+    rows = session.exec(text("""
+        SELECT id, checkout_token, email, cart_total, line_items
+        FROM shopify_checkouts
+        WHERE recovered = FALSE
+          AND abandoned_email_sent = FALSE
+          AND email IS NOT NULL
+          AND created_at <= :old
+          AND created_at >= :recent
+    """), {"old": cutoff_old, "recent": cutoff_recent}).fetchall()
+
+    for row in rows:
+        email = (row[2] or "").lower().strip()
+        if not email:
+            continue
+        trigger_key = f"abandoned_cart:{row[1]}"
+        if _already_sent(session, auto.id, trigger_key):
+            continue
+        contact = session.exec(select(Contact).where(Contact.email == email)).first()
+        if not contact or not contact.opted_in:
+            continue
+        items = row[4] or []
+        first_item = items[0].get("title", "") if items else ""
+        extra_vars = {
+            "cart_total": f"${int(row[3] or 0):,}".replace(",", "."),
+            "first_product": first_item,
+            "cart_url": "https://happylapiz.cl/cart",
+        }
+        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
+        session.exec(text("UPDATE shopify_checkouts SET abandoned_email_sent = TRUE WHERE id = :id"), {"id": row[0]})
+        session.commit()
+
+
+def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) -> None:
+    """Dispara email cuando hay un evento de Shopify no procesado del tipo indicado."""
+    config = auto.trigger_config or {}
+    delay_hours = int(config.get("delay_hours", 0))
+    lookback_hours = int(config.get("lookback_hours", 48))
+    now = datetime.utcnow()
+    cutoff_old = now - timedelta(hours=delay_hours)
+    cutoff_recent = now - timedelta(hours=lookback_hours)
+
+    # Map trigger_type back to shopify topic
+    topic_map = {
+        "placed_order":    "orders/create",
+        "fulfilled_order": "orders/fulfilled",
+        "cancelled_order": "orders/cancelled",
+    }
+    topic = topic_map.get(trigger_type)
+    if not topic:
+        return
+
+    rows = session.exec(text("""
+        SELECT id, email, payload FROM shopify_events
+        WHERE topic = :topic
+          AND processed = FALSE
+          AND email IS NOT NULL
+          AND created_at <= :old
+          AND created_at >= :recent
+        ORDER BY created_at ASC LIMIT 200
+    """), {"topic": topic, "old": cutoff_old, "recent": cutoff_recent}).fetchall()
+
+    for row in rows:
+        email = (row[1] or "").lower().strip()
+        if not email:
+            continue
+        trigger_key = f"{trigger_type}:{row[0]}"
+        if _already_sent(session, auto.id, trigger_key):
+            continue
+        contact = session.exec(select(Contact).where(Contact.email == email)).first()
+        if not contact or not contact.opted_in:
+            continue
+        payload = row[2] or {}
+        items = payload.get("line_items", [])
+        first_item = items[0].get("title", "") if items else ""
+        tracking = ""
+        if trigger_type == "fulfilled_order":
+            for fulfillment in payload.get("fulfillments", []):
+                tracking = fulfillment.get("tracking_number", "") or ""
+                break
+        extra_vars = {
+            "order_number": str(payload.get("order_number", "")),
+            "order_total": f"${int(float(payload.get('total_price', 0))):,}".replace(",", "."),
+            "first_product": first_item,
+            "tracking_number": tracking,
+        }
+        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
+        session.exec(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+        session.commit()
+
+
+def _make_shopify_handler(trigger_type: str):
+    def handler(auto, session): _check_shopify_event(auto, session, trigger_type)
+    handler.__name__ = f"_check_{trigger_type}"
+    return handler
+
+
 HANDLERS = {
-    "abandoned_booking": _check_abandoned_booking,
-    "welcome": _check_welcome,
-    "post_visit": _check_post_visit,
-    "reactivation": _check_reactivation,
+    # Shopify order lifecycle
+    "checkout_started":         _make_shopify_handler("checkout_started"),
+    "abandoned_cart":           _check_abandoned_cart,
+    "placed_order":             _make_shopify_handler("placed_order"),
+    "ordered_product":          _make_shopify_handler("ordered_product"),
+    "fulfilled_order":          _make_shopify_handler("fulfilled_order"),
+    "fulfilled_partial_order":  _make_shopify_handler("fulfilled_partial_order"),
+    "confirmed_shipment":       _make_shopify_handler("confirmed_shipment"),
+    "delivered_shipment":       _make_shopify_handler("delivered_shipment"),
+    "marked_out_for_delivery":  _make_shopify_handler("marked_out_for_delivery"),
+    "cancelled_order":          _make_shopify_handler("cancelled_order"),
+    "refunded_order":           _make_shopify_handler("refunded_order"),
+    "added_to_cart":            _make_shopify_handler("added_to_cart"),
+    # Klaviyo-style internal
+    "coupon_assigned":          _make_shopify_handler("coupon_assigned"),
+    "coupon_used":              _make_shopify_handler("coupon_used"),
+    "subscribed_to_back_in_stock": _make_shopify_handler("subscribed_to_back_in_stock"),
+    # Web tracking
+    "viewed_product":           _make_shopify_handler("viewed_product"),
+    "active_on_site":           _make_shopify_handler("active_on_site"),
+    # Internal
+    "welcome":                  _check_welcome,
+    "post_visit":               _check_post_visit,
+    "reactivation":             _check_reactivation,
+    "abandoned_booking":        _check_abandoned_booking,
 }
 
 

@@ -192,6 +192,26 @@ export default function SettingsPage() {
           </div>
           <p className="text-xs text-gray-400 mt-2">Eventos a activar en Resend: <strong>email.sent · email.delivered · email.opened · email.clicked · email.bounced · email.complained</strong></p>
         </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-6">
+          <h2 className="font-semibold text-gray-900 mb-2">Pixel de tracking web (Shopify)</h2>
+          <p className="text-gray-500 text-sm mb-3">
+            Pega este script en Shopify → <strong>Configuración → Checkout → Código adicional</strong> (o en el <code className="bg-gray-100 px-1 rounded text-xs">&lt;head&gt;</code> del tema).
+            Trackea productos vistos, actividad en el sitio y productos al carrito.
+          </p>
+          <div
+            className="bg-gray-900 text-green-400 font-mono text-xs rounded-lg px-4 py-3 break-all cursor-pointer hover:bg-gray-800 transition-colors"
+            onClick={() => {
+              const url = `${window.location.origin}/api/forms/track.js`;
+              const snippet = `<script src="${url}" async></script>`;
+              navigator.clipboard.writeText(snippet);
+            }}
+            title="Click para copiar"
+          >
+            {`<script src="${typeof window !== "undefined" ? window.location.origin : "https://email-marketing-front-end-production.up.railway.app"}/api/forms/track.js" async></script>`}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">Click para copiar · Trackea: producto visto · activo en sitio · agregado al carrito</p>
+        </div>
       </div>
     </div>
   );

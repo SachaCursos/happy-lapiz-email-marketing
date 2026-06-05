@@ -181,7 +181,20 @@ export interface FormSubmission {
   created_at: string;
 }
 
-export type AutomationTrigger = "abandoned_booking" | "welcome" | "post_visit" | "reactivation";
+export type AutomationTrigger =
+  // Shopify: carrito y checkout
+  | "abandoned_cart" | "checkout_started" | "added_to_cart"
+  // Shopify: órdenes
+  | "placed_order" | "ordered_product"
+  | "fulfilled_order" | "fulfilled_partial_order"
+  | "confirmed_shipment" | "delivered_shipment" | "marked_out_for_delivery"
+  | "cancelled_order" | "refunded_order"
+  // Cupones
+  | "coupon_assigned" | "coupon_used"
+  // Web tracking
+  | "viewed_product" | "active_on_site" | "subscribed_to_back_in_stock"
+  // Internos
+  | "welcome" | "post_visit" | "reactivation" | "abandoned_booking";
 export type AutomationStatus = "active" | "paused";
 
 export interface Automation {
