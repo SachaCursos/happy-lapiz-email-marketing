@@ -44,3 +44,53 @@ def on_startup():
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/track.js")
+def tracking_pixel_root():
+    """Script de tracking público — sirve sin auth para Shopify Script Tags."""
+    from fastapi.responses import PlainTextResponse
+    backend = settings.BACKEND_PUBLIC_URL
+    js = f"""(function(){{
+  var API='{backend}/api/shopify/track';
+  function send(evt,data){{
+    fetch(API,{{method:'POST',headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify(Object.assign({{event:evt,url:location.href}},data||{{}})),keepalive:true}}).catch(function(){{}});
+  }}
+  // Viewed Product
+  if(window.meta&&window.meta.product){{
+    send('viewed_product',{{product_id:String(window.meta.product.id||''),product_title:window.meta.product.title||''}});
+  }}
+  // Shopify Analytics product
+  if(window.ShopifyAnalytics&&ShopifyAnalytics.meta&&ShopifyAnalytics.meta.product){{
+    var p=ShopifyAnalytics.meta.product;
+    send('viewed_product',{{product_id:String(p.id||''),product_title:p.title||''}});
+  }}
+  // Active on site
+  try{{
+    var email=(window.ShopifyAnalytics&&ShopifyAnalytics.meta&&ShopifyAnalytics.meta.email)||'';
+    if(email) send('active_on_site',{{email:email}});
+  }}catch(e){{}}
+  // Added to cart — intercept /cart/add fetch
+  var _fetch=window.fetch;
+  window.fetch=function(input,init){{
+    var url=typeof input==='string'?input:(input&&input.url)||'';
+    if(url.indexOf('/cart/add')!==-1){{
+      var body={{}};
+      try{{body=JSON.parse((init&&init.body)||'{{}}');}}catch(e){{}}
+      setTimeout(function(){{send('added_to_cart',{{product_id:String(body.id||''),url:location.href}});}},300);
+    }}
+    return _fetch.apply(this,arguments);
+  }};
+  // Added to cart — intercept XMLHttpRequest
+  var _open=XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open=function(m,u){{
+    if(u&&u.indexOf('/cart/add')!==-1){{
+      setTimeout(function(){{send('added_to_cart',{{url:location.href}});}},500);
+    }}
+    return _open.apply(this,arguments);
+  }};
+}})();
+"""
+    return PlainTextResponse(js, media_type="application/javascript",
+                             headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})

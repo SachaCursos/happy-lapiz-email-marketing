@@ -139,7 +139,7 @@ export default function SegmentDetailPage() {
                       <p className="text-gray-400 text-xs">{c.email}</p>
                     </Link>
                   </td>
-                  <td className="px-6 py-3 text-gray-700">{c.veces_hotboat} pedido{c.veces_hotboat !== 1 ? "s" : ""}</td>
+                  <td className="px-6 py-3 text-gray-700">{c.orders_count} pedido{c.orders_count !== 1 ? "s" : ""}</td>
                   <td className="px-6 py-3 text-gray-500 text-xs">{formatDate(c.ultima_visita)}</td>
                   <td className="px-6 py-3 text-gray-500 text-xs">{c.origin_utm || "—"}</td>
                   <td className="px-6 py-3">
