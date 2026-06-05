@@ -14,6 +14,7 @@ from app.models.form import (
     FormSubmission, FormSubmitPayload,
     SignupForm, SignupFormCreate, SignupFormRead, SignupFormUpdate,
 )
+from app.models.gift_recipient import GiftRecipient, GiftRecipientCreate, GiftRecipientRead, RELACION_OPTIONS
 from app.models.user import User
 
 router = APIRouter()
@@ -504,3 +505,158 @@ def _build_embed_js(cfg: dict) -> str:
       }}
     }})();
     """).strip()
+
+
+# ── Gift recipients (regalados) ───────────────────────────────────────────────
+
+@router.get("/gift/relaciones")
+def get_relaciones():
+    """Opciones de relación para el formulario de regalos (público)."""
+    return {"relaciones": RELACION_OPTIONS}
+
+
+@router.options("/gift/submit")
+def gift_submit_preflight():
+    return Response(status_code=204, headers=_cors_headers())
+
+
+@router.post("/gift/submit")
+def submit_gift_form(
+    payload: GiftRecipientCreate,
+    response: Response,
+    session: Session = Depends(get_session),
+):
+    """Endpoint público — recibe datos del popup de regalos en happylapiz.cl."""
+    for k, v in _cors_headers().items():
+        response.headers[k] = v
+
+    email = payload.email.lower().strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=422, detail="Email inválido")
+
+    contact = session.exec(select(Contact).where(Contact.email == email)).first()
+    contact_id = contact.id if contact else None
+
+    recipient = GiftRecipient(
+        email=email,
+        relacion=payload.relacion,
+        nombre_regalado=payload.nombre_regalado.strip(),
+        fecha_nacimiento_regalado=payload.fecha_nacimiento_regalado,
+        contact_id=contact_id,
+        source_url=payload.source_url,
+    )
+    session.add(recipient)
+    session.commit()
+    session.refresh(recipient)
+    return {"ok": True, "id": recipient.id}
+
+
+@router.get("/gift/recipients", response_model=List[GiftRecipientRead])
+def list_gift_recipients(
+    skip: int = 0,
+    limit: int = 100,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    return session.exec(
+        select(GiftRecipient).order_by(GiftRecipient.created_at.desc()).offset(skip).limit(limit)
+    ).all()
+
+
+@router.get("/gift/embed.js")
+def gift_embed_js():
+    """Script embebible para el popup de regalos en happylapiz.cl."""
+    api = settings.BACKEND_PUBLIC_URL
+    relaciones = RELACION_OPTIONS
+    rel_options = "".join(f'<option value="{r}">{r.capitalize()}</option>' for r in relaciones)
+
+    js = f"""(function(){{
+  var API='{api}';
+  var STORE_KEY='hl_gift_popup';
+  if(sessionStorage.getItem(STORE_KEY)) return;
+
+  function injectStyles(){{
+    if(document.getElementById('hl-gift-styles')) return;
+    var s=document.createElement('style');
+    s.id='hl-gift-styles';
+    s.textContent='#hl-gift-overlay{{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px}}'+
+      '#hl-gift-box{{background:#fff;border-radius:20px;padding:32px 28px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.25);font-family:Poppins,Arial,sans-serif}}'+
+      '#hl-gift-box h2{{margin:0 0 6px;font-size:20px;color:#111;font-weight:700}}'+
+      '#hl-gift-box p{{margin:0 0 20px;font-size:14px;color:#666}}'+
+      '.hl-input{{width:100%;box-sizing:border-box;border:1.5px solid #e5e7eb;border-radius:10px;padding:11px 14px;font-size:14px;margin-bottom:12px;outline:none;font-family:inherit}}'+
+      '.hl-input:focus{{border-color:#ffd51e}}'+
+      '.hl-btn{{width:100%;background:#ffd51e;color:#111;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px}}'+
+      '.hl-btn:hover{{background:#ffc827}}'+
+      '#hl-gift-close{{position:absolute;top:12px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#999}}'+
+      '#hl-gift-success{{display:none;text-align:center;padding:16px 0}}'+
+      'label.hl-lbl{{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}}';
+    document.head.appendChild(s);
+  }}
+
+  function buildPopup(){{
+    var overlay=document.createElement('div');
+    overlay.id='hl-gift-overlay';
+    overlay.innerHTML='<div id="hl-gift-box" style="position:relative">'+
+      '<button id="hl-gift-close" aria-label="Cerrar">&times;</button>'+
+      '<h2>&#127873; ¿Quién recibe el regalo?</h2>'+
+      '<p>Cuéntanos un poco para enviarte recordatorios especiales antes de su cumpleaños.</p>'+
+      '<div id="hl-gift-form">'+
+      '<label class="hl-lbl">Tu email</label>'+
+      '<input class="hl-input" id="hl-email" type="email" placeholder="tucorreo@ejemplo.com" required />'+
+      '<label class="hl-lbl">¿Para quién es el regalo?</label>'+
+      '<select class="hl-input" id="hl-relacion"><option value="">Selecciona...</option>'+
+      '{rel_options}'+
+      '</select>'+
+      '<label class="hl-lbl">¿Cómo se llama?</label>'+
+      '<input class="hl-input" id="hl-nombre" type="text" placeholder="Nombre del regalado" />'+
+      '<label class="hl-lbl">Fecha de nacimiento</label>'+
+      '<input class="hl-input" id="hl-fecha" type="date" />'+
+      '<button class="hl-btn" id="hl-gift-btn">Guardar &#127881;</button>'+
+      '</div>'+
+      '<div id="hl-gift-success">'+
+      '<div style="font-size:48px;margin-bottom:12px">&#127881;</div>'+
+      '<p style="font-size:16px;font-weight:700;color:#111;margin:0 0 8px">¡Listo!</p>'+
+      '<p style="color:#666;font-size:14px;margin:0">Te avisaremos antes de su cumpleaños.</p>'+
+      '</div>'+
+      '</div>';
+    document.body.appendChild(overlay);
+
+    document.getElementById('hl-gift-close').onclick=closePopup;
+    overlay.onclick=function(e){{if(e.target===overlay)closePopup();}};
+
+    document.getElementById('hl-gift-btn').onclick=function(){{
+      var email=document.getElementById('hl-email').value.trim();
+      var relacion=document.getElementById('hl-relacion').value;
+      var nombre=document.getElementById('hl-nombre').value.trim();
+      var fecha=document.getElementById('hl-fecha').value;
+      if(!email||!relacion||!nombre){{alert('Por favor completa email, relación y nombre.');return;}}
+      var btn=document.getElementById('hl-gift-btn');
+      btn.disabled=true;btn.textContent='Guardando...';
+      fetch(API+'/api/forms/gift/submit',{{
+        method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body:JSON.stringify({{email:email,relacion:relacion,nombre_regalado:nombre,fecha_nacimiento_regalado:fecha||null,source_url:location.href}})
+      }}).then(function(r){{return r.json();}}).then(function(){{
+        document.getElementById('hl-gift-form').style.display='none';
+        document.getElementById('hl-gift-success').style.display='block';
+        sessionStorage.setItem(STORE_KEY,'done');
+        setTimeout(closePopup,4000);
+      }}).catch(function(){{btn.disabled=false;btn.textContent='Error — intenta de nuevo';}});
+    }};
+  }}
+
+  function closePopup(){{
+    var el=document.getElementById('hl-gift-overlay');
+    if(el)el.parentNode.removeChild(el);
+    sessionStorage.setItem(STORE_KEY,'1');
+  }}
+
+  injectStyles();
+  setTimeout(function(){{buildPopup();}},8000);
+}})();
+"""
+    return PlainTextResponse(
+        js,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
+    )

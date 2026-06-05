@@ -103,7 +103,7 @@ def create_coupon_campaign(
     """), {
         "name": body.name, "sid": shopify_id, "dtype": body.discount_type,
         "dval": body.discount_value, "minp": body.min_purchase, "prefix": body.prefix,
-        "exp": body.expires_at, "applies": body.applies_to, "uid": current_user.id,
+        "exp": expires_iso, "applies": body.applies_to, "uid": current_user.id,
     }).fetchone()
     session.commit()
     return {"id": result[0], "name": result[1], "discount_type": result[2],

@@ -2,10 +2,10 @@ import re
 import httpx
 from datetime import datetime
 from fastapi import APIRouter, Depends
-from sqlmodel import Session, select
+from sqlmodel import Session, select, text
 from app.database import get_session
 from app.core.config import settings
-from app.core.deps import require_admin
+from app.core.deps import get_current_user, require_admin
 from app.models.user import User
 from app.models.template import Template
 from app.models.campaign import Campaign, CampaignSend
@@ -361,3 +361,24 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
         tag = r.json().get("script_tag", {})
         return {"ok": True, "id": tag.get("id"), "src": script_url}
     return {"ok": False, "error": r.text[:200]}
+
+
+@router.get("/brand")
+def get_brand_assets(
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    """Devuelve los activos de marca: colores, logos y tipografía."""
+    rows = session.exec(
+        text("SELECT id, categoria, nombre, valor, descripcion FROM plantillas_de_la_marca ORDER BY categoria, id")
+    ).all()
+    result: dict = {"colores": [], "logos": [], "tipografia": []}
+    for r in rows:
+        item = {"id": r[0], "nombre": r[2], "valor": r[3], "descripcion": r[4]}
+        if r[1] == "color":
+            result["colores"].append(item)
+        elif r[1] == "logo":
+            result["logos"].append(item)
+        elif r[1] == "tipografia":
+            result["tipografia"].append(item)
+    return result
