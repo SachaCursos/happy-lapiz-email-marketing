@@ -4,6 +4,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!frontend/.env.production
 .idea/
 .vscode/
 *.swp
