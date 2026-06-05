@@ -50,11 +50,15 @@ async function proxy(req: NextRequest): Promise<NextResponse> {
     }
 
     // Buffer the response body — streaming through Railway's CDN can drop bytes
-    const resBody = await upstream.arrayBuffer();
+    const resText = await upstream.text();
     resHeaders.set("x-proxy-version", "v3");
-    return new NextResponse(resBody, { status: upstream.status, headers: resHeaders });
-  } catch {
-    return NextResponse.json({ detail: "Backend no disponible" }, { status: 503 });
+    resHeaders.set("x-proxy-backend", BACKEND.slice(0, 40));
+    resHeaders.set("x-proxy-body-len", String(resText.length));
+    resHeaders.set("x-proxy-req-body-len", String(bodyBuffer?.byteLength ?? 0));
+    resHeaders.set("x-proxy-status", String(upstream.status));
+    return new NextResponse(resText, { status: upstream.status, headers: resHeaders });
+  } catch (err) {
+    return NextResponse.json({ detail: "Backend no disponible", error: String(err) }, { status: 503 });
   }
 }
 
