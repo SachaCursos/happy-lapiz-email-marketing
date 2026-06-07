@@ -192,7 +192,7 @@ const hasNextPage = contacts.length === PAGE_SIZE;
                     >
                       {c.name || c.email}
                     </Link>
-                    {!c.opted_in && (
+                    {c.accepts_marketing === false && (
                       <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-500 font-medium">
                         baja
                       </span>
@@ -238,9 +238,11 @@ const hasNextPage = contacts.length === PAGE_SIZE;
 
                   {/* Suscripción */}
                   <td className="px-5 py-3 text-center whitespace-nowrap">
-                    {c.opted_in
+                    {c.accepts_marketing === true
                       ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">Activo</span>
-                      : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500">Baja</span>}
+                      : c.accepts_marketing === false
+                        ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500">Baja</span>
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-400">—</span>}
                   </td>
                 </tr>
               ))
