@@ -400,8 +400,15 @@ def run_scheduled_campaigns() -> None:
                     logger.warning("Scheduled campaign %d: segment %d not found", campaign.id, campaign.segment_id)
                     continue
                 contacts = evaluate_segment(seg.conditions, session)
+                if campaign.exclude_segment_ids:
+                    excluded_ids: set = set()
+                    for excl_id in campaign.exclude_segment_ids:
+                        excl_seg = session.get(Segment, excl_id)
+                        if excl_seg:
+                            excluded_ids.update(ct.id for ct in evaluate_segment(excl_seg.conditions, session))
+                    contacts = [ct for ct in contacts if ct.id not in excluded_ids]
                 if not contacts:
-                    logger.warning("Scheduled campaign %d: no opted-in contacts", campaign.id)
+                    logger.warning("Scheduled campaign %d: no contacts after exclusions", campaign.id)
                     continue
                 already_sent = set(session.exec(
                     select(CampaignSend.contact_id).where(

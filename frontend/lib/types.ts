@@ -109,6 +109,7 @@ export interface Campaign {
   preview_text: string | null;
   template_id: number;
   segment_id: number;
+  exclude_segment_ids: number[] | null;
   status: CampaignStatus;
   scheduled_at: string | null;
   sent_at: string | null;

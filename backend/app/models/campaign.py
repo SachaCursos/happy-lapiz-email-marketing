@@ -1,6 +1,7 @@
-from typing import Optional
+from typing import Any, List, Optional
 from datetime import datetime
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, Column
+from sqlalchemy import JSON
 
 
 class Campaign(SQLModel, table=True):
@@ -12,6 +13,7 @@ class Campaign(SQLModel, table=True):
     preview_text: Optional[str] = None
     template_id: int = Field(foreign_key="templates.id")
     segment_id: int = Field(foreign_key="segments.id")
+    exclude_segment_ids: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     # draft | scheduled | sending | sent | cancelled
     status: str = Field(default="draft")
     scheduled_at: Optional[datetime] = None
@@ -42,6 +44,7 @@ class CampaignCreate(SQLModel):
     preview_text: Optional[str] = None
     template_id: int
     segment_id: int
+    exclude_segment_ids: Optional[List[int]] = None
     scheduled_at: Optional[datetime] = None
 
 
@@ -51,6 +54,7 @@ class CampaignUpdate(SQLModel):
     preview_text: Optional[str] = None
     template_id: Optional[int] = None
     segment_id: Optional[int] = None
+    exclude_segment_ids: Optional[List[int]] = None
     scheduled_at: Optional[datetime] = None
     status: Optional[str] = None
 
@@ -62,6 +66,7 @@ class CampaignRead(SQLModel):
     preview_text: Optional[str]
     template_id: int
     segment_id: int
+    exclude_segment_ids: Optional[List[int]] = None
     status: str
     scheduled_at: Optional[datetime]
     sent_at: Optional[datetime]
