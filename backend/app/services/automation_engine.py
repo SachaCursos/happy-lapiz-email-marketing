@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, text
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.services.sync_shopify_orders import sync_contacts_from_shopify_orders
 from app.database import engine as db_engine
 from app.models.automation import Automation, AutomationRun
 from app.models.campaign import Campaign, CampaignSend
@@ -446,6 +447,7 @@ def start_scheduler() -> None:
             try:
                 run_automations()
                 run_scheduled_campaigns()
+                sync_contacts_from_shopify_orders()
             except Exception as exc:
                 logger.exception("Automation scheduler error: %s", exc)
             time.sleep(60)  # 1 minute
