@@ -378,7 +378,7 @@ export default function AutomationsPage() {
   const { data: automations = [], isLoading } = useQuery<Automation[]>({
     queryKey: ["automations"],
     queryFn: () => automationsApi.list().then((r) => r.data),
-    staleTime: 30_000,
+    staleTime: 0,
   });
 
   const { data: templates = [] } = useQuery<Template[]>({
