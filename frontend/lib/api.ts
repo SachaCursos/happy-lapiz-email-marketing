@@ -103,6 +103,12 @@ export const campaignsApi = {
 export const analyticsApi = {
   overview: () => api.get("/analytics/overview"),
   recentCampaigns: () => api.get("/analytics/campaigns/recent"),
+  revenue: (dateFrom?: string, dateTo?: string) => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    return api.get(`/analytics/revenue?${params.toString()}`);
+  },
 };
 
 // Signup Forms
