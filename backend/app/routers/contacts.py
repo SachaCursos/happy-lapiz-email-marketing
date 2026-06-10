@@ -23,12 +23,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_SORT_COLUMNS = {
+    "name": Contact.name,
+    "email": Contact.email,
+    "orders_count": Contact.orders_count,
+    "total_spent": Contact.total_spent,
+    "last_purchase": Contact.last_purchase,
+    "created_at": Contact.created_at,
+    "accepts_marketing": Contact.accepts_marketing,
+}
+
+
+@router.get("/stats")
+def contacts_stats(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+    from sqlmodel import func
+    total = session.exec(select(func.count(Contact.id))).one()
+    active = session.exec(select(func.count(Contact.id)).where(Contact.accepts_marketing == True)).one()  # noqa
+    unsubscribed = session.exec(select(func.count(Contact.id)).where(Contact.accepts_marketing == False)).one()  # noqa
+    opted_in = session.exec(select(func.count(Contact.id)).where(Contact.opted_in == True)).one()  # noqa
+    return {"total": total, "active": active, "unsubscribed": unsubscribed, "opted_in": opted_in}
+
+
 @router.get("", response_model=List[ContactRead])
 def list_contacts(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, le=200),
     search: Optional[str] = None,
     opted_in: Optional[bool] = None,
+    sort_by: Optional[str] = Query(None),
+    sort_dir: Optional[str] = Query("desc"),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
@@ -39,6 +62,8 @@ def list_contacts(
         )
     if opted_in is not None:
         query = query.where(Contact.opted_in == opted_in)
+    col = _SORT_COLUMNS.get(sort_by or "created_at", Contact.created_at)
+    query = query.order_by(col.desc() if sort_dir != "asc" else col.asc())
     query = query.offset(skip).limit(limit)
     return session.exec(query).all()
 

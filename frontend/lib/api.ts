@@ -47,8 +47,9 @@ export const authApi = {
 
 // Contacts
 export const contactsApi = {
-  list: (params?: { skip?: number; limit?: number; search?: string; opted_in?: boolean }) =>
+  list: (params?: { skip?: number; limit?: number; search?: string; opted_in?: boolean; sort_by?: string; sort_dir?: string }) =>
     api.get("/contacts", { params }),
+  stats: () => api.get("/contacts/stats"),
   get: (id: number) => api.get(`/contacts/${id}`),
   create: (data: unknown) => api.post("/contacts", data),
   update: (id: number, data: unknown) => api.patch(`/contacts/${id}`, data),
