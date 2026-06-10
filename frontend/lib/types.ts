@@ -94,7 +94,7 @@ export interface Template {
   subject_default: string;
   preview_text: string | null;
   html_content: string;
-  json_blocks: Record<string, unknown> | null;
+  json_blocks: unknown[] | Record<string, unknown> | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
