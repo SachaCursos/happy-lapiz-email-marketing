@@ -449,7 +449,11 @@ function ExpandedPanel({ automationId }: { automationId: number }) {
   );
 }
 
+type FilterTab = "active" | "paused" | "all";
+
 export default function AutomationsPage() {
+  const [filter, setFilter] = useState<FilterTab>("active");
+
   const { data: automations = [], isLoading } = useQuery<Automation[]>({
     queryKey: ["automations"],
     queryFn: () => automationsApi.list().then((r) => r.data),
@@ -462,15 +466,20 @@ export default function AutomationsPage() {
     staleTime: 5 * 60_000,
   });
 
-  const active = automations.filter((a) => a.status === "active").length;
+  const activeCount = automations.filter((a) => a.status === "active").length;
+  const pausedCount = automations.filter((a) => a.status !== "active").length;
+
+  const visible = filter === "all"
+    ? automations
+    : automations.filter((a) => filter === "active" ? a.status === "active" : a.status !== "active");
 
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Automatizaciones</h1>
           <p className="text-gray-500 mt-1 text-sm">
-            {active} activa{active !== 1 ? "s" : ""} de {automations.length}
+            {activeCount} activa{activeCount !== 1 ? "s" : ""} · {pausedCount} pausada{pausedCount !== 1 ? "s" : ""}
           </p>
         </div>
         <Link
@@ -480,6 +489,32 @@ export default function AutomationsPage() {
           <Plus size={15} />
           Nueva automatización
         </Link>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-lg w-fit">
+        {([
+          { key: "active", label: "Activas", count: activeCount },
+          { key: "paused", label: "Pausadas", count: pausedCount },
+          { key: "all",    label: "Todas",    count: automations.length },
+        ] as { key: FilterTab; label: string; count: number }[]).map(({ key, label, count }) => (
+          <button
+            key={key}
+            onClick={() => setFilter(key)}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              filter === key
+                ? "bg-white text-gray-900 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            {label}
+            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+              filter === key ? "bg-gray-100 text-gray-600" : "bg-gray-200 text-gray-500"
+            }`}>
+              {count}
+            </span>
+          </button>
+        ))}
       </div>
 
       {isLoading ? (
@@ -504,24 +539,17 @@ export default function AutomationsPage() {
             <Plus size={15} /> Crear primera automatización
           </Link>
         </div>
+      ) : visible.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+          <p className="text-gray-500 text-sm">No hay automatizaciones {filter === "active" ? "activas" : "pausadas"}.</p>
+        </div>
       ) : (
         <div className="space-y-3">
-          {automations.map((a) => (
+          {visible.map((a) => (
             <AutomationRow key={a.id} auto={a} templates={templates} />
           ))}
         </div>
       )}
-
-      <div className="mt-8 grid grid-cols-2 gap-4">
-        {Object.entries(TRIGGER_LABELS).map(([key, { label, description, color }]) => (
-          <div key={key} className="bg-white border border-gray-200 rounded-xl p-4 flex gap-3">
-            <span className={`mt-0.5 px-2 py-0.5 rounded-full text-xs font-semibold h-fit shrink-0 ${color}`}>
-              {label}
-            </span>
-            <p className="text-sm text-gray-500">{description}</p>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

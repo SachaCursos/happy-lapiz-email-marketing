@@ -110,7 +110,7 @@ def automation_stats(
     _: User = Depends(get_current_user),
 ):
     from sqlalchemy import text
-    result = session.exec(text("""
+    result = session.execute(text("""
         SELECT
             COUNT(*)                                            AS total,
             COUNT(CASE WHEN status = 'sent' THEN 1 END)        AS sent,
@@ -128,7 +128,7 @@ def automation_stats(
     click_rate = round(clicked / sent * 100, 1) if sent else 0.0
 
     # Conversions: orders from the same email within 7 days of the automation send
-    conv = session.exec(text("""
+    conv = session.execute(text("""
         SELECT
             COUNT(DISTINCT so.id)                   AS orders,
             COALESCE(SUM(so.total_price::numeric), 0) AS revenue
@@ -182,7 +182,7 @@ def automation_pending(
         lookback_hours = float(config.get("lookback_hours", 24))
         cutoff_recent  = now - timedelta(hours=lookback_hours)
 
-        rows = session.exec(text("""
+        rows = session.execute(text("""
             SELECT email, first_name, last_name, subtotal_price, line_items, created_at
             FROM carritos_abandonados
             WHERE recovered = FALSE
@@ -210,7 +210,7 @@ def automation_pending(
         delay_hours = float(config.get("delay_hours", 0))
         cutoff      = now - timedelta(hours=max(delay_hours + 48, 48))
 
-        rows = session.exec(text("""
+        rows = session.execute(text("""
             SELECT c.email, c.name, c.created_at
             FROM contacts c
             WHERE c.opted_in = TRUE
@@ -241,7 +241,7 @@ def automation_pending(
         cutoff_date     = (now - timedelta(days=inactivity_days)).date()
         cooldown_start  = now - timedelta(days=cooldown_days)
 
-        rows = session.exec(text("""
+        rows = session.execute(text("""
             SELECT c.email, c.name, c.ultima_visita
             FROM contacts c
             WHERE c.opted_in = TRUE
@@ -271,7 +271,7 @@ def automation_pending(
         delay_days  = int(config.get("delay_days", 3))
         target_date = (now - timedelta(days=delay_days)).date()
 
-        rows = session.exec(text("""
+        rows = session.execute(text("""
             SELECT c.email, c.name, c.ultima_visita
             FROM contacts c
             WHERE c.opted_in = TRUE
@@ -310,7 +310,7 @@ def automation_pending(
             lookback_hours = float(config.get("lookback_hours", 48))
             cutoff_recent  = now - timedelta(hours=lookback_hours)
 
-            rows = session.exec(text("""
+            rows = session.execute(text("""
                 SELECT email, payload, created_at
                 FROM shopify_events
                 WHERE topic = :topic

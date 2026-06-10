@@ -16,6 +16,7 @@ import {
   BarChart2,
   Tag,
   Palette,
+  Braces,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,7 @@ const nav = [
   { href: "/templates",    label: "Plantillas",       icon: FileText },
   { href: "/campaigns",    label: "Campañas",         icon: Send },
   { href: "/automations",  label: "Automatizaciones", icon: Zap },
+  { href: "/variables",   label: "Variables",         icon: Braces },
   { href: "/forms",        label: "Formularios",      icon: MousePointerClick },
   { href: "/asuntos",      label: "Asuntos",          icon: BarChart2 },
   { href: "/coupons",      label: "Cupones",           icon: Tag },

@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 
 import resend
-from jinja2 import Template as JTemplate
+from jinja2 import Environment, ChainableUndefined
 from sqlalchemy import create_engine, text
 from sqlmodel import Session, select
 
@@ -21,6 +21,7 @@ from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
 from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre
+from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ def _already_sent(session: Session, automation_id: int, trigger_key: str) -> boo
         select(AutomationRun).where(
             AutomationRun.automation_id == automation_id,
             AutomationRun.trigger_key == trigger_key,
+            AutomationRun.status == "sent",
         )
     ).first() is not None
 
@@ -52,28 +54,32 @@ def _send_email(
         logger.warning("Automation %d: template %d not found", automation.id, automation.template_id)
         return
 
-    vars_ = {
-        "nombre": _fmt_nombre(contact.name, contact.email),
-        "first_name": _fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
-        "email": contact.email,
-        "orders_count": contact.orders_count,
-        "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
-        "ticket_medio": contact.ticket_medio or 0,
-        "total_spent": contact.total_spent or 0,
-        "shipping_city": contact.shipping_city or "",
-        **(extra_vars or {}),
-    }
-    html = _inject_footer(JTemplate(tpl.html_content).render(**vars_), contact.email)
-    resend.api_key = settings.RESEND_API_KEY
-
+    # Create run record upfront so any error is always persisted
     run = AutomationRun(
         automation_id=automation.id,
         contact_id=contact.id,
         contact_email=contact.email,
         trigger_key=trigger_key,
         triggered_at=datetime.utcnow(),
+        status="failed",
     )
     try:
+        vars_ = {
+            "nombre": _fmt_nombre(contact.name, contact.email),
+            "first_name": _fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
+            "email": contact.email,
+            "orders_count": contact.orders_count or 0,
+            "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
+            "ticket_medio": contact.ticket_medio or 0,
+            "total_spent": contact.total_spent or 0,
+            "shipping_city": contact.shipping_city or "",
+            **(extra_vars or {}),
+        }
+        # Replace Klaviyo-style {% unsubscribe %} with actual link before Jinja2 renders
+        raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
+        _env = Environment(undefined=ChainableUndefined)
+        html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
+        resend.api_key = settings.RESEND_API_KEY
         result = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
             "to": [contact.email],
@@ -87,7 +93,6 @@ def _send_email(
         run.executed_at = datetime.utcnow()
         logger.info("Automation %d sent to %s (key=%s)", automation.id, contact.email, trigger_key)
     except Exception as exc:
-        run.status = "failed"
         run.error = str(exc)[:500]
         run.executed_at = datetime.utcnow()
         logger.error("Automation %d failed for %s: %s", automation.id, contact.email, exc)
@@ -258,7 +263,7 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
     cutoff_old = now - timedelta(hours=delay_hours)
     cutoff_recent = now - timedelta(hours=lookback_hours)
 
-    rows = session.exec(text("""
+    rows = session.execute(text("""
         SELECT id, checkout_token, email, first_name, last_name,
                subtotal_price, line_items, checkout_url
         FROM carritos_abandonados
@@ -300,15 +305,17 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         items = row[6] or []
         first_item = items[0].get("title", "") if items else ""
         subtotal = float(row[5] or 0)
+        checkout_url = row[7] or "https://happylapiz.cl/cart"
         extra_vars = {
             "nombre":        full_name,
             "first_name":    first_name or full_name.split()[0],
             "cart_total":    f"${int(subtotal):,}".replace(",", "."),
             "first_product": first_item,
-            "cart_url":      row[7] or "https://happylapiz.cl/cart",
+            "cart_url":      checkout_url,
+            "event":         {"extra": {"checkout_url": checkout_url}},
         }
         _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
-        session.exec(text(
+        session.execute(text(
             "UPDATE carritos_abandonados SET abandoned_email_sent = TRUE WHERE id = :id"
         ), {"id": row[0]})
         session.commit()
@@ -333,7 +340,7 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
     if not topic:
         return
 
-    rows = session.exec(text("""
+    rows = session.execute(text("""
         SELECT id, email, payload FROM shopify_events
         WHERE topic = :topic
           AND processed = FALSE
@@ -368,7 +375,7 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             "tracking_number": tracking,
         }
         _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
-        session.exec(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+        session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
         session.commit()
 
 
