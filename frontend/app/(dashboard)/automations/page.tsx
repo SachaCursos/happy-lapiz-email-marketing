@@ -161,13 +161,19 @@ function EditPanel({
               <span className="text-xs text-gray-500">{i === 0 ? "horas desde el evento" : "horas desde el paso anterior"}</span>
             </div>
             {i > 0 && (
-              <select value={step.condition ?? "not_purchased"}
-                onChange={(e) => updateStep(i, { condition: e.target.value as AutomationStep["condition"] })}
-                className="w-full border border-gray-300 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500">
-                <option value="not_purchased">Enviar solo si no compró</option>
-                <option value="not_recovered">Enviar solo si carrito no recuperado</option>
-                <option value="always">Siempre enviar</option>
-              </select>
+              <div className={`rounded border px-2 py-2 space-y-1 ${step.condition !== "always" ? "bg-red-50 border-red-200" : "bg-gray-50 border-gray-200"}`}>
+                <p className="text-xs font-medium text-gray-500 flex items-center gap-1"><GitBranch size={10} /> Salida del flujo si...</p>
+                <select value={step.condition ?? "not_purchased"}
+                  onChange={(e) => updateStep(i, { condition: e.target.value as AutomationStep["condition"] })}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500">
+                  <option value="not_purchased">El contacto realizó una compra</option>
+                  <option value="not_recovered">El carrito fue recuperado</option>
+                  <option value="always">Nunca (siempre enviar)</option>
+                </select>
+                {step.condition !== "always" && (
+                  <p className="text-xs text-red-500">Si la condición se cumple, el contacto sale del flujo.</p>
+                )}
+              </div>
             )}
             <select value={step.template_id || 0}
               onChange={(e) => updateStep(i, { template_id: Number(e.target.value) })}

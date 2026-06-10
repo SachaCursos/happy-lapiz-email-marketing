@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
-import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff } from "lucide-react";
 import Link from "next/link";
 
 // ── Trigger definitions ────────────────────────────────────────────────────────
@@ -47,18 +47,19 @@ const EVENT_TRIGGERS = new Set<AutomationTrigger>([
   "viewed_product", "active_on_site", "subscribed_to_back_in_stock", "welcome",
 ]);
 
-// Conditions available per trigger type
-const CONDITION_OPTIONS: Record<string, { value: string; label: string; hint: string }[]> = {
+// Exit conditions: checked BEFORE sending each step from step 2 onwards.
+// If the condition fails, the contact exits the flow immediately.
+const EXIT_CONDITIONS: Record<string, { value: string; label: string; hint: string }[]> = {
   abandoned_cart: [
-    { value: "not_recovered", label: "Si aún no compró (carrito no recuperado)", hint: "Solo enviar si el carrito sigue abandonado." },
-    { value: "always",        label: "Siempre enviar",                            hint: "Enviar sin importar si ya compró." },
+    { value: "not_purchased", label: "Si no realizó ninguna compra",      hint: "Detiene el flujo si el contacto compró algo desde que entró al flujo. Recomendado." },
+    { value: "always",        label: "Enviar siempre (sin condición)",    hint: "El correo se envía sin importar si ya compró." },
   ],
   placed_order: [
-    { value: "always", label: "Siempre enviar", hint: "" },
+    { value: "always", label: "Enviar siempre", hint: "" },
   ],
   _default: [
-    { value: "not_purchased", label: "Si no ha comprado desde que entró al flujo", hint: "Se detiene si el contacto realizó una compra." },
-    { value: "always",        label: "Siempre enviar",                             hint: "Enviar sin condiciones." },
+    { value: "not_purchased", label: "Si no realizó ninguna compra",      hint: "Detiene el flujo si el contacto compró algo desde que entró al flujo." },
+    { value: "always",        label: "Enviar siempre (sin condición)",    hint: "El correo se envía sin importar si ya compró." },
   ],
 };
 
@@ -153,7 +154,7 @@ function StepCard({
   onChange: (s: StepState) => void;
   onRemove: () => void;
 }) {
-  const condOptions = CONDITION_OPTIONS[triggerType] ?? CONDITION_OPTIONS["_default"];
+  const condOptions = EXIT_CONDITIONS[triggerType] ?? EXIT_CONDITIONS["_default"];
 
   return (
     <div className="relative border border-gray-200 rounded-xl bg-white overflow-hidden">
@@ -199,11 +200,16 @@ function StepCard({
           )}
         </div>
 
-        {/* Condition (only from step 2 onwards) */}
+        {/* Exit condition (only from step 2 onwards) */}
         {!isFirst && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5 flex items-center gap-1.5">
-              <GitBranch size={13} className="text-gray-400" /> Condición para enviar
+          <div className={`rounded-lg border px-3 py-3 space-y-2 ${
+            step.condition === "always"
+              ? "bg-gray-50 border-gray-200"
+              : "bg-red-50 border-red-200"
+          }`}>
+            <label className="block text-xs font-semibold flex items-center gap-1.5 text-gray-600">
+              <GitBranch size={12} />
+              Condición de salida del flujo
             </label>
             <select value={step.condition} onChange={(e) => onChange({ ...step, condition: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
@@ -211,9 +217,14 @@ function StepCard({
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
-            {condOptions.find((o) => o.value === step.condition)?.hint && (
-              <p className="text-xs text-gray-400 mt-1">
-                {condOptions.find((o) => o.value === step.condition)?.hint}
+            {step.condition !== "always" && (
+              <p className="text-xs text-red-600 font-medium">
+                Si la condición no se cumple, el contacto sale del flujo y no recibirá este ni los siguientes correos.
+              </p>
+            )}
+            {step.condition === "always" && condOptions.find((o) => o.value === "always")?.hint && (
+              <p className="text-xs text-gray-500">
+                {condOptions.find((o) => o.value === "always")?.hint}
               </p>
             )}
           </div>
@@ -286,9 +297,10 @@ export default function NewAutomationPage() {
   const selectedTrigger = TRIGGERS.find((t) => t.value === triggerType)!;
 
   function addStep() {
+    const defaultCondition = (EXIT_CONDITIONS[triggerType] ?? EXIT_CONDITIONS["_default"])[0].value;
     setSteps((prev) => [
       ...prev,
-      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", condition: "not_purchased" },
+      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", condition: defaultCondition },
     ]);
   }
 
@@ -504,12 +516,21 @@ export default function NewAutomationPage() {
             <Plus size={14} /> Agregar otro correo al flujo
           </button>
 
-          <div className="mt-3 flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5">
-            <Info size={13} className="text-blue-400 shrink-0 mt-0.5" />
-            <p className="text-xs text-blue-700">
-              Cada correo del flujo se envía a la misma persona con el delay configurado entre pasos.
-              Si la condición del paso no se cumple (ej. ya compró), el flujo se detiene automáticamente.
-            </p>
+          <div className="mt-3 space-y-2">
+            <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5">
+              <Info size={13} className="text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700">
+                Cada correo se envía con el delay configurado desde el paso anterior. El timer empieza cuando el contacto entra al flujo.
+              </p>
+            </div>
+            {steps.length > 1 && steps.slice(1).some((s) => s.condition !== "always") && (
+              <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
+                <ShieldOff size={13} className="text-green-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-green-700 font-medium">
+                  Si el contacto compra, sale automáticamente del flujo y no recibe los siguientes correos.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
