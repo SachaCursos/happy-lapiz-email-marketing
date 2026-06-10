@@ -1,7 +1,14 @@
 """
-Automation engine — runs every 15 minutes in a background thread.
-Implements 4 trigger types: abandoned_booking, welcome, post_visit, reactivation.
+Automation engine — runs every 60 seconds in a background thread.
+
+Two-phase processing:
+  Phase 1 (trigger detection): each handler detects qualifying events and creates
+  AutomationEnrollment records. No emails sent here.
+  Phase 2 (enrollment processing): _process_enrollments() sends emails for any
+  enrollment whose next_send_at has passed, then advances to the next step or
+  marks as completed/converted.
 """
+import json
 import logging
 import threading
 import time
@@ -15,7 +22,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.services.sync_shopify_orders import sync_contacts_from_shopify_orders
 from app.database import engine as db_engine
-from app.models.automation import Automation, AutomationRun
+from app.models.automation import Automation, AutomationEnrollment, AutomationRun
 from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
@@ -32,41 +39,122 @@ def _source_engine():
     return create_engine(url)
 
 
-def _already_sent(session: Session, automation_id: int, trigger_key: str) -> bool:
+def _get_steps(auto: Automation) -> list:
+    """Return the steps list for an automation, handling legacy single-step automations."""
+    if auto.steps:
+        return auto.steps
+    # Backwards compat: convert legacy top-level template_id/subject to a single step
+    if auto.template_id and auto.subject:
+        config = auto.trigger_config or {}
+        delay = float(config.get("delay_hours", 0))
+        return [{"step": 1, "delay_hours": delay, "template_id": auto.template_id, "subject": auto.subject, "condition": None}]
+    return []
+
+
+def _already_sent_step(session: Session, automation_id: int, trigger_key: str, step_number: int) -> bool:
+    """Check if a specific step was already successfully sent for this trigger_key."""
     return session.exec(
         select(AutomationRun).where(
             AutomationRun.automation_id == automation_id,
             AutomationRun.trigger_key == trigger_key,
+            AutomationRun.step_number == step_number,
             AutomationRun.status == "sent",
         )
     ).first() is not None
 
 
-def _send_email(
+def _enroll(
     session: Session,
-    automation: Automation,
+    auto: Automation,
+    contact_email: str,
+    trigger_key: str,
+    first_step_delay_hours: float,
+    extra_vars: dict | None = None,
+) -> bool:
+    """Create an enrollment for a contact. Returns False if already enrolled."""
+    existing = session.exec(
+        select(AutomationEnrollment).where(
+            AutomationEnrollment.automation_id == auto.id,
+            AutomationEnrollment.trigger_key == trigger_key,
+        )
+    ).first()
+    if existing:
+        return False
+
+    enrollment = AutomationEnrollment(
+        automation_id=auto.id,
+        contact_email=contact_email.lower(),
+        trigger_key=trigger_key,
+        enrolled_at=datetime.utcnow(),
+        next_send_at=datetime.utcnow() + timedelta(hours=first_step_delay_hours),
+        next_step=1,
+        status="active",
+        extra_vars_json=json.dumps(extra_vars or {}),
+    )
+    session.add(enrollment)
+    session.commit()
+    return True
+
+
+def _passes_condition(condition: str | None, enrollment: AutomationEnrollment, session: Session) -> bool:
+    """Check enrollment condition before sending a step. Returns True if the step should be sent."""
+    if not condition or condition == "always":
+        return True
+
+    if condition == "not_purchased":
+        # Skip if the contact made a purchase after enrollment
+        result = session.execute(text("""
+            SELECT 1 FROM shopify_orders
+            WHERE LOWER(email) = LOWER(:email)
+              AND created_at >= :since
+            LIMIT 1
+        """), {"email": enrollment.contact_email, "since": enrollment.enrolled_at}).fetchone()
+        return result is None  # True = no purchase = still send
+
+    if condition == "not_recovered":
+        # For cart abandonment: skip if cart was recovered (purchased)
+        extra = json.loads(enrollment.extra_vars_json or "{}")
+        checkout_token = enrollment.trigger_key.replace("abandoned_cart:", "")
+        result = session.execute(text("""
+            SELECT 1 FROM carritos_abandonados
+            WHERE checkout_token = :token AND recovered = TRUE
+            LIMIT 1
+        """), {"token": checkout_token}).fetchone()
+        return result is None  # True = not recovered = still send
+
+    return True
+
+
+def _send_email_step(
+    session: Session,
+    auto: Automation,
     contact: Contact,
     trigger_key: str,
+    step: dict,
+    step_number: int,
     extra_vars: dict | None = None,
 ) -> None:
-    tpl = session.get(Template, automation.template_id)
+    """Send the email for a specific step and record the run."""
+    tpl = session.get(Template, int(step["template_id"]))
     if not tpl:
-        logger.warning("Automation %d: template %d not found", automation.id, automation.template_id)
+        logger.warning("Automation %d step %d: template %d not found", auto.id, step_number, step["template_id"])
         return
 
-    # Create run record upfront so any error is always persisted
     run = AutomationRun(
-        automation_id=automation.id,
+        automation_id=auto.id,
         contact_id=contact.id,
         contact_email=contact.email,
         trigger_key=trigger_key,
+        step_number=step_number,
         triggered_at=datetime.utcnow(),
         status="failed",
     )
     try:
+        nombre = _fmt_nombre(contact.name, contact.email)
+        first_name = nombre.split()[0] if contact.name else ""
         vars_ = {
-            "nombre": _fmt_nombre(contact.name, contact.email),
-            "first_name": _fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
+            "nombre": nombre,
+            "first_name": first_name,
             "email": contact.email,
             "orders_count": contact.orders_count or 0,
             "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
@@ -75,15 +163,15 @@ def _send_email(
             "shipping_city": contact.shipping_city or "",
             **(extra_vars or {}),
         }
-        # Replace Klaviyo-style {% unsubscribe %} with actual link before Jinja2 renders
         raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
         _env = Environment(undefined=ChainableUndefined)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
+
         resend.api_key = settings.RESEND_API_KEY
         result = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
             "to": [contact.email],
-            "subject": automation.subject,
+            "subject": str(step["subject"]),
             "html": html,
             "headers": _unsub_headers(contact.email),
         })
@@ -91,28 +179,94 @@ def _send_email(
         run.status = "sent"
         run.resend_id = resend_id
         run.executed_at = datetime.utcnow()
-        logger.info("Automation %d sent to %s (key=%s)", automation.id, contact.email, trigger_key)
+        logger.info("Automation %d step %d sent to %s", auto.id, step_number, contact.email)
     except Exception as exc:
         run.error = str(exc)[:500]
         run.executed_at = datetime.utcnow()
-        logger.error("Automation %d failed for %s: %s", automation.id, contact.email, exc)
+        logger.error("Automation %d step %d failed for %s: %s", auto.id, step_number, contact.email, exc)
 
     session.add(run)
     session.commit()
 
 
-# ── Trigger handlers ──────────────────────────────────────────────────────────
+# ── Enrollment processing ──────────────────────────────────────────────────────
+
+def _process_enrollments(session: Session) -> None:
+    """Phase 2: send emails for all ready enrollments and advance to next step."""
+    now = datetime.utcnow()
+
+    ready = session.exec(
+        select(AutomationEnrollment)
+        .where(AutomationEnrollment.status == "active")
+        .where(AutomationEnrollment.next_send_at <= now)
+    ).all()
+
+    for enrollment in ready:
+        auto = session.get(Automation, enrollment.automation_id)
+        if not auto or auto.status != "active":
+            enrollment.status = "cancelled"
+            session.add(enrollment)
+            session.commit()
+            continue
+
+        steps = _get_steps(auto)
+        step_idx = enrollment.next_step - 1  # 0-indexed
+
+        if step_idx >= len(steps):
+            enrollment.status = "completed"
+            session.add(enrollment)
+            session.commit()
+            continue
+
+        step = steps[step_idx]
+
+        # Check condition — if it fails, the contact converted/shouldn't receive
+        if not _passes_condition(step.get("condition"), enrollment, session):
+            enrollment.status = "converted"
+            logger.info("Enrollment %d: condition '%s' failed, marking converted", enrollment.id, step.get("condition"))
+            session.add(enrollment)
+            session.commit()
+            continue
+
+        # Guard against double-send (e.g. if engine ran twice concurrently)
+        if _already_sent_step(session, auto.id, enrollment.trigger_key, enrollment.next_step):
+            logger.warning("Enrollment %d step %d already sent, advancing", enrollment.id, enrollment.next_step)
+        else:
+            contact = session.exec(
+                select(Contact).where(Contact.email == enrollment.contact_email.lower())
+            ).first()
+            if not contact:
+                extra = json.loads(enrollment.extra_vars_json or "{}")
+                contact = Contact(
+                    email=enrollment.contact_email,
+                    name=extra.get("nombre", enrollment.contact_email),
+                    opted_in=True,
+                    orders_count=0,
+                )
+
+            extra_vars = json.loads(enrollment.extra_vars_json or "{}")
+            _send_email_step(session, auto, contact, enrollment.trigger_key, step, enrollment.next_step, extra_vars)
+
+        # Advance to next step
+        next_step_num = enrollment.next_step + 1
+        if next_step_num > len(steps):
+            enrollment.status = "completed"
+        else:
+            next_step = steps[next_step_num - 1]
+            delay = float(next_step.get("delay_hours", 24))
+            enrollment.next_step = next_step_num
+            enrollment.next_send_at = now + timedelta(hours=delay)
+
+        session.add(enrollment)
+        session.commit()
+
+
+# ── Trigger handlers (Phase 1 — enroll only, don't send) ─────────────────────
 
 def _check_abandoned_booking(auto: Automation, session: Session) -> None:
-    """
-    Fire when a booking has status='pending_payment' and paid_at IS NULL,
-    created between delay_minutes and lookback_hours ago.
-    Passes full booking details to the template as variables.
-    """
     config = auto.trigger_config or {}
     delay_minutes = int(config.get("delay_minutes", 5))
     lookback_hours = int(config.get("lookback_hours", 24))
-
     now = datetime.utcnow()
     cutoff_old = now - timedelta(minutes=delay_minutes)
     cutoff_recent = now - timedelta(hours=lookback_hours)
@@ -136,17 +290,18 @@ def _check_abandoned_booking(auto: Automation, session: Session) -> None:
         logger.error("Automation %d: cannot read source DB: %s", auto.id, exc)
         return
 
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", delay_minutes / 60))
+
     for row in rows:
         email = row.email.lower().strip()
-        # Dedup per booking row ID — one email per abandoned cart attempt
-        trigger_key = f"abandoned:{row.id}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
+        trigger_key = f"abandoned_booking:{row.id}"
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
         if not contact or not contact.opted_in:
             continue
 
-        # Format booking details for the template
         fecha_str = str(row.fecha) if row.fecha else ""
         hora_str = str(row.hora)[:5] if row.hora else ""
         adultos = int(row.num_adultos or 0)
@@ -157,6 +312,8 @@ def _check_abandoned_booking(auto: Automation, session: Session) -> None:
             personas_str += f" + {ninos} niño{'s' if ninos != 1 else ''}"
 
         extra_vars = {
+            "nombre": contact.name or email,
+            "first_name": (contact.name or email).split()[0],
             "servicio": row.servicio or "tu experiencia",
             "fecha_reserva": fecha_str,
             "hora_reserva": hora_str,
@@ -165,15 +322,19 @@ def _check_abandoned_booking(auto: Automation, session: Session) -> None:
             "num_ninos": ninos,
             "ingreso_total": total,
         }
-        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
+        _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
 
 
 _BATCH_ORIGINS = {"Formulario T&C", "Sincronización Shopify", "importación CSV", ""}
 
 
 def _check_welcome(auto: Automation, session: Session) -> None:
-    """Fire welcome email to contacts created organically (popup/form), not batch imports."""
     config = auto.trigger_config or {}
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 0))))
+
     delay_hours = float(config.get("delay_hours", 0))
     window_end = datetime.utcnow() - timedelta(hours=delay_hours)
     window_start = window_end - timedelta(minutes=20)
@@ -187,20 +348,20 @@ def _check_welcome(auto: Automation, session: Session) -> None:
     ).all()
 
     for contact in contacts:
-        # Skip contacts imported in batch (TC form, sync, CSV) — only fire for
-        # organic signups via the popup/embed form (origin_utm is a URL or form name)
         origin = (contact.origin_utm or "").strip()
         if origin in _BATCH_ORIGINS or origin.startswith("Formulario #"):
             continue
         trigger_key = f"welcome:{contact.id}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
-        _send_email(session, auto, contact, trigger_key)
+        extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
+        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
 def _check_post_visit(auto: Automation, session: Session) -> None:
-    """Fire N days after ultima_visita."""
     config = auto.trigger_config or {}
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", 0))
     delay_days = int(config.get("delay_days", 3))
     target_date = (datetime.utcnow() - timedelta(days=delay_days)).date()
 
@@ -213,17 +374,19 @@ def _check_post_visit(auto: Automation, session: Session) -> None:
 
     for contact in contacts:
         trigger_key = f"postvisit:{contact.id}:{target_date}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
-        _send_email(session, auto, contact, trigger_key)
+        extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
+        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
 def _check_reactivation(auto: Automation, session: Session) -> None:
-    """Fire when contact hasn't visited in N days, respecting a cooldown period."""
     config = auto.trigger_config or {}
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", 0))
+
     inactivity_days = int(config.get("inactivity_days", 90))
     cooldown_days = int(config.get("cooldown_days", 180))
-
     cutoff_date = (datetime.utcnow() - timedelta(days=inactivity_days)).date()
     cooldown_start = datetime.utcnow() - timedelta(days=cooldown_days)
 
@@ -246,22 +409,22 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
         ).first()
         if recent_run:
             continue
-        # Weekly dedup to avoid burst on startup
         week = datetime.utcnow().strftime("%Y-W%W")
         trigger_key = f"reactivation:{contact.id}:{week}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
-        _send_email(session, auto, contact, trigger_key)
+        extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
+        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
 def _check_abandoned_cart(auto: Automation, session: Session) -> None:
-    """Carrito abandonado: checkout en carritos_abandonados hace más de delay_hours sin recuperar."""
     config = auto.trigger_config or {}
-    delay_hours = float(config.get("delay_hours", 1))
     lookback_hours = float(config.get("lookback_hours", 24))
     now = datetime.utcnow()
-    cutoff_old = now - timedelta(hours=delay_hours)
     cutoff_recent = now - timedelta(hours=lookback_hours)
+
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 1))))
 
     rows = session.execute(text("""
         SELECT id, checkout_token, email, first_name, last_name,
@@ -270,28 +433,21 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         WHERE recovered = FALSE
           AND abandoned_email_sent = FALSE
           AND email IS NOT NULL AND email <> ''
-          AND created_at <= :old
           AND created_at >= :recent
         ORDER BY created_at ASC
         LIMIT 200
-    """), {"old": cutoff_old, "recent": cutoff_recent}).fetchall()
+    """), {"recent": cutoff_recent}).fetchall()
 
     for row in rows:
         email = (row[2] or "").lower().strip()
         if not email:
             continue
-        trigger_key = f"abandoned_cart:{row[1]}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
 
-        # Look up contact — if opted_out explicitly, skip; otherwise send
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
         if contact and contact.opted_in is False:
             continue
 
-        # Atomically claim the cart: only proceed if this process is the one that
-        # flips abandoned_email_sent from FALSE → TRUE. Prevents duplicate sends
-        # when two engine instances run concurrently (e.g. during a deploy).
+        # Atomically claim the cart to prevent concurrent duplicate enrollments
         claimed = session.execute(text("""
             UPDATE carritos_abandonados
             SET abandoned_email_sent = TRUE
@@ -299,25 +455,17 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         """), {"id": row[0]})
         session.commit()
         if claimed.rowcount == 0:
-            continue  # Another instance already claimed this cart
+            continue
 
-        # Use cart name if contact not registered
+        trigger_key = f"abandoned_cart:{row[1]}"
         first_name = (row[3] or "").strip()
         last_name  = (row[4] or "").strip()
         full_name  = f"{first_name} {last_name}".strip() or email
-
-        if not contact:
-            contact = Contact(
-                email=email,
-                name=full_name,
-                opted_in=True,
-                orders_count=0,
-            )
-
         items = row[6] or []
         first_item = items[0].get("title", "") if items else ""
         subtotal = float(row[5] or 0)
         checkout_url = row[7] or "https://happylapiz.cl/cart"
+
         extra_vars = {
             "nombre":        full_name,
             "first_name":    first_name or full_name.split()[0],
@@ -326,19 +474,20 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
             "cart_url":      checkout_url,
             "event":         {"extra": {"checkout_url": checkout_url}},
         }
-        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
+        _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
 
 
 def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) -> None:
-    """Dispara email cuando hay un evento de Shopify no procesado del tipo indicado."""
     config = auto.trigger_config or {}
-    delay_hours = float(config.get("delay_hours", 0))
     lookback_hours = float(config.get("lookback_hours", 48))
     now = datetime.utcnow()
-    cutoff_old = now - timedelta(hours=delay_hours)
     cutoff_recent = now - timedelta(hours=lookback_hours)
 
-    # Map trigger_type back to shopify topic
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 0))))
+
     topic_map = {
         "placed_order":    "orders/create",
         "fulfilled_order": "orders/fulfilled",
@@ -348,43 +497,45 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
     if not topic:
         return
 
+    # For event-based triggers, only enroll events that haven't been enrolled yet
     rows = session.execute(text("""
-        SELECT id, email, payload FROM shopify_events
-        WHERE topic = :topic
-          AND processed = FALSE
-          AND email IS NOT NULL
-          AND created_at <= :old
-          AND created_at >= :recent
-        ORDER BY created_at ASC LIMIT 200
-    """), {"topic": topic, "old": cutoff_old, "recent": cutoff_recent}).fetchall()
+        SELECT se.id, se.email, se.payload
+        FROM shopify_events se
+        WHERE se.topic = :topic
+          AND se.processed = FALSE
+          AND se.email IS NOT NULL
+          AND se.created_at >= :recent
+        ORDER BY se.created_at ASC LIMIT 200
+    """), {"topic": topic, "recent": cutoff_recent}).fetchall()
 
     for row in rows:
         email = (row[1] or "").lower().strip()
         if not email:
             continue
-        trigger_key = f"{trigger_type}:{row[0]}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
         if not contact or not contact.opted_in:
             continue
+        trigger_key = f"{trigger_type}:{row[0]}"
         payload = row[2] or {}
         items = payload.get("line_items", [])
         first_item = items[0].get("title", "") if items else ""
         tracking = ""
         if trigger_type == "fulfilled_order":
-            for fulfillment in payload.get("fulfillments", []):
-                tracking = fulfillment.get("tracking_number", "") or ""
+            for f in payload.get("fulfillments", []):
+                tracking = f.get("tracking_number", "") or ""
                 break
         extra_vars = {
+            "nombre": contact.name or email,
+            "first_name": (contact.name or email).split()[0],
             "order_number": str(payload.get("order_number", "")),
             "order_total": f"${int(float(payload.get('total_price', 0))):,}".replace(",", "."),
             "first_product": first_item,
             "tracking_number": tracking,
         }
-        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
-        session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
-        session.commit()
+        enrolled = _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
+        if enrolled:
+            session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+            session.commit()
 
 
 def _make_shopify_handler(trigger_type: str):
@@ -394,7 +545,6 @@ def _make_shopify_handler(trigger_type: str):
 
 
 HANDLERS = {
-    # Shopify order lifecycle
     "checkout_started":         _make_shopify_handler("checkout_started"),
     "abandoned_cart":           _check_abandoned_cart,
     "placed_order":             _make_shopify_handler("placed_order"),
@@ -407,14 +557,11 @@ HANDLERS = {
     "cancelled_order":          _make_shopify_handler("cancelled_order"),
     "refunded_order":           _make_shopify_handler("refunded_order"),
     "added_to_cart":            _make_shopify_handler("added_to_cart"),
-    # Klaviyo-style internal
     "coupon_assigned":          _make_shopify_handler("coupon_assigned"),
     "coupon_used":              _make_shopify_handler("coupon_used"),
     "subscribed_to_back_in_stock": _make_shopify_handler("subscribed_to_back_in_stock"),
-    # Web tracking
     "viewed_product":           _make_shopify_handler("viewed_product"),
     "active_on_site":           _make_shopify_handler("active_on_site"),
-    # Internal
     "welcome":                  _check_welcome,
     "post_visit":               _check_post_visit,
     "reactivation":             _check_reactivation,
@@ -423,7 +570,6 @@ HANDLERS = {
 
 
 def run_scheduled_campaigns() -> None:
-    """Fire campaigns whose scheduled_at has passed and are still in 'scheduled' status."""
     with Session(db_engine) as session:
         now = datetime.utcnow()
         due = session.exec(
@@ -436,7 +582,6 @@ def run_scheduled_campaigns() -> None:
             try:
                 seg = session.get(Segment, campaign.segment_id)
                 if not seg:
-                    logger.warning("Scheduled campaign %d: segment %d not found", campaign.id, campaign.segment_id)
                     continue
                 contacts = evaluate_segment(seg.conditions, session)
                 if campaign.exclude_segment_ids:
@@ -447,7 +592,6 @@ def run_scheduled_campaigns() -> None:
                             excluded_ids.update(ct.id for ct in evaluate_segment(excl_seg.conditions, session))
                     contacts = [ct for ct in contacts if ct.id not in excluded_ids]
                 if not contacts:
-                    logger.warning("Scheduled campaign %d: no contacts after exclusions", campaign.id)
                     continue
                 already_sent = set(session.exec(
                     select(CampaignSend.contact_id).where(
@@ -466,7 +610,6 @@ def run_scheduled_campaigns() -> None:
                 session.commit()
                 contact_ids = [c.id for c in to_send]
                 send_campaign_sync(campaign.id, contact_ids, len(contacts))
-                logger.info("Scheduled campaign %d fired to %d contacts", campaign.id, len(contact_ids))
             except Exception as exc:
                 logger.exception("Scheduled campaign %d error: %s", campaign.id, exc)
 
@@ -476,18 +619,23 @@ def run_automations() -> None:
         automations = session.exec(
             select(Automation).where(Automation.status == "active")
         ).all()
+        # Phase 1: detect triggers → enroll
         for auto in automations:
             handler = HANDLERS.get(auto.trigger_type)
             if handler:
                 try:
                     handler(auto, session)
                 except Exception as exc:
-                    logger.exception("Automation %d (%s) error: %s", auto.id, auto.trigger_type, exc)
+                    logger.exception("Automation %d (%s) trigger error: %s", auto.id, auto.trigger_type, exc)
+        # Phase 2: process ready enrollments → send emails
+        try:
+            _process_enrollments(session)
+        except Exception as exc:
+            logger.exception("Enrollment processing error: %s", exc)
 
 
 def start_scheduler() -> None:
     def loop():
-        # Small delay to let the app fully start
         time.sleep(10)
         while True:
             try:
@@ -496,7 +644,7 @@ def start_scheduler() -> None:
                 sync_contacts_from_shopify_orders()
             except Exception as exc:
                 logger.exception("Automation scheduler error: %s", exc)
-            time.sleep(60)  # 1 minute
+            time.sleep(60)
 
     t = threading.Thread(target=loop, daemon=True, name="automation-scheduler")
     t.start()

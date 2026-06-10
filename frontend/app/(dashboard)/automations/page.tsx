@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi } from "@/lib/api";
-import { Automation, AutomationStats, AutomationPending, Template } from "@/lib/types";
+import { Automation, AutomationStats, AutomationPending, AutomationStep, Template } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock } from "lucide-react";
+import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch } from "lucide-react";
 import Link from "next/link";
 
 const TRIGGER_LABELS: Record<string, { label: string; description: string; color: string }> = {
@@ -58,6 +58,20 @@ function configSummary(auto: Automation): string {
   }
 }
 
+const CONDITION_LABELS: Record<string, string> = {
+  not_purchased: "Si no ha comprado",
+  not_recovered: "Si no recuperó el carrito",
+  always: "Siempre",
+};
+
+function delayLabel(hours: number): string {
+  if (hours === 0) return "inmediatamente";
+  if (hours < 1) return `${Math.round(hours * 60)} min`;
+  if (hours < 24) return `${hours}h`;
+  if (hours % 24 === 0) return `${hours / 24}d`;
+  return `${hours}h`;
+}
+
 function EditPanel({
   auto,
   templates,
@@ -71,136 +85,118 @@ function EditPanel({
   onCancel: () => void;
   saving: boolean;
 }) {
-  const [form, setForm] = useState({
-    name: auto.name,
-    subject: auto.subject,
-    template_id: auto.template_id,
-    trigger_config: auto.trigger_config ?? {},
-  });
+  const effectiveSteps: AutomationStep[] = auto.steps?.length
+    ? auto.steps
+    : auto.template_id && auto.subject
+      ? [{ step: 1, delay_hours: (auto.trigger_config as Record<string,number>)?.delay_hours ?? 0, template_id: auto.template_id, subject: auto.subject, condition: null }]
+      : [];
 
-  function setConfig(key: string, val: string | number) {
-    setForm((f) => ({ ...f, trigger_config: { ...f.trigger_config, [key]: val } as Record<string, number> }));
+  const [name, setName] = useState(auto.name);
+  const [steps, setSteps] = useState<AutomationStep[]>(
+    effectiveSteps.length > 0 ? effectiveSteps : [{ step: 1, delay_hours: 1, template_id: 0, subject: "", condition: null }]
+  );
+  const [cfg, setCfg] = useState<Record<string, number>>(
+    (auto.trigger_config as Record<string,number>) ?? {}
+  );
+
+  function updateStep(idx: number, patch: Partial<AutomationStep>) {
+    setSteps((prev) => prev.map((s, i) => i === idx ? { ...s, ...patch } : s));
   }
 
-  const cfg = form.trigger_config as Record<string, number>;
+  function addStep() {
+    setSteps((prev) => [...prev, { step: prev.length + 1, delay_hours: 24, template_id: 0, subject: "", condition: "not_purchased" }]);
+  }
+
+  function removeStep(idx: number) {
+    setSteps((prev) => prev.filter((_, i) => i !== idx).map((s, i) => ({ ...s, step: i + 1 })));
+  }
+
+  const isValid = name && steps.every((s) => s.template_id && s.subject);
 
   return (
-    <div className="border-t border-brand-100 bg-blue-50 px-5 py-4 space-y-3">
+    <div className="border-t border-brand-100 bg-blue-50 px-5 py-4 space-y-4">
       <p className="text-xs font-semibold text-brand-700 uppercase tracking-wider">Editar automatización</p>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Nombre interno</label>
-          <input
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Asunto del email</label>
-          <input
-            value={form.subject ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-      </div>
-
       <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1">Plantilla de email</label>
-        <select
-          value={form.template_id ?? 0}
-          onChange={(e) => setForm((f) => ({ ...f, template_id: Number(e.target.value) }))}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
-        >
-          <option value={0}>— Seleccionar plantilla —</option>
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
-          ))}
-        </select>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Nombre interno</label>
+        <input value={name} onChange={(e) => setName(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
       </div>
 
-      {/* trigger_config fields */}
-      {auto.trigger_type === "welcome" && (
-        <div className="max-w-xs">
-          <label className="block text-xs font-medium text-gray-600 mb-1">Demora (horas, 0 = inmediato)</label>
-          <input
-            type="number" min={0} max={72}
-            value={cfg.delay_hours ?? 0}
-            onChange={(e) => setConfig("delay_hours", Number(e.target.value))}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-      )}
-      {auto.trigger_type === "post_visit" && (
-        <div className="max-w-xs">
-          <label className="block text-xs font-medium text-gray-600 mb-1">Días después de la visita</label>
-          <input
-            type="number" min={1} max={30}
-            value={cfg.delay_days ?? 3}
-            onChange={(e) => setConfig("delay_days", Number(e.target.value))}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-      )}
-      {auto.trigger_type === "reactivation" && (
-        <div className="grid grid-cols-2 gap-3 max-w-sm">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Días de inactividad</label>
-            <input
-              type="number" min={30}
-              value={cfg.inactivity_days ?? 90}
-              onChange={(e) => setConfig("inactivity_days", Number(e.target.value))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Cooldown (días)</label>
-            <input
-              type="number" min={30}
-              value={cfg.cooldown_days ?? 180}
-              onChange={(e) => setConfig("cooldown_days", Number(e.target.value))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-        </div>
-      )}
+      {/* Trigger config */}
       {auto.trigger_type === "abandoned_booking" && (
         <div className="grid grid-cols-2 gap-3 max-w-sm">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Enviar después de (min)</label>
-            <input
-              type="number" min={1}
-              value={cfg.delay_minutes ?? 5}
-              onChange={(e) => setConfig("delay_minutes", Number(e.target.value))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
+            <label className="block text-xs font-medium text-gray-600 mb-1">Delay (min)</label>
+            <input type="number" min={1} value={cfg.delay_minutes ?? 5}
+              onChange={(e) => setCfg((c) => ({ ...c, delay_minutes: Number(e.target.value) }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Ventana máxima (horas)</label>
-            <input
-              type="number" min={1}
-              value={cfg.lookback_hours ?? 24}
-              onChange={(e) => setConfig("lookback_hours", Number(e.target.value))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
+            <label className="block text-xs font-medium text-gray-600 mb-1">Ventana (horas)</label>
+            <input type="number" min={1} value={cfg.lookback_hours ?? 24}
+              onChange={(e) => setCfg((c) => ({ ...c, lookback_hours: Number(e.target.value) }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
           </div>
         </div>
       )}
 
+      {/* Steps */}
+      <div className="space-y-3">
+        <p className="text-xs font-medium text-gray-600">Pasos del flujo</p>
+        {steps.map((step, i) => (
+          <div key={i} className="bg-white border border-gray-200 rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-500">Correo {i + 1}</span>
+              {steps.length > 1 && (
+                <button onClick={() => removeStep(i)} className="text-red-400 hover:text-red-600 p-0.5">
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2 items-center">
+              <input type="number" min={0} value={step.delay_hours}
+                onChange={(e) => updateStep(i, { delay_hours: Number(e.target.value) })}
+                className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:ring-1 focus:ring-brand-500" />
+              <span className="text-xs text-gray-500">{i === 0 ? "horas desde el evento" : "horas desde el paso anterior"}</span>
+            </div>
+            {i > 0 && (
+              <select value={step.condition ?? "not_purchased"}
+                onChange={(e) => updateStep(i, { condition: e.target.value as AutomationStep["condition"] })}
+                className="w-full border border-gray-300 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-brand-500">
+                <option value="not_purchased">Enviar solo si no compró</option>
+                <option value="not_recovered">Enviar solo si carrito no recuperado</option>
+                <option value="always">Siempre enviar</option>
+              </select>
+            )}
+            <select value={step.template_id || 0}
+              onChange={(e) => updateStep(i, { template_id: Number(e.target.value) })}
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-brand-500">
+              <option value={0}>— Plantilla —</option>
+              {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <input value={step.subject}
+              onChange={(e) => updateStep(i, { subject: e.target.value })}
+              placeholder="Asunto del email"
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500" />
+          </div>
+        ))}
+        <button onClick={addStep}
+          className="w-full py-2 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 hover:border-brand-400 hover:text-brand-600 transition-colors flex items-center justify-center gap-1">
+          <Plus size={11} /> Agregar paso
+        </button>
+      </div>
+
       <div className="flex gap-2 pt-1">
         <button
-          onClick={() => onSave(form)}
-          disabled={saving || !form.template_id || !form.name || !form.subject}
+          onClick={() => onSave({ name, steps: steps.map((s, i) => ({ ...s, step: i + 1 })), trigger_config: cfg as Record<string, number>, template_id: steps[0]?.template_id || null, subject: steps[0]?.subject || null })}
+          disabled={saving || !isValid}
           className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 transition-colors"
         >
           <Save size={13} /> {saving ? "Guardando..." : "Guardar cambios"}
         </button>
-        <button
-          onClick={onCancel}
-          className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-        >
+        <button onClick={onCancel}
+          className="flex items-center gap-1.5 px-3 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors">
           <X size={13} /> Cancelar
         </button>
       </div>
@@ -243,7 +239,10 @@ function AutomationRow({ auto, templates }: { auto: Automation; templates: Templ
     color: "bg-gray-100 text-gray-700",
   };
   const isActive = auto.status === "active";
-  const tplName = templates.find((t) => t.id === auto.template_id)?.name;
+  const stepCount = auto.steps?.length ?? 1;
+  const tplName = stepCount === 1
+    ? templates.find((t) => t.id === (auto.steps?.[0]?.template_id ?? auto.template_id))?.name
+    : null;
 
   return (
     <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
@@ -264,10 +263,24 @@ function AutomationRow({ auto, templates }: { auto: Automation; templates: Templ
               {isActive ? "Activa" : "Pausada"}
             </span>
           </div>
-          <p className="text-sm text-gray-500 mt-0.5">{configSummary(auto)}</p>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">Asunto: {auto.subject}</p>
-          {tplName && (
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <p className="text-sm text-gray-500">{configSummary(auto)}</p>
+            {stepCount > 1 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                <GitBranch size={10} /> {stepCount} pasos
+              </span>
+            )}
+          </div>
+          {stepCount === 1 && auto.subject && (
+            <p className="text-xs text-gray-400 mt-0.5 truncate">Asunto: {auto.steps?.[0]?.subject ?? auto.subject}</p>
+          )}
+          {stepCount === 1 && tplName && (
             <p className="text-xs text-gray-400 mt-0.5 truncate">Plantilla: <span className="text-gray-600">{tplName}</span></p>
+          )}
+          {stepCount > 1 && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              {auto.steps?.map((s, i) => `Paso ${i+1}: ${s.subject}`).join(" · ")}
+            </p>
           )}
         </div>
 
@@ -402,15 +415,20 @@ function ExpandedPanel({ automationId }: { automationId: number }) {
         ) : (
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {pending.contacts.map((c, i) => (
-              <div key={i} className="flex items-center gap-3 text-xs">
+              <div key={i} className="flex items-center gap-2 text-xs">
                 <span className={`px-1.5 py-0.5 rounded font-medium shrink-0 ${
                   c.ready ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
                 }`}>
                   {c.ready ? "listo" : timeUntil(c.send_at)}
                 </span>
-                <span className="text-gray-700 font-medium truncate max-w-[140px]">{c.name}</span>
-                <span className="text-gray-400 font-mono truncate max-w-[160px]">{c.email}</span>
-                {c.detail && <span className="text-gray-400 truncate max-w-[160px] ml-auto shrink-0">{c.detail}</span>}
+                {c.step && c.step > 1 && (
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium shrink-0">
+                    paso {c.step}
+                  </span>
+                )}
+                <span className="text-gray-700 font-medium truncate max-w-[130px]">{c.name}</span>
+                <span className="text-gray-400 font-mono truncate max-w-[150px]">{c.email}</span>
+                {c.detail && <span className="text-gray-400 truncate max-w-[140px] ml-auto shrink-0">{c.detail}</span>}
               </div>
             ))}
           </div>

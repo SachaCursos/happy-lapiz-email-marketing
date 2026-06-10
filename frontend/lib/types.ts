@@ -198,11 +198,20 @@ export type AutomationTrigger =
   | "welcome" | "post_visit" | "reactivation" | "abandoned_booking";
 export type AutomationStatus = "active" | "paused";
 
+export interface AutomationStep {
+  step: number;
+  delay_hours: number;
+  template_id: number;
+  subject: string;
+  condition: "not_purchased" | "not_recovered" | "always" | null;
+}
+
 export interface Automation {
   id: number;
   name: string;
   trigger_type: string;
   trigger_config: Record<string, number> | null;
+  steps: AutomationStep[] | null;
   template_id: number | null;
   subject: string | null;
   status: string;
@@ -230,6 +239,7 @@ export interface AutomationPendingContact {
   detail: string;
   send_at: string;
   ready: boolean;
+  step?: number;
 }
 
 export interface AutomationPending {

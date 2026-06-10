@@ -1,4 +1,4 @@
-from typing import Optional, Any
+from typing import Optional, Any, List
 from datetime import datetime
 from sqlmodel import Field, SQLModel, Column
 from sqlalchemy import JSON
@@ -9,16 +9,33 @@ class Automation(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
-    # abandoned_booking | welcome | post_visit | reactivation
     trigger_type: str
     trigger_config: Optional[Any] = Field(default=None, sa_column=Column(JSON))
-    template_id: int = Field(foreign_key="templates.id")
-    subject: str
-    # active | paused
+    # Legacy single-step fields (kept for backwards compat)
+    template_id: Optional[int] = Field(default=None, foreign_key="templates.id")
+    subject: Optional[str] = Field(default=None)
+    # Multi-step: list of {step, delay_hours, template_id, subject, condition}
+    steps: Optional[Any] = Field(default=None, sa_column=Column("steps", JSON))
     status: str = Field(default="active")
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AutomationEnrollment(SQLModel, table=True):
+    __tablename__ = "automation_enrollments"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    automation_id: int = Field(foreign_key="automations.id", index=True)
+    contact_email: str = Field(index=True)
+    trigger_key: str = Field(index=True)
+    enrolled_at: datetime = Field(default_factory=datetime.utcnow)
+    next_send_at: datetime
+    next_step: int = Field(default=1)
+    # active | completed | converted | cancelled
+    status: str = Field(default="active")
+    # JSON-encoded extra vars to carry across steps (cart_url, order_number, etc.)
+    extra_vars_json: Optional[str] = Field(default=None)
 
 
 class AutomationRun(SQLModel, table=True):
@@ -28,9 +45,8 @@ class AutomationRun(SQLModel, table=True):
     automation_id: int = Field(foreign_key="automations.id", index=True)
     contact_id: Optional[int] = Field(default=None, foreign_key="contacts.id", index=True)
     contact_email: str
-    # Unique string per trigger event — prevents double-send
     trigger_key: str = Field(index=True)
-    # sent | failed | skipped
+    step_number: int = Field(default=1)
     status: str = Field(default="sent")
     triggered_at: datetime = Field(default_factory=datetime.utcnow)
     executed_at: Optional[datetime] = None
@@ -44,14 +60,18 @@ class AutomationCreate(SQLModel):
     name: str
     trigger_type: str
     trigger_config: Optional[dict] = None
-    template_id: int
-    subject: str
+    # Multi-step (preferred)
+    steps: Optional[List[dict]] = None
+    # Legacy single-step (kept for compat)
+    template_id: Optional[int] = None
+    subject: Optional[str] = None
 
 
 class AutomationUpdate(SQLModel):
     name: Optional[str] = None
     trigger_type: Optional[str] = None
     trigger_config: Optional[dict] = None
+    steps: Optional[List[dict]] = None
     template_id: Optional[int] = None
     subject: Optional[str] = None
     status: Optional[str] = None
@@ -62,6 +82,7 @@ class AutomationRead(SQLModel):
     name: str
     trigger_type: str
     trigger_config: Optional[dict]
+    steps: Optional[List[dict]]
     template_id: Optional[int]
     subject: Optional[str]
     status: str
@@ -76,6 +97,7 @@ class AutomationRunRead(SQLModel):
     contact_id: Optional[int]
     contact_email: str
     trigger_key: str
+    step_number: int = 1
     status: str
     triggered_at: datetime
     executed_at: Optional[datetime]
@@ -83,3 +105,14 @@ class AutomationRunRead(SQLModel):
     error: Optional[str]
     opened_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
+
+
+class AutomationEnrollmentRead(SQLModel):
+    id: int
+    automation_id: int
+    contact_email: str
+    trigger_key: str
+    enrolled_at: datetime
+    next_send_at: datetime
+    next_step: int
+    status: str
