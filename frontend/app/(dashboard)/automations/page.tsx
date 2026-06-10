@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi } from "@/lib/api";
-import { Automation, AutomationStats, Template } from "@/lib/types";
+import { Automation, AutomationStats, AutomationPending, Template } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X } from "lucide-react";
+import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock } from "lucide-react";
 import Link from "next/link";
 
 const TRIGGER_LABELS: Record<string, { label: string; description: string; color: string }> = {
@@ -355,49 +355,96 @@ function AutomationRow({ auto, templates }: { auto: Automation; templates: Templ
           saving={updateMutation.isPending}
         />
       )}
-      {showRuns && <RunsPanel automationId={auto.id} />}
+      {showRuns && <ExpandedPanel automationId={auto.id} />}
     </div>
   );
 }
 
-function RunsPanel({ automationId }: { automationId: number }) {
-  const { data: runs = [], isLoading } = useQuery({
+function ExpandedPanel({ automationId }: { automationId: number }) {
+  const { data: runs = [], isLoading: runsLoading } = useQuery({
     queryKey: ["automation-runs", automationId],
     queryFn: () => automationsApi.runs(automationId).then((r) => r.data),
     staleTime: 30_000,
   });
 
+  const { data: pending, isLoading: pendingLoading } = useQuery<AutomationPending>({
+    queryKey: ["automation-pending", automationId],
+    queryFn: () => automationsApi.pending(automationId).then((r) => r.data),
+    staleTime: 60_000,
+  });
+
+  function timeUntil(isoDate: string): string {
+    const diff = new Date(isoDate).getTime() - Date.now();
+    if (diff <= 0) return "ahora";
+    const mins = Math.round(diff / 60000);
+    if (mins < 60) return `en ${mins} min`;
+    const hrs = Math.round(diff / 3600000);
+    if (hrs < 24) return `en ${hrs}h`;
+    return `en ${Math.round(diff / 86400000)}d`;
+  }
+
   return (
-    <div className="border-t border-gray-100 bg-gray-50 px-5 py-3">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-        Últimos envíos
-      </p>
-      {isLoading ? (
-        <p className="text-xs text-gray-400">Cargando...</p>
-      ) : runs.length === 0 ? (
-        <p className="text-xs text-gray-400">Aún no hay envíos registrados.</p>
-      ) : (
-        <div className="space-y-1 max-h-48 overflow-y-auto">
-          {runs.map((r: { id: number; contact_email: string; status: string; triggered_at: string; error?: string }) => (
-            <div key={r.id} className="flex items-center gap-3 text-xs">
-              <span
-                className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                  r.status === "sent"
-                    ? "bg-green-100 text-green-700"
-                    : r.status === "failed"
-                    ? "bg-red-100 text-red-700"
-                    : "bg-gray-100 text-gray-500"
-                }`}
-              >
-                {r.status}
-              </span>
-              <span className="text-gray-700 font-mono truncate max-w-[200px]">{r.contact_email}</span>
-              <span className="text-gray-400 ml-auto shrink-0">{formatDate(r.triggered_at)}</span>
-              {r.error && <span className="text-red-500 truncate max-w-[150px]" title={r.error}>{r.error}</span>}
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="border-t border-gray-100 divide-y divide-gray-100">
+      {/* Próximos envíos */}
+      <div className="bg-blue-50 px-5 py-3">
+        <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+          <Clock size={11} /> Próximos envíos
+          {pending && pending.count > 0 && (
+            <span className="ml-1 bg-blue-600 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
+              {pending.count}
+            </span>
+          )}
+        </p>
+        {pendingLoading ? (
+          <p className="text-xs text-blue-400">Cargando...</p>
+        ) : !pending || pending.count === 0 ? (
+          <p className="text-xs text-blue-400">No hay envíos pendientes.</p>
+        ) : (
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            {pending.contacts.map((c, i) => (
+              <div key={i} className="flex items-center gap-3 text-xs">
+                <span className={`px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                  c.ready ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
+                }`}>
+                  {c.ready ? "listo" : timeUntil(c.send_at)}
+                </span>
+                <span className="text-gray-700 font-medium truncate max-w-[140px]">{c.name}</span>
+                <span className="text-gray-400 font-mono truncate max-w-[160px]">{c.email}</span>
+                {c.detail && <span className="text-gray-400 truncate max-w-[160px] ml-auto shrink-0">{c.detail}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Últimos envíos */}
+      <div className="bg-gray-50 px-5 py-3">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+          Últimos envíos
+        </p>
+        {runsLoading ? (
+          <p className="text-xs text-gray-400">Cargando...</p>
+        ) : runs.length === 0 ? (
+          <p className="text-xs text-gray-400">Aún no hay envíos registrados.</p>
+        ) : (
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            {runs.map((r: { id: number; contact_email: string; status: string; triggered_at: string; error?: string }) => (
+              <div key={r.id} className="flex items-center gap-3 text-xs">
+                <span className={`px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                  r.status === "sent" ? "bg-green-100 text-green-700"
+                  : r.status === "failed" ? "bg-red-100 text-red-700"
+                  : "bg-gray-100 text-gray-500"
+                }`}>
+                  {r.status}
+                </span>
+                <span className="text-gray-700 font-mono truncate max-w-[200px]">{r.contact_email}</span>
+                <span className="text-gray-400 ml-auto shrink-0">{formatDate(r.triggered_at)}</span>
+                {r.error && <span className="text-red-500 truncate max-w-[150px]" title={r.error}>{r.error}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

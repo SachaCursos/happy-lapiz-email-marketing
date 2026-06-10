@@ -224,6 +224,19 @@ export interface AutomationRun {
   error: string | null;
 }
 
+export interface AutomationPendingContact {
+  email: string;
+  name: string;
+  detail: string;
+  send_at: string;
+  ready: boolean;
+}
+
+export interface AutomationPending {
+  count: number;
+  contacts: AutomationPendingContact[];
+}
+
 export interface AutomationStats {
   total: number;
   sent: number;
