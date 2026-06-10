@@ -24,9 +24,6 @@ def create_automation(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
 ):
-    VALID = {"abandoned_booking", "welcome", "post_visit", "reactivation"}
-    if payload.trigger_type not in VALID:
-        raise HTTPException(status_code=400, detail=f"trigger_type debe ser uno de: {', '.join(VALID)}")
     auto = Automation(**payload.model_dump(), created_by=current_user.id)
     session.add(auto)
     session.commit()
