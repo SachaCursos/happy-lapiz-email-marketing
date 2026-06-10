@@ -289,6 +289,18 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         if contact and contact.opted_in is False:
             continue
 
+        # Atomically claim the cart: only proceed if this process is the one that
+        # flips abandoned_email_sent from FALSE → TRUE. Prevents duplicate sends
+        # when two engine instances run concurrently (e.g. during a deploy).
+        claimed = session.execute(text("""
+            UPDATE carritos_abandonados
+            SET abandoned_email_sent = TRUE
+            WHERE id = :id AND abandoned_email_sent = FALSE
+        """), {"id": row[0]})
+        session.commit()
+        if claimed.rowcount == 0:
+            continue  # Another instance already claimed this cart
+
         # Use cart name if contact not registered
         first_name = (row[3] or "").strip()
         last_name  = (row[4] or "").strip()
@@ -315,10 +327,6 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
             "event":         {"extra": {"checkout_url": checkout_url}},
         }
         _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
-        session.execute(text(
-            "UPDATE carritos_abandonados SET abandoned_email_sent = TRUE WHERE id = :id"
-        ), {"id": row[0]})
-        session.commit()
 
 
 def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) -> None:
