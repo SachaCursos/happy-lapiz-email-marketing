@@ -9,26 +9,32 @@ import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X
 import Link from "next/link";
 
 const TRIGGER_LABELS: Record<string, { label: string; description: string; color: string }> = {
-  abandoned_booking: {
-    label: "Reserva abandonada",
-    description: "Cuando alguien inicia una reserva pero no la completa",
-    color: "bg-orange-100 text-orange-700",
-  },
-  welcome: {
-    label: "Bienvenida",
-    description: "Cuando se añade un nuevo contacto",
-    color: "bg-blue-100 text-blue-700",
-  },
-  post_visit: {
-    label: "Post-visita",
-    description: "Días después de la última experiencia",
-    color: "bg-green-100 text-green-700",
-  },
-  reactivation: {
-    label: "Reactivación",
-    description: "Clientes sin visitar en mucho tiempo",
-    color: "bg-purple-100 text-purple-700",
-  },
+  // Shopify
+  abandoned_cart:           { label: "Carrito abandonado",              description: "Checkout iniciado sin completar compra.",                color: "bg-green-100 text-green-700" },
+  checkout_started:         { label: "Checkout iniciado",               description: "Alguien comenzó el proceso de pago en Shopify.",         color: "bg-green-100 text-green-700" },
+  added_to_cart:            { label: "Producto al carrito",             description: "Alguien agregó un producto al carrito.",                 color: "bg-green-100 text-green-700" },
+  placed_order:             { label: "Compra realizada",                description: "Cliente completó una compra.",                           color: "bg-green-100 text-green-700" },
+  ordered_product:          { label: "Producto comprado",               description: "Se dispara por cada producto dentro de una orden.",      color: "bg-green-100 text-green-700" },
+  fulfilled_order:          { label: "Pedido enviado",                  description: "El pedido fue procesado y enviado completamente.",        color: "bg-green-100 text-green-700" },
+  fulfilled_partial_order:  { label: "Envío parcial",                   description: "Parte del pedido fue enviada.",                          color: "bg-green-100 text-green-700" },
+  confirmed_shipment:       { label: "Envío con tracking",              description: "El fulfillment incluye número de seguimiento.",          color: "bg-green-100 text-green-700" },
+  delivered_shipment:       { label: "Pedido entregado",                description: "El transportista marcó el paquete como entregado.",      color: "bg-green-100 text-green-700" },
+  marked_out_for_delivery:  { label: "En camino",                       description: "El paquete está en reparto.",                            color: "bg-green-100 text-green-700" },
+  cancelled_order:          { label: "Pedido cancelado",                description: "Una orden fue cancelada en Shopify.",                    color: "bg-green-100 text-green-700" },
+  refunded_order:           { label: "Pedido reembolsado",              description: "Se procesó un reembolso.",                               color: "bg-green-100 text-green-700" },
+  // Cupones
+  coupon_assigned:          { label: "Cupón asignado",                  description: "Se generó un cupón dinámico para el contacto.",          color: "bg-purple-100 text-purple-700" },
+  coupon_used:              { label: "Cupón usado",                     description: "El cliente usó un código de descuento.",                 color: "bg-purple-100 text-purple-700" },
+  // Web
+  viewed_product:           { label: "Producto visto",                  description: "El contacto vio un producto en happylapiz.cl.",          color: "bg-blue-100 text-blue-700" },
+  active_on_site:           { label: "Activo en el sitio",              description: "El contacto estuvo activo en happylapiz.cl.",            color: "bg-blue-100 text-blue-700" },
+  subscribed_to_back_in_stock: { label: "Alerta de stock",             description: "El cliente se suscribió a notificación de stock.",       color: "bg-blue-100 text-blue-700" },
+  // Internos
+  welcome:                  { label: "Bienvenida",                      description: "Nuevo contacto con opt-in activo.",                      color: "bg-gray-100 text-gray-700" },
+  reactivation:             { label: "Reactivación",                    description: "Clientes sin compra en N días.",                         color: "bg-gray-100 text-gray-700" },
+  post_visit:               { label: "Post-compra",                     description: "N días después de la última compra.",                    color: "bg-gray-100 text-gray-700" },
+  // HotBoat
+  abandoned_booking:        { label: "Reserva abandonada",              description: "Reserva con pago pendiente sin completar.",              color: "bg-orange-100 text-orange-700" },
 };
 
 function configSummary(auto: Automation): string {
@@ -39,10 +45,15 @@ function configSummary(auto: Automation): string {
     case "welcome":
       return c.delay_hours ? `${c.delay_hours}h después de registrarse` : "Inmediatamente al registrarse";
     case "post_visit":
-      return `${c.delay_days ?? 3} días después de la visita`;
+      return `${c.delay_days ?? 3} días después de la última compra`;
     case "reactivation":
-      return `Sin visitar ${c.inactivity_days ?? 90}+ días`;
+      return `Sin compra en ${c.inactivity_days ?? 90}+ días`;
     default:
+      if (c.delay_hours !== undefined) {
+        const h = Number(c.delay_hours);
+        const delay = h === 0 ? "inmediatamente" : h < 1 ? `${Math.round(h * 60)} min después` : h < 24 ? `${h}h después` : `${h / 24}d después`;
+        return `Envío ${delay} del evento`;
+      }
       return "";
   }
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi } from "@/lib/api";
 import { Template, AutomationTrigger } from "@/lib/types";
 import { ArrowLeft, Clock, Info } from "lucide-react";
@@ -163,6 +163,7 @@ const LOOKBACK_UNITS = [
 
 export default function NewAutomationPage() {
   const router = useRouter();
+  const qc = useQueryClient();
 
   const [name, setName] = useState("");
   const [triggerType, setTriggerType] = useState<AutomationTrigger>("abandoned_cart");
@@ -229,7 +230,10 @@ export default function NewAutomationPage() {
         subject,
       });
     },
-    onSuccess: () => router.push("/automations"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["automations"] });
+      router.push("/automations");
+    },
   });
 
   const isValid = name && subject && templateId;
