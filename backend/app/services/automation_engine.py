@@ -250,7 +250,7 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
 
 
 def _check_abandoned_cart(auto: Automation, session: Session) -> None:
-    """Carrito abandonado: checkout creado hace más de delay_hours sin orden asociada."""
+    """Carrito abandonado: checkout en carritos_abandonados hace más de delay_hours sin recuperar."""
     config = auto.trigger_config or {}
     delay_hours = float(config.get("delay_hours", 1))
     lookback_hours = float(config.get("lookback_hours", 24))
@@ -259,13 +259,16 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
     cutoff_recent = now - timedelta(hours=lookback_hours)
 
     rows = session.exec(text("""
-        SELECT id, checkout_token, email, cart_total, line_items
-        FROM shopify_checkouts
+        SELECT id, checkout_token, email, first_name, last_name,
+               subtotal_price, line_items, checkout_url
+        FROM carritos_abandonados
         WHERE recovered = FALSE
           AND abandoned_email_sent = FALSE
-          AND email IS NOT NULL
+          AND email IS NOT NULL AND email <> ''
           AND created_at <= :old
           AND created_at >= :recent
+        ORDER BY created_at ASC
+        LIMIT 200
     """), {"old": cutoff_old, "recent": cutoff_recent}).fetchall()
 
     for row in rows:
@@ -275,18 +278,39 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         trigger_key = f"abandoned_cart:{row[1]}"
         if _already_sent(session, auto.id, trigger_key):
             continue
+
+        # Look up contact — if opted_out explicitly, skip; otherwise send
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
-        if not contact or not contact.opted_in:
+        if contact and contact.opted_in is False:
             continue
-        items = row[4] or []
+
+        # Use cart name if contact not registered
+        first_name = (row[3] or "").strip()
+        last_name  = (row[4] or "").strip()
+        full_name  = f"{first_name} {last_name}".strip() or email
+
+        if not contact:
+            contact = Contact(
+                email=email,
+                name=full_name,
+                opted_in=True,
+                orders_count=0,
+            )
+
+        items = row[6] or []
         first_item = items[0].get("title", "") if items else ""
+        subtotal = float(row[5] or 0)
         extra_vars = {
-            "cart_total": f"${int(row[3] or 0):,}".replace(",", "."),
+            "nombre":        full_name,
+            "first_name":    first_name or full_name.split()[0],
+            "cart_total":    f"${int(subtotal):,}".replace(",", "."),
             "first_product": first_item,
-            "cart_url": "https://happylapiz.cl/cart",
+            "cart_url":      row[7] or "https://happylapiz.cl/cart",
         }
         _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
-        session.exec(text("UPDATE shopify_checkouts SET abandoned_email_sent = TRUE WHERE id = :id"), {"id": row[0]})
+        session.exec(text(
+            "UPDATE carritos_abandonados SET abandoned_email_sent = TRUE WHERE id = :id"
+        ), {"id": row[0]})
         session.commit()
 
 
