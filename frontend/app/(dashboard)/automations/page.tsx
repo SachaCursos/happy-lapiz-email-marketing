@@ -100,7 +100,7 @@ function EditPanel({
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Asunto del email</label>
           <input
-            value={form.subject}
+            value={form.subject ?? ""}
             onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
@@ -110,7 +110,7 @@ function EditPanel({
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Plantilla de email</label>
         <select
-          value={form.template_id}
+          value={form.template_id ?? 0}
           onChange={(e) => setForm((f) => ({ ...f, template_id: Number(e.target.value) }))}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
         >

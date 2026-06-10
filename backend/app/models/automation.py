@@ -60,8 +60,8 @@ class AutomationRead(SQLModel):
     name: str
     trigger_type: str
     trigger_config: Optional[dict]
-    template_id: int
-    subject: str
+    template_id: Optional[int]
+    subject: Optional[str]
     status: str
     created_by: Optional[int]
     created_at: datetime

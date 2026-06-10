@@ -201,11 +201,11 @@ export type AutomationStatus = "active" | "paused";
 export interface Automation {
   id: number;
   name: string;
-  trigger_type: AutomationTrigger;
+  trigger_type: string;
   trigger_config: Record<string, number> | null;
-  template_id: number;
-  subject: string;
-  status: AutomationStatus;
+  template_id: number | null;
+  subject: string | null;
+  status: string;
   created_by: number | null;
   created_at: string;
   updated_at: string;
