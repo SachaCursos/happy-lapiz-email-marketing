@@ -669,6 +669,7 @@ export function TemplateBlockEditor({
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [favorites, setFavorites] = useState<Block[]>(() => loadFavorites());
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
+  const [htmlOverride, setHtmlOverride] = useState<string | null>(null);
 
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
   const isPlainMode = tab === "plain";
@@ -751,13 +752,14 @@ export function TemplateBlockEditor({
     } else {
       onSave({
         name, subject, previewText,
-        html: blocksToHtml(blocks),
+        html: htmlOverride ?? blocksToHtml(blocks),
         blocks,
       });
     }
   }
 
-  const previewHtml = isPlainMode ? plainTextToHtml(plainText) : blocksToHtml(blocks);
+  const generatedHtml = isPlainMode ? plainTextToHtml(plainText) : blocksToHtml(blocks);
+  const previewHtml = htmlOverride ?? generatedHtml;
   const previewWidth = previewDevice === "mobile" ? 390 : 600;
 
   return (
@@ -928,15 +930,31 @@ export function TemplateBlockEditor({
             {tab === "html" && (
               <div className="flex-1 overflow-hidden p-4">
                 <div className="h-full bg-gray-900 rounded-xl overflow-hidden flex flex-col">
-                  <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700">
-                    <span className="text-xs text-gray-400 font-mono">HTML generado</span>
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700 gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400 font-mono">
+                        {htmlOverride !== null ? "HTML personalizado ✎" : "HTML generado"}
+                      </span>
+                      {htmlOverride !== null && (
+                        <button
+                          onClick={() => setHtmlOverride(null)}
+                          className="text-xs text-amber-400 hover:text-amber-200 transition-colors border border-amber-700 rounded px-2 py-0.5"
+                        >
+                          Regenerar desde bloques
+                        </button>
+                      )}
+                    </div>
                     <button onClick={() => navigator.clipboard.writeText(previewHtml)}
-                      className="text-xs text-gray-400 hover:text-white transition-colors">
+                      className="text-xs text-gray-400 hover:text-white transition-colors shrink-0">
                       Copiar
                     </button>
                   </div>
-                  <textarea readOnly value={previewHtml}
-                    className="flex-1 p-4 font-mono text-xs text-green-400 bg-transparent resize-none focus:outline-none" />
+                  <textarea
+                    value={htmlOverride ?? generatedHtml}
+                    onChange={(e) => setHtmlOverride(e.target.value)}
+                    spellCheck={false}
+                    className="flex-1 p-4 font-mono text-xs text-green-400 bg-transparent resize-none focus:outline-none"
+                  />
                 </div>
               </div>
             )}
