@@ -1,14 +1,19 @@
 import json
+import random
+import string
 import textwrap
 from datetime import datetime
 from typing import List
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from sqlmodel import Session, select
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.deps import get_current_user, require_editor
 from app.database import get_session
+from app.models.automation import AutomationEnrollment
 from app.models.contact import Contact
 from app.models.form import (
     FormSubmission, FormSubmitPayload,
@@ -113,6 +118,56 @@ def submit_preflight(form_id: int):
     return Response(status_code=204, headers=_cors_headers())
 
 
+def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: str) -> str | None:
+    """Generate a unique Shopify coupon code for a form submission. Returns code or None on failure."""
+    existing = session.execute(text(
+        "SELECT code FROM coupon_sends WHERE coupon_campaign_id = :cid AND contact_email = :email LIMIT 1"
+    ), {"cid": coupon_campaign_id, "email": email.lower()}).fetchone()
+    if existing:
+        return existing[0]
+
+    campaign = session.execute(text(
+        "SELECT prefix, discount_type, discount_value, shopify_discount_id FROM coupon_campaigns WHERE id = :id"
+    ), {"id": coupon_campaign_id}).fetchone()
+    if not campaign:
+        return None
+
+    prefix = campaign[0] or "HL"
+    shopify_id = campaign[3]
+
+    for _ in range(10):
+        suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        code = f"{prefix}-{suffix}"
+        dup = session.execute(text("SELECT 1 FROM coupon_sends WHERE code = :c"), {"c": code}).fetchone()
+        if not dup:
+            break
+
+    if settings.SHOPIFY_ACCESS_TOKEN and shopify_id:
+        try:
+            mutation = """
+            mutation discountRedeemCodeBulkAdd($discountId: ID!, $codes: [DiscountRedeemCodeInput!]!) {
+              discountRedeemCodeBulkAdd(discountId: $discountId, codes: $codes) {
+                bulkCreation { id }
+                userErrors { field message }
+              }
+            }"""
+            httpx.post(
+                f"https://{settings.SHOPIFY_DOMAIN}/admin/api/2024-10/graphql.json",
+                json={"query": mutation, "variables": {"discountId": shopify_id, "codes": [{"code": code}]}},
+                headers={"X-Shopify-Access-Token": settings.SHOPIFY_ACCESS_TOKEN, "Content-Type": "application/json"},
+                timeout=8,
+            )
+        except Exception:
+            pass
+
+    session.execute(text("""
+        INSERT INTO coupon_sends (coupon_campaign_id, contact_email, code)
+        VALUES (:ccamp, :email, :code)
+        ON CONFLICT DO NOTHING
+    """), {"ccamp": coupon_campaign_id, "email": email.lower(), "code": code})
+    return code
+
+
 @router.post("/{form_id}/submit")
 def submit_form(
     form_id: int,
@@ -148,14 +203,22 @@ def submit_form(
         contact.updated_at = datetime.utcnow()
         session.add(contact)
     else:
-        session.add(Contact(
+        contact = Contact(
             email=email,
             name=(payload.name or "").strip() or None,
             phone=(payload.phone or "").strip() or None,
             origin_utm=origin,
             opted_in=True,
             opted_in_at=datetime.utcnow(),
-        ))
+        )
+        session.add(contact)
+
+    # Dynamic coupon generation
+    coupon_code: str | None = None
+    if f.coupon_campaign_id:
+        coupon_code = _generate_dynamic_coupon(session, f.coupon_campaign_id, email)
+    elif f.coupon_code:
+        coupon_code = f.coupon_code
 
     session.add(FormSubmission(
         form_id=form_id,
@@ -164,9 +227,47 @@ def submit_form(
         phone=(payload.phone or "").strip() or None,
         source_url=payload.source_url,
         extra_data=payload.extra_data or None,
+        coupon_code=coupon_code,
     ))
     session.commit()
-    return {"ok": True}
+
+    # Enroll in automation for coupon email if configured
+    if f.coupon_automation_id and coupon_code:
+        session.flush()
+        existing_enrollment = session.exec(
+            select(AutomationEnrollment).where(
+                AutomationEnrollment.automation_id == f.coupon_automation_id,
+                AutomationEnrollment.trigger_key == f"form_submitted:{form_id}:{email}",
+            )
+        ).first()
+        if not existing_enrollment:
+            from app.models.automation import Automation
+            auto = session.get(Automation, f.coupon_automation_id)
+            if auto and auto.status == "active":
+                extra = {
+                    "nombre": (payload.name or "").strip() or email,
+                    "first_name": ((payload.name or "").strip() or email).split()[0],
+                    "email": email,
+                    "coupon_code": coupon_code,
+                }
+                from datetime import timedelta
+                from app.services.automation_engine import _get_steps
+                steps = _get_steps(auto)
+                first_delay = float(steps[0].get("delay_hours", 0)) if steps else 0
+                enrollment = AutomationEnrollment(
+                    automation_id=f.coupon_automation_id,
+                    contact_email=email,
+                    trigger_key=f"form_submitted:{form_id}:{email}",
+                    enrolled_at=datetime.utcnow(),
+                    next_send_at=datetime.utcnow() + timedelta(hours=first_delay),
+                    next_step=1,
+                    status="active",
+                    extra_vars_json=json.dumps(extra),
+                )
+                session.add(enrollment)
+                session.commit()
+
+    return {"ok": True, "coupon_code": coupon_code}
 
 
 @router.get("/{form_id}/embed.js", response_class=PlainTextResponse)
@@ -189,6 +290,9 @@ def embed_js(form_id: int, session: Session = Depends(get_session)):
         "scroll_pct": f.popup_scroll_pct,
         "html_override": f.html_override or "",
         "coupon_code": f.coupon_code or "",
+        "has_dynamic_coupon": bool(f.coupon_campaign_id),
+        "design": f.design_config or {},
+        "steps": f.steps_config or [],
         "api": settings.BACKEND_PUBLIC_URL,
     }
 
@@ -261,44 +365,20 @@ def tracking_pixel():
 
 # ── Embed JS builder ──────────────────────────────────────────────────────────
 
-def _custom_field_html(field: dict) -> str:
-    key = field.get("key", "")
-    label = field.get("label", key)
-    ftype = field.get("type", "text")
-    placeholder = field.get("placeholder", "")
-    required = field.get("required", False)
-    options = field.get("options", [])
-    req_attr = "required" if required else ""
-    label_star = " *" if required else ""
-
-    if ftype == "select":
-        opts_html = f'<option value="">{placeholder or "Seleccionar…"}</option>'
-        for opt in options:
-            opts_html += f'<option value="{opt}">{opt}</option>'
-        return (
-            f'<label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">{label}{label_star}</label>'
-            f'<select class="hb-input" name="{key}" {req_attr}>{opts_html}</select>'
-        )
-    if ftype == "textarea":
-        return (
-            f'<label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">{label}{label_star}</label>'
-            f'<textarea class="hb-input" name="{key}" placeholder="{placeholder}" rows="2" {req_attr} style="resize:none"></textarea>'
-        )
-    return (
-        f'<label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">{label}{label_star}</label>'
-        f'<input class="hb-input" type="{ftype}" name="{key}" placeholder="{placeholder}" {req_attr} />'
-    )
-
-
 def _build_embed_js(cfg: dict) -> str:
     cfg_json = json.dumps(cfg, ensure_ascii=False)
+    d = cfg.get("design", {})
 
-    # Build custom field HTML for auto-generated mode
-    custom_fields_html = ""
-    for field in cfg.get("custom_fields", []):
-        custom_fields_html += _custom_field_html(field)
-
-    custom_fields_html_js = json.dumps(custom_fields_html)
+    header_bg   = d.get("header_bg", "#0369a1")
+    header_bg2  = d.get("header_bg2", "#0ea5e9")
+    header_text = d.get("header_text", "#ffffff")
+    body_bg     = d.get("body_bg", "#ffffff")
+    btn_bg      = d.get("btn_bg", "#0369a1")
+    btn_bg2     = d.get("btn_bg2", "#0ea5e9")
+    btn_text    = d.get("btn_text", "#ffffff")
+    input_bdr   = d.get("input_border", "#e2e8f0")
+    radius      = int(d.get("border_radius", 16))
+    font        = d.get("font", "system-ui")
 
     return textwrap.dedent(f"""
     (function() {{
@@ -306,128 +386,162 @@ def _build_embed_js(cfg: dict) -> str:
       var STORE_KEY = 'hb_form_' + C.id;
       if (sessionStorage.getItem(STORE_KEY)) return;
 
-      var STYLES = `
-        @keyframes hbSlideUp {{
-          from {{ transform:translateY(80px);opacity:0 }}
-          to   {{ transform:translateY(0);opacity:1 }}
-        }}
-        @keyframes hbFadeIn {{
-          from {{ opacity:0;transform:scale(0.96) }}
-          to   {{ opacity:1;transform:scale(1) }}
-        }}
-        #hb-popup-overlay {{
-          position:fixed;bottom:0;left:0;right:0;
-          display:flex;justify-content:center;padding:16px;
-          z-index:2147483647;pointer-events:none;
-          font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        }}
-        #hb-popup-overlay.hb-centered {{
-          bottom:0;top:0;align-items:center;background:rgba(0,0,0,0.45);pointer-events:all;
-        }}
-        #hb-popup-box {{
-          background:#fff;border-radius:16px;overflow:hidden;
-          box-shadow:0 20px 60px rgba(0,0,0,0.2);
-          max-width:440px;width:100%;max-height:90vh;overflow-y:auto;
-          pointer-events:all;border:1px solid #e2e8f0;
-        }}
-        #hb-popup-overlay:not(.hb-centered) #hb-popup-box {{
-          animation:hbSlideUp 0.4s cubic-bezier(0.34,1.56,0.64,1);
-        }}
-        #hb-popup-overlay.hb-centered #hb-popup-box {{
-          animation:hbFadeIn 0.25s ease;
-        }}
-        #hb-popup-header {{
-          background:linear-gradient(135deg,#0369a1 0%,#0ea5e9 100%);
-          padding:20px 48px 20px 24px;position:relative;
-        }}
-        #hb-popup-close {{
-          position:absolute;top:12px;right:12px;
-          background:rgba(255,255,255,0.2);border:none;color:#fff;
-          width:28px;height:28px;border-radius:50%;
-          cursor:pointer;font-size:18px;line-height:28px;text-align:center;
-          transition:background .2s;
-        }}
-        #hb-popup-close:hover {{ background:rgba(255,255,255,0.35); }}
-        #hb-popup-brand {{ margin:0 0 4px;color:rgba(255,255,255,0.7);font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:700; }}
-        #hb-popup-title {{ margin:0;color:#fff;font-size:19px;font-weight:700;line-height:1.3; }}
-        #hb-popup-body {{ padding:20px 24px; }}
-        #hb-popup-desc {{ margin:0 0 16px;color:#64748b;font-size:14px;line-height:1.5; }}
-        .hb-input {{
-          width:100%;padding:10px 14px;border:1.5px solid #e2e8f0;
-          border-radius:8px;font-size:14px;color:#1e293b;
-          margin-bottom:10px;box-sizing:border-box;outline:none;
-          transition:border-color .2s;font-family:inherit;
-        }}
-        .hb-input:focus {{ border-color:#0ea5e9; }}
-        #hb-popup-btn {{
-          width:100%;padding:12px;
-          background:linear-gradient(135deg,#0369a1,#0ea5e9);
-          color:#fff;border:none;border-radius:10px;font-size:15px;
-          font-weight:700;cursor:pointer;transition:opacity .2s;margin-top:4px;font-family:inherit;
-        }}
-        #hb-popup-btn:hover {{ opacity:0.88; }}
-        #hb-popup-btn:disabled {{ opacity:0.5;cursor:not-allowed; }}
-        #hb-popup-success {{ display:none;text-align:center;padding:8px 0 4px; }}
-        #hb-popup-fine {{ margin:12px 0 0;color:#94a3b8;font-size:11px;text-align:center; }}
-      `;
+      var D = C.design || {{}};
+      var headerBg  = D.header_bg  || '{header_bg}';
+      var headerBg2 = D.header_bg2 || '{header_bg2}';
+      var headerTxt = D.header_text|| '{header_text}';
+      var bodyBg    = D.body_bg    || '{body_bg}';
+      var btnBg     = D.btn_bg     || '{btn_bg}';
+      var btnBg2    = D.btn_bg2    || '{btn_bg2}';
+      var btnTxt    = D.btn_text   || '{btn_text}';
+      var inpBdr    = D.input_border|| '{input_bdr}';
+      var radius    = (D.border_radius !== undefined ? D.border_radius : {radius}) + 'px';
+      var fontFam   = D.font       || '{font}';
+
+      var STYLES = [
+        '@keyframes hbSlideUp{{from{{transform:translateY(80px);opacity:0}}to{{transform:translateY(0);opacity:1}}}}',
+        '@keyframes hbFadeIn{{from{{opacity:0;transform:scale(0.96)}}to{{opacity:1;transform:scale(1)}}}}',
+        '#hb-popup-overlay{{position:fixed;bottom:0;left:0;right:0;display:flex;justify-content:center;padding:16px;z-index:2147483647;pointer-events:none;font-family:' + fontFam + ',system-ui,sans-serif;}}',
+        '#hb-popup-overlay.hb-centered{{bottom:0;top:0;align-items:center;background:rgba(0,0,0,0.45);pointer-events:all;}}',
+        '#hb-popup-box{{background:' + bodyBg + ';border-radius:' + radius + ';overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.2);max-width:440px;width:100%;max-height:90vh;overflow-y:auto;pointer-events:all;border:1px solid #e2e8f0;}}',
+        '#hb-popup-overlay:not(.hb-centered) #hb-popup-box{{animation:hbSlideUp 0.4s cubic-bezier(0.34,1.56,0.64,1);}}',
+        '#hb-popup-overlay.hb-centered #hb-popup-box{{animation:hbFadeIn 0.25s ease;}}',
+        '#hb-popup-header{{background:linear-gradient(135deg,' + headerBg + ' 0%,' + headerBg2 + ' 100%);padding:20px 48px 20px 24px;position:relative;}}',
+        '#hb-popup-close{{position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.2);border:none;color:' + headerTxt + ';width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:18px;line-height:28px;text-align:center;transition:background .2s;}}',
+        '#hb-popup-close:hover{{background:rgba(255,255,255,0.35);}}',
+        '#hb-popup-title{{margin:0;color:' + headerTxt + ';font-size:19px;font-weight:700;line-height:1.3;}}',
+        '#hb-popup-subtitle{{margin:4px 0 0;color:' + headerTxt + ';opacity:0.8;font-size:13px;}}',
+        '#hb-popup-body{{padding:20px 24px;background:' + bodyBg + ';}}',
+        '#hb-popup-desc{{margin:0 0 16px;color:#64748b;font-size:14px;line-height:1.5;}}',
+        '#hb-popup-progress{{display:flex;gap:4px;margin-bottom:16px;}}',
+        '.hb-progress-dot{{flex:1;height:4px;border-radius:2px;background:#e2e8f0;transition:background .3s;}}',
+        '.hb-progress-dot.hb-done{{background:' + btn_bg + ';}}',
+        '.hb-step{{display:none;}}',
+        '.hb-step.hb-active{{display:block;}}',
+        '.hb-input{{width:100%;padding:10px 14px;border:1.5px solid ' + inpBdr + ';border-radius:8px;font-size:14px;color:#1e293b;margin-bottom:10px;box-sizing:border-box;outline:none;transition:border-color .2s;font-family:inherit;background:#fff;}}',
+        '.hb-input:focus{{border-color:' + btn_bg + ';}}',
+        '.hb-label{{display:block;font-size:12px;color:#64748b;margin-bottom:4px;}}',
+        '#hb-popup-btn{{width:100%;padding:12px;background:linear-gradient(135deg,' + btnBg + ',' + btnBg2 + ');color:' + btnTxt + ';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .2s;margin-top:4px;font-family:inherit;}}',
+        '#hb-popup-btn:hover{{opacity:0.88;}}',
+        '#hb-popup-btn:disabled{{opacity:0.5;cursor:not-allowed;}}',
+        '#hb-popup-success{{display:none;text-align:center;padding:8px 0 4px;}}',
+        '.hb-coupon-box{{margin:4px 0 12px;padding:14px 20px;background:#f0f9ff;border:2px dashed ' + btn_bg + ';border-radius:12px;text-align:center;}}',
+        '#hb-popup-fine{{margin:12px 0 0;color:#94a3b8;font-size:11px;text-align:center;}}',
+      ].join('\\n');
+
       var style = document.createElement('style');
       style.textContent = STYLES;
       document.head.appendChild(style);
 
-      var customFieldsHtml = {custom_fields_html_js};
+      // ── Field renderer ──────────────────────────────────────────────────────
+      var CF_MAP = {{}};
+      (C.custom_fields||[]).forEach(function(f){{ CF_MAP[f.key] = f; }});
 
-      function buildAutoPopup() {{
-        var nameF  = C.collect_name  ? '<input class="hb-input" id="hb-inp-name"  type="text" name="name"  placeholder="Tu nombre" />' : '';
-        var phoneF = C.collect_phone ? '<input class="hb-input" id="hb-inp-phone" type="tel"  name="phone" placeholder="Tu teléfono" />' : '';
-        var descH  = C.description   ? '<p id="hb-popup-desc">' + C.description + '</p>' : '';
+      function renderField(key) {{
+        var lbl, inp;
+        if (key === 'email') {{
+          lbl = '<label class="hb-label">Email *</label>';
+          inp = '<input class="hb-input" type="email" name="email" placeholder="tu@email.com" required />';
+        }} else if (key === 'name') {{
+          lbl = '<label class="hb-label">Nombre</label>';
+          inp = '<input class="hb-input" type="text" name="name" placeholder="Tu nombre" />';
+        }} else if (key === 'phone') {{
+          lbl = '<label class="hb-label">Teléfono</label>';
+          inp = '<input class="hb-input" type="tel" name="phone" placeholder="+56 9 xxxx xxxx" />';
+        }} else {{
+          var cf = CF_MAP[key];
+          if (!cf) return '';
+          var req = cf.required ? ' *' : '';
+          lbl = '<label class="hb-label">' + cf.label + req + '</label>';
+          if (cf.type === 'select') {{
+            var opts = '<option value="">' + (cf.placeholder||'Seleccionar…') + '</option>';
+            (cf.options||[]).forEach(function(o){{ opts += '<option value="'+o+'">'+o+'</option>'; }});
+            inp = '<select class="hb-input" name="' + key + '"' + (cf.required?' required':'') + '>' + opts + '</select>';
+          }} else if (cf.type === 'textarea') {{
+            inp = '<textarea class="hb-input" name="' + key + '" placeholder="' + (cf.placeholder||'') + '" rows="2"' + (cf.required?' required':'') + ' style="resize:none"></textarea>';
+          }} else {{
+            inp = '<input class="hb-input" type="' + cf.type + '" name="' + key + '" placeholder="' + (cf.placeholder||'') + '"' + (cf.required?' required':'') + ' />';
+          }}
+        }}
+        return lbl + inp;
+      }}
+
+      // ── Build popup HTML ────────────────────────────────────────────────────
+      function buildPopup() {{
+        var useSteps = C.steps && C.steps.length > 0;
+        var steps    = useSteps ? C.steps : [{{
+          step: 1,
+          title: C.title,
+          description: C.description,
+          fields: (C.collect_name ? ['name'] : []).concat(['email']).concat(C.collect_phone ? ['phone'] : []).concat((C.custom_fields||[]).map(function(f){{return f.key;}})),
+          button_text: C.button_text,
+        }}];
+
+        var headerTitle = steps[0].title || C.title;
+        var headerDesc  = steps[0].description || C.description;
+
+        var progressHtml = '';
+        if (steps.length > 1) {{
+          progressHtml = '<div id="hb-popup-progress">';
+          steps.forEach(function(_,i){{
+            progressHtml += '<div class="hb-progress-dot' + (i===0?' hb-done':'') + '" id="hb-dot-'+i+'"></div>';
+          }});
+          progressHtml += '</div>';
+        }}
+
+        var stepsHtml = '';
+        steps.forEach(function(s,idx){{
+          var fieldsHtml = '';
+          (s.fields||[]).forEach(function(k){{ fieldsHtml += renderField(k); }});
+          var btnText = s.button_text || (idx === steps.length-1 ? C.button_text : 'Continuar →');
+          stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
+            fieldsHtml +
+            '<button id="hb-popup-btn" type="button" data-step="'+idx+'" data-final="'+(idx===steps.length-1?'1':'0')+'">' + btnText + '</button>' +
+            '</div>';
+        }});
+
+        var couponPlaceholder = (C.coupon_code || C.has_dynamic_coupon)
+          ? '<div class="hb-coupon-box" id="hb-coupon-box" style="display:none">' +
+            '<p style="margin:0 0 6px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+            '<p style="margin:0;font-size:26px;font-weight:900;color:' + btnBg + ';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
+            '<p style="margin:8px 0 0;font-size:12px;color:#64748b">Úsalo en tu próxima compra</p>' +
+            '</div>'
+          : '';
+
         return (
           '<div id="hb-popup-header">' +
           '  <button id="hb-popup-close" aria-label="Cerrar">&#x2715;</button>' +
-          '  <p id="hb-popup-brand">HotBoat</p>' +
-          '  <h2 id="hb-popup-title">' + C.title + '</h2>' +
+          '  <h2 id="hb-popup-title">' + headerTitle + '</h2>' +
+          (headerDesc ? '  <p id="hb-popup-subtitle">' + headerDesc + '</p>' : '') +
           '</div>' +
           '<div id="hb-popup-body">' +
-          '  ' + descH +
-          '  <form id="hb-popup-form" novalidate>' +
-          '    ' + nameF +
-          '    <input class="hb-input" type="email" name="email" placeholder="Tu email *" required />' +
-          '    ' + phoneF +
-          '    ' + customFieldsHtml +
-          '    <button id="hb-popup-btn" type="submit">' + C.button_text + '</button>' +
-          '  </form>' +
+          progressHtml +
+          '  <form id="hb-popup-form" novalidate>' + stepsHtml + '</form>' +
           '  <div id="hb-popup-success">' +
           '    <div style="font-size:40px;margin-bottom:8px;">&#x2705;</div>' +
           '    <p style="color:#166534;font-weight:700;font-size:15px;margin:0 0 12px">' + C.success_message + '</p>' +
-          (C.coupon_code ? (
-          '    <div style="margin:4px 0 12px;padding:14px 20px;background:#f0f9ff;border:2px dashed #0ea5e9;border-radius:12px;text-align:center">' +
-          '      <p style="margin:0 0 6px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón de reserva</p>' +
-          '      <p style="margin:0;font-size:26px;font-weight:900;color:#0369a1;letter-spacing:4px">' + C.coupon_code + '</p>' +
-          '      <p style="margin:8px 0 0;font-size:12px;color:#64748b">Úsalo al reservar en hotboat.cl</p>' +
-          '    </div>'
-          ) : '') +
+          couponPlaceholder +
           '  </div>' +
           '  <p id="hb-popup-fine">Respetamos tu privacidad. Puedes darte de baja cuando quieras.</p>' +
           '</div>'
         );
       }}
 
+      // ── Show popup ──────────────────────────────────────────────────────────
       function showPopup() {{
         if (document.getElementById('hb-popup-overlay')) return;
 
         var overlay = document.createElement('div');
         overlay.id = 'hb-popup-overlay';
-
         var box = document.createElement('div');
         box.id = 'hb-popup-box';
 
         if (C.html_override) {{
           overlay.classList.add('hb-centered');
           box.innerHTML = C.html_override;
-          overlay.addEventListener('click', function(e) {{
-            if (e.target === overlay) closePopup();
-          }});
+          overlay.addEventListener('click', function(e) {{ if (e.target === overlay) closePopup(); }});
         }} else {{
-          box.innerHTML = buildAutoPopup();
+          box.innerHTML = buildPopup();
         }}
 
         overlay.appendChild(box);
@@ -436,51 +550,98 @@ def _build_embed_js(cfg: dict) -> str:
         var closeBtn = document.getElementById('hb-popup-close');
         if (closeBtn) closeBtn.addEventListener('click', closePopup);
 
-        var form = document.getElementById('hb-popup-form');
-        if (!form) return;
+        var currentStep = 0;
+        var collectedData = {{ source_url: window.location.href, extra_data: {{}} }};
 
-        form.addEventListener('submit', function(e) {{
-          e.preventDefault();
-          var btn = document.getElementById('hb-popup-btn');
-          if (btn) {{ btn.disabled = true; btn.textContent = 'Enviando…'; }}
-
-          // Collect ALL named inputs generically
-          var data = {{ source_url: window.location.href, extra_data: {{}} }};
-          var els = form.querySelectorAll('input[name],select[name],textarea[name]');
-          els.forEach(function(el) {{
+        function collectStep(stepEl) {{
+          var inputs = stepEl.querySelectorAll('input[name],select[name],textarea[name]');
+          inputs.forEach(function(el) {{
             var n = el.name, v = el.value;
-            if (n === 'email')      data.email = v;
-            else if (n === 'name')  data.name  = v;
-            else if (n === 'phone') data.phone = v;
-            else                    data.extra_data[n] = v;
+            if (n === 'email')     collectedData.email = v;
+            else if (n === 'name') collectedData.name  = v;
+            else if (n === 'phone')collectedData.phone = v;
+            else collectedData.extra_data[n] = v;
           }});
+        }}
 
-          if (!data.email) {{
-            if (btn) {{ btn.disabled = false; btn.textContent = C.button_text; }}
+        function advanceStep(nextIdx) {{
+          var steps = document.querySelectorAll('.hb-step');
+          steps.forEach(function(s){{ s.classList.remove('hb-active'); }});
+          var ns = document.getElementById('hb-step-' + nextIdx);
+          if (ns) ns.classList.add('hb-active');
+          // Update progress dots
+          document.querySelectorAll('.hb-progress-dot').forEach(function(dot, i) {{
+            dot.classList.toggle('hb-done', i <= nextIdx);
+          }});
+          // Update header
+          var stepCfgs = (C.steps && C.steps.length > 0) ? C.steps : null;
+          if (stepCfgs && stepCfgs[nextIdx]) {{
+            var t = document.getElementById('hb-popup-title');
+            var s = document.getElementById('hb-popup-subtitle');
+            if (t && stepCfgs[nextIdx].title) t.textContent = stepCfgs[nextIdx].title;
+            if (s && stepCfgs[nextIdx].description) s.textContent = stepCfgs[nextIdx].description;
+          }}
+        }}
+
+        document.addEventListener('click', function handler(e) {{
+          var btn = e.target.closest('#hb-popup-btn');
+          if (!btn) return;
+
+          var stepIdx  = parseInt(btn.dataset.step, 10);
+          var isFinal  = btn.dataset.final === '1';
+          var stepEl   = document.getElementById('hb-step-' + stepIdx);
+
+          // Validate required fields in this step
+          var invalid = false;
+          if (stepEl) {{
+            stepEl.querySelectorAll('input[required],select[required],textarea[required]').forEach(function(el) {{
+              if (!el.value.trim()) {{ el.style.borderColor = '#dc2626'; invalid = true; }}
+              else el.style.borderColor = '';
+            }});
+          }}
+          if (invalid) return;
+
+          if (stepEl) collectStep(stepEl);
+
+          if (!isFinal) {{
+            currentStep = stepIdx + 1;
+            advanceStep(currentStep);
             return;
           }}
-          if (!Object.keys(data.extra_data).length) delete data.extra_data;
+
+          // Final step: submit
+          btn.disabled = true;
+          btn.textContent = 'Enviando…';
+
+          var payload = Object.assign({{}}, collectedData);
+          if (!Object.keys(payload.extra_data||{{}}).length) delete payload.extra_data;
 
           fetch(C.api + '/api/forms/' + C.id + '/submit', {{
             method: 'POST',
             headers: {{ 'Content-Type': 'application/json' }},
-            body: JSON.stringify(data),
+            body: JSON.stringify(payload),
           }})
           .then(function(r) {{ return r.json(); }})
-          .then(function() {{
-            var f2 = document.getElementById('hb-popup-form');
-            var s2 = document.getElementById('hb-popup-success');
-            if (f2) f2.style.display = 'none';
-            if (s2) s2.style.display = 'block';
+          .then(function(res) {{
+            document.getElementById('hb-popup-form').style.display = 'none';
+            if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
+            var suc = document.getElementById('hb-popup-success');
+            if (suc) suc.style.display = 'block';
+            // Show coupon if returned
+            var code = res.coupon_code || C.coupon_code || '';
+            if (code) {{
+              var box2 = document.getElementById('hb-coupon-box');
+              var codeEl = document.getElementById('hb-coupon-code');
+              if (box2) box2.style.display = 'block';
+              if (codeEl) codeEl.textContent = code;
+            }}
             sessionStorage.setItem(STORE_KEY, 'submitted');
-            setTimeout(closePopup, 6000);
+            setTimeout(closePopup, 8000);
           }})
           .catch(function() {{
-            if (btn) {{
-              btn.disabled = false;
-              btn.style.background = '#dc2626';
-              btn.textContent = 'Error — intenta de nuevo';
-            }}
+            btn.disabled = false;
+            btn.style.background = '#dc2626';
+            btn.textContent = 'Error — intenta de nuevo';
           }});
         }});
       }}

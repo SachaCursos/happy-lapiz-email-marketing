@@ -6,18 +6,24 @@ export function cn(...inputs: ClassValue[]) {
 
 export function formatDate(date: string | null | undefined): string {
   if (!date) return "—";
-  const s = date.endsWith("Z") ? date : date + "Z";
-  return new Date(s).toLocaleDateString("es-CL", {
+  // Date-only strings (YYYY-MM-DD) must not get "Z" appended — that makes them invalid
+  const s = date.includes("T") ? (date.endsWith("Z") ? date : date + "Z") : date;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("es-CL", {
     day: "2-digit",
     month: "short",
     year: "numeric",
+    timeZone: date.includes("T") ? undefined : "UTC",
   });
 }
 
 export function formatDateTime(date: string | null | undefined): string {
   if (!date) return "—";
-  const s = date.endsWith("Z") ? date : date + "Z";
-  return new Date(s).toLocaleString("es-CL", {
+  const s = date.includes("T") ? (date.endsWith("Z") ? date : date + "Z") : date;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-CL", {
     day: "2-digit",
     month: "short",
     year: "numeric",

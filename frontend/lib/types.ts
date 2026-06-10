@@ -150,6 +150,27 @@ export interface FormField {
   options?: string[];
 }
 
+export interface FormDesign {
+  header_bg: string;
+  header_bg2: string;
+  header_text: string;
+  body_bg: string;
+  btn_bg: string;
+  btn_bg2: string;
+  btn_text: string;
+  input_border: string;
+  border_radius: number;
+  font: string;
+}
+
+export interface FormStep {
+  step: number;
+  title: string;
+  description: string;
+  fields: string[];
+  button_text: string;
+}
+
 export interface SignupForm {
   id: number;
   name: string;
@@ -165,6 +186,10 @@ export interface SignupForm {
   custom_form_fields: FormField[] | null;
   html_override: string | null;
   coupon_code: string | null;
+  design_config: FormDesign | null;
+  steps_config: FormStep[] | null;
+  coupon_campaign_id: number | null;
+  coupon_automation_id: number | null;
   status: "active" | "paused";
   created_by: number | null;
   created_at: string;
@@ -179,6 +204,7 @@ export interface FormSubmission {
   phone: string | null;
   source_url: string | null;
   extra_data: Record<string, string> | null;
+  coupon_code: string | null;
   created_at: string;
 }
 
@@ -195,7 +221,8 @@ export type AutomationTrigger =
   // Web tracking
   | "viewed_product" | "active_on_site" | "subscribed_to_back_in_stock"
   // Internos
-  | "welcome" | "post_visit" | "reactivation" | "abandoned_booking";
+  | "welcome" | "post_visit" | "reactivation" | "abandoned_booking"
+  | "form_submitted";
 export type AutomationStatus = "active" | "paused";
 
 export interface AutomationStep {
