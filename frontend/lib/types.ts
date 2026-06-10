@@ -228,6 +228,12 @@ export interface AutomationStats {
   total: number;
   sent: number;
   failed: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
+  orders: number;
+  revenue: number;
   last_run: string | null;
 }
 

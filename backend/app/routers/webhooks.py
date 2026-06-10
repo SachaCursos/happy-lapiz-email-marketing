@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.core.config import settings
 from app.models.campaign import CampaignSend
+from app.models.automation import AutomationRun
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,23 +82,36 @@ async def resend_webhook(
     if not new_status or not resend_id:
         return {"ok": True}
 
+    now = datetime.utcnow()
+
+    # Try campaign send first
     send = session.exec(select(CampaignSend).where(CampaignSend.resend_id == resend_id)).first()
-    if not send:
-        logger.warning("CampaignSend no encontrado para resend_id=%s", resend_id)
+    if send:
+        send.status = new_status
+        if new_status == "delivered":
+            send.delivered_at = now
+        elif new_status == "opened" and not send.opened_at:
+            send.opened_at = now
+        elif new_status == "clicked" and not send.clicked_at:
+            send.clicked_at = now
+        elif new_status == "bounced":
+            send.bounced_at = now
+        session.add(send)
+        session.commit()
+        logger.info("CampaignSend actualizado: id=%s status=%s", send.id, new_status)
         return {"ok": True}
 
-    send.status = new_status
-    now = datetime.utcnow()
-    if new_status == "delivered":
-        send.delivered_at = now
-    elif new_status == "opened" and not send.opened_at:
-        send.opened_at = now
-    elif new_status == "clicked" and not send.clicked_at:
-        send.clicked_at = now
-    elif new_status == "bounced":
-        send.bounced_at = now
+    # Try automation run
+    run = session.exec(select(AutomationRun).where(AutomationRun.resend_id == resend_id)).first()
+    if run:
+        if new_status == "opened" and not run.opened_at:
+            run.opened_at = now
+        elif new_status == "clicked" and not run.clicked_at:
+            run.clicked_at = now
+        session.add(run)
+        session.commit()
+        logger.info("AutomationRun actualizado: id=%s status=%s", run.id, new_status)
+        return {"ok": True}
 
-    session.add(send)
-    session.commit()
-    logger.info("CampaignSend actualizado: id=%s status=%s", send.id, new_status)
+    logger.warning("Email no encontrado para resend_id=%s", resend_id)
     return {"ok": True}

@@ -271,12 +271,40 @@ function AutomationRow({ auto, templates }: { auto: Automation; templates: Templ
           )}
         </div>
 
-        <div className="text-right shrink-0">
-          <p className="text-2xl font-bold text-gray-900">{stats?.sent ?? "—"}</p>
-          <p className="text-xs text-gray-400">enviados</p>
-          {stats?.last_run && (
-            <p className="text-xs text-gray-400 mt-0.5">Último: {formatDate(stats.last_run)}</p>
-          )}
+        <div className="flex items-start gap-4 shrink-0">
+          {/* Enviados */}
+          <div className="text-center min-w-[52px]">
+            <p className="text-xl font-bold text-gray-900">{stats?.sent ?? "—"}</p>
+            <p className="text-xs text-gray-400">enviados</p>
+          </div>
+          {/* Open rate */}
+          <div className="text-center min-w-[52px]">
+            <p className="text-xl font-bold text-gray-900">
+              {stats ? `${stats.open_rate}%` : "—"}
+            </p>
+            <p className="text-xs text-gray-400">abiertos</p>
+          </div>
+          {/* Click rate */}
+          <div className="text-center min-w-[52px]">
+            <p className="text-xl font-bold text-gray-900">
+              {stats ? `${stats.click_rate}%` : "—"}
+            </p>
+            <p className="text-xs text-gray-400">clicks</p>
+          </div>
+          {/* Conversiones */}
+          <div className="text-center min-w-[72px]">
+            <p className="text-xl font-bold text-gray-900">
+              {stats
+                ? stats.revenue >= 1000
+                  ? `$${(stats.revenue / 1000).toFixed(0)}K`
+                  : `$${stats.revenue.toFixed(0)}`
+                : "—"}
+            </p>
+            <p className="text-xs text-gray-400">en ventas</p>
+            {stats && stats.orders > 0 && (
+              <p className="text-xs text-gray-400">{stats.orders} pedido{stats.orders !== 1 ? "s" : ""}</p>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">

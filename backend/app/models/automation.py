@@ -36,6 +36,8 @@ class AutomationRun(SQLModel, table=True):
     executed_at: Optional[datetime] = None
     resend_id: Optional[str] = None
     error: Optional[str] = None
+    opened_at: Optional[datetime] = None
+    clicked_at: Optional[datetime] = None
 
 
 class AutomationCreate(SQLModel):
@@ -79,3 +81,5 @@ class AutomationRunRead(SQLModel):
     executed_at: Optional[datetime]
     resend_id: Optional[str]
     error: Optional[str]
+    opened_at: Optional[datetime] = None
+    clicked_at: Optional[datetime] = None

@@ -108,11 +108,49 @@ def automation_stats(
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    runs = session.exec(
-        select(AutomationRun).where(AutomationRun.automation_id == auto_id)
-    ).all()
-    total = len(runs)
-    sent = sum(1 for r in runs if r.status == "sent")
-    failed = sum(1 for r in runs if r.status == "failed")
-    last_run = max((r.triggered_at for r in runs), default=None)
-    return {"total": total, "sent": sent, "failed": failed, "last_run": last_run}
+    from sqlalchemy import text
+    result = session.exec(text("""
+        SELECT
+            COUNT(*)                                            AS total,
+            COUNT(CASE WHEN status = 'sent' THEN 1 END)        AS sent,
+            COUNT(CASE WHEN status = 'failed' THEN 1 END)      AS failed,
+            COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END)   AS opened,
+            COUNT(CASE WHEN clicked_at IS NOT NULL THEN 1 END)  AS clicked,
+            MAX(triggered_at)                                   AS last_run
+        FROM automation_runs
+        WHERE automation_id = :aid
+    """), {"aid": auto_id}).fetchone()
+
+    total, sent, failed, opened, clicked, last_run = result
+    sent = sent or 0
+    open_rate  = round(opened / sent * 100, 1) if sent else 0.0
+    click_rate = round(clicked / sent * 100, 1) if sent else 0.0
+
+    # Conversions: orders from the same email within 7 days of the automation send
+    conv = session.exec(text("""
+        SELECT
+            COUNT(DISTINCT so.id)                   AS orders,
+            COALESCE(SUM(so.total_price::numeric), 0) AS revenue
+        FROM automation_runs ar
+        JOIN shopify_orders so
+          ON LOWER(so.email) = LOWER(ar.contact_email)
+         AND so.created_at BETWEEN ar.executed_at
+                               AND ar.executed_at + INTERVAL '7 days'
+        WHERE ar.automation_id = :aid
+          AND ar.status = 'sent'
+          AND ar.executed_at IS NOT NULL
+    """), {"aid": auto_id}).fetchone()
+
+    orders, revenue = conv
+    return {
+        "total":      int(total or 0),
+        "sent":       int(sent),
+        "failed":     int(failed or 0),
+        "opened":     int(opened or 0),
+        "clicked":    int(clicked or 0),
+        "open_rate":  open_rate,
+        "click_rate": click_rate,
+        "orders":     int(orders or 0),
+        "revenue":    float(revenue or 0),
+        "last_run":   last_run,
+    }
