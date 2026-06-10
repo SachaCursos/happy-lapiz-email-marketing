@@ -10,7 +10,7 @@ import Link from "next/link";
 import {
   TemplateBlockEditor,
   TemplateEditorSaveData,
-  parseJsonBlocks,
+  parseEditorState,
   Block,
 } from "@/components/TemplateBlockEditor";
 
@@ -27,12 +27,17 @@ export default function EditTemplatePage() {
   });
 
   const [initialBlocks, setInitialBlocks] = useState<Block[]>([]);
+  const [initialPlainText, setInitialPlainText] = useState("");
+  const [initialMode, setInitialMode] = useState<"blocks" | "plain">("blocks");
   const [ready, setReady] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (tpl) {
-      setInitialBlocks(parseJsonBlocks(tpl.json_blocks));
+      const state = parseEditorState(tpl.json_blocks);
+      setInitialBlocks(state.blocks);
+      setInitialPlainText(state.plainText);
+      setInitialMode(state.mode);
       setReady(true);
     }
   }, [tpl]);
@@ -93,6 +98,8 @@ export default function EditTemplatePage() {
         <div className="flex-1 overflow-hidden">
           <TemplateBlockEditor
             initialBlocks={initialBlocks}
+            initialPlainText={initialPlainText}
+            initialMode={initialMode}
             initialName={tpl.name}
             initialSubject={tpl.subject_default}
             initialPreviewText={tpl.preview_text ?? ""}

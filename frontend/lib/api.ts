@@ -137,3 +137,18 @@ export const syncApi = {
     return api.post("/sync/tc-import", form);
   },
 };
+
+// Shopify
+export const shopifyApi = {
+  products: () => api.get<ShopifyProduct[]>("/shopify/products"),
+};
+
+export interface ShopifyProduct {
+  id: string;
+  title: string;
+  handle: string;
+  url: string;
+  image_url: string;
+  price: string;
+  compare_at_price: string;
+}

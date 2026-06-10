@@ -32,15 +32,53 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException, Request
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.deps import get_current_user
 from app.models.contact import Contact
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ── Shopify Products (for template editor product picker) ─────────────────────
+@router.get("/products")
+async def list_shopify_products(_: User = Depends(get_current_user)):
+    """Devuelve los productos activos de Shopify para el editor de plantillas."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=400, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"https://{domain}/admin/api/2024-01/products.json",
+            params={"status": "active", "limit": 250, "fields": "id,title,handle,images,variants"},
+            headers={"X-Shopify-Access-Token": token},
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Shopify API error: {resp.status_code}")
+
+    products = resp.json().get("products", [])
+    result = []
+    for p in products:
+        variant = p["variants"][0] if p.get("variants") else {}
+        result.append({
+            "id": str(p["id"]),
+            "title": p["title"],
+            "handle": p.get("handle", ""),
+            "url": f"https://www.happylapiz.cl/products/{p.get('handle', '')}",
+            "image_url": p["images"][0]["src"] if p.get("images") else "",
+            "price": variant.get("price", ""),
+            "compare_at_price": variant.get("compare_at_price") or "",
+        })
+    return result
 
 
 def _verify_shopify(body: bytes, hmac_header: str) -> bool:
