@@ -169,7 +169,7 @@ _BATCH_ORIGINS = {"Formulario T&C", "Sincronización Shopify", "importación CSV
 def _check_welcome(auto: Automation, session: Session) -> None:
     """Fire welcome email to contacts created organically (popup/form), not batch imports."""
     config = auto.trigger_config or {}
-    delay_hours = int(config.get("delay_hours", 0))
+    delay_hours = float(config.get("delay_hours", 0))
     window_end = datetime.utcnow() - timedelta(hours=delay_hours)
     window_start = window_end - timedelta(minutes=20)
 
@@ -252,8 +252,8 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
 def _check_abandoned_cart(auto: Automation, session: Session) -> None:
     """Carrito abandonado: checkout creado hace más de delay_hours sin orden asociada."""
     config = auto.trigger_config or {}
-    delay_hours = int(config.get("delay_hours", 1))
-    lookback_hours = int(config.get("lookback_hours", 24))
+    delay_hours = float(config.get("delay_hours", 1))
+    lookback_hours = float(config.get("lookback_hours", 24))
     now = datetime.utcnow()
     cutoff_old = now - timedelta(hours=delay_hours)
     cutoff_recent = now - timedelta(hours=lookback_hours)
@@ -293,8 +293,8 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
 def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) -> None:
     """Dispara email cuando hay un evento de Shopify no procesado del tipo indicado."""
     config = auto.trigger_config or {}
-    delay_hours = int(config.get("delay_hours", 0))
-    lookback_hours = int(config.get("lookback_hours", 48))
+    delay_hours = float(config.get("delay_hours", 0))
+    lookback_hours = float(config.get("lookback_hours", 48))
     now = datetime.utcnow()
     cutoff_old = now - timedelta(hours=delay_hours)
     cutoff_recent = now - timedelta(hours=lookback_hours)
