@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, func
@@ -168,8 +168,14 @@ def automation_pending(
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
 
     config = auto.trigger_config or {}
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     contacts = []
+
+    def _is_ready(dt: datetime) -> bool:
+        """Compare possibly tz-aware dt with now, normalising if needed."""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt <= now
 
     if auto.trigger_type == "abandoned_cart":
         delay_hours   = float(config.get("delay_hours", 1))
@@ -197,7 +203,7 @@ def automation_pending(
                 "name":    f"{r.first_name or ''} {r.last_name or ''}".strip() or r.email,
                 "detail":  f"{detail} · {price}" if detail else price,
                 "send_at": send_at.isoformat(),
-                "ready":   send_at <= now,
+                "ready":   _is_ready(send_at),
             })
 
     elif auto.trigger_type == "welcome":
@@ -226,7 +232,7 @@ def automation_pending(
                 "name":    r.name or r.email,
                 "detail":  "Nuevo suscriptor",
                 "send_at": send_at.isoformat(),
-                "ready":   send_at <= now,
+                "ready":   _is_ready(send_at),
             })
 
     elif auto.trigger_type == "reactivation":
@@ -324,7 +330,7 @@ def automation_pending(
                     "name":    r.email,
                     "detail":  f"Pedido #{order_num}" if order_num else "",
                     "send_at": send_at.isoformat(),
-                    "ready":   send_at <= now,
+                    "ready":   _is_ready(send_at),
                 })
 
     return {"count": len(contacts), "contacts": contacts}
