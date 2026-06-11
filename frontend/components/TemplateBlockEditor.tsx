@@ -101,6 +101,217 @@ function saveFavorites(favs: Block[]) {
   try { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); } catch { /* noop */ }
 }
 
+// ── HTML → Blocks parser ───────────────────────────────────────────────────────
+export function htmlToBlocks(htmlStr: string): Block[] {
+  if (typeof window === "undefined") return [];
+  let counter = Date.now();
+  const uid = (t: string) => `${t}_${counter++}`;
+
+  function attr(el: Element, a: string) { return el.getAttribute(a) || ""; }
+  function css(el: Element, prop: string): string {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((el as HTMLElement).style as any)?.[prop] as string || "";
+  }
+  function rgb2hex(s: string): string {
+    const m = s.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if (!m) return s;
+    return "#" + [m[1], m[2], m[3]].map((n) => (+n).toString(16).padStart(2, "0")).join("");
+  }
+  function normColor(s: string): string { return s.startsWith("rgb") ? rgb2hex(s) : s || "#ffffff"; }
+  function bgColor(el: Element): string {
+    let cur: Element | null = el;
+    while (cur && cur.tagName !== "HTML") {
+      const bg = css(cur, "backgroundColor") || css(cur, "background");
+      if (bg && bg !== "transparent" && !bg.startsWith("rgba(0, 0, 0, 0)")) return normColor(bg);
+      const bga = cur.getAttribute("bgcolor");
+      if (bga) return bga;
+      cur = cur.parentElement;
+    }
+    return "#ffffff";
+  }
+
+  try {
+    const doc = new DOMParser().parseFromString(htmlStr, "text/html");
+    const blocks: Block[] = [];
+
+    // ── Find top-level sections ──────────────────────────────────────────────
+    const tableCount = doc.querySelectorAll("table").length;
+    let sections: Element[] = [];
+
+    if (tableCount > 3) {
+      // Table-based layout (Klaviyo / MJML)
+      // Walk up to find the outermost content table, then use its direct TRs as sections
+      const outerTable =
+        doc.querySelector("body > table") ||
+        doc.querySelector("body > center > table") ||
+        doc.querySelector("body > div > table") ||
+        doc.querySelector("table");
+
+      if (outerTable) {
+        let rows = Array.from(outerTable.querySelectorAll(":scope > tbody > tr, :scope > tr"));
+        if (rows.length <= 1) {
+          // Single wrapper row — go one level deeper
+          const td = rows[0]?.querySelector("td");
+          const inner = td?.querySelector("table");
+          if (inner) rows = Array.from(inner.querySelectorAll(":scope > tbody > tr, :scope > tr"));
+        }
+        sections = rows;
+      }
+
+      // Fallback: all TRs not nested inside other TRs
+      if (sections.length === 0) {
+        sections = Array.from(doc.querySelectorAll("tr")).filter(
+          (tr) => !tr.parentElement?.closest("tr")
+        );
+      }
+    } else {
+      // Div / class-based layout
+      const container =
+        doc.querySelector(".container") ||
+        doc.querySelector(".wrapper") ||
+        doc.querySelector("[style*='max-width']") ||
+        doc.body;
+
+      sections = Array.from(container.children).filter(
+        (el) => !["STYLE", "SCRIPT", "LINK", "META", "TITLE", "HEAD"].includes(el.tagName)
+      );
+
+      // Unwrap single outer div
+      if (sections.length === 1) {
+        const inner = Array.from(sections[0].children).filter(
+          (el) => !["STYLE", "SCRIPT"].includes(el.tagName)
+        );
+        if (inner.length > 1) sections = inner;
+      }
+    }
+
+    // ── Classify each section ────────────────────────────────────────────────
+    for (const sec of sections) {
+      const text = (sec.textContent || "").trim();
+      const imgs = Array.from(sec.querySelectorAll("img"));
+      const links = Array.from(sec.querySelectorAll("a[href]"));
+      const bg = bgColor(sec);
+
+      // --- Empty / spacer ---
+      if (!text && imgs.length === 0) {
+        const h = parseInt(attr(sec, "height") || css(sec, "height") || "0");
+        if (h > 8) blocks.push({ id: uid("spacer"), type: "spacer", props: { ...DEFAULTS.spacer, height: String(h) } });
+        continue;
+      }
+
+      // --- Divider ---
+      if (sec.querySelector("hr") && text.length < 5) {
+        const hr = sec.querySelector("hr")!;
+        blocks.push({ id: uid("divider"), type: "divider", props: { ...DEFAULTS.divider, color: normColor(css(hr, "borderTopColor") || "#e5e7eb") } });
+        continue;
+      }
+
+      // --- Coupon block ---
+      const cls = attr(sec, "class") + " " + Array.from(sec.querySelectorAll("[class]")).map((e) => attr(e, "class")).join(" ");
+      const hasCouponCls = /coupon/i.test(cls);
+      const hasCouponVar = text.includes("coupon_code");
+      if (hasCouponCls || hasCouponVar) {
+        const codeEl = sec.querySelector(".coupon-code, [class*='coupon-code'], [style*='monospace'], [style*='letter-spacing']") || sec;
+        const titleEl = sec.querySelector("h2, h3, strong, p");
+        blocks.push({
+          id: uid("coupon"), type: "coupon", props: {
+            ...DEFAULTS.coupon,
+            title: titleEl?.textContent?.trim() || "Tu código de descuento",
+            code: hasCouponVar ? "{{ coupon_code }}" : (codeEl?.textContent?.trim() || "{{ coupon_code }}"),
+            bg_color: bg,
+          },
+        });
+        continue;
+      }
+
+      // --- Header / logo (single image, minimal text) ---
+      if (imgs.length === 1 && text.replace(/\s/g, "").length < 25) {
+        const img = imgs[0];
+        const src = attr(img, "src");
+        const w = attr(img, "width") || "160";
+        const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
+        const seemsLogo = /logo|brand|icon/i.test(src) || /logo/i.test(attr(img, "alt")) || parseInt(w) < 320;
+
+        if (seemsLogo || blocks.length === 0) {
+          blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: src, logo_width: w, link: lnk, bg_color: bg } });
+          continue;
+        }
+        blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src, alt: attr(img, "alt"), link: lnk, bg_color: bg } });
+        continue;
+      }
+
+      // --- Standalone image (single image, very short text like alt) ---
+      if (imgs.length === 1 && text.replace(/[^a-zA-Z0-9áéíóúñ]/gi, "").length < 40) {
+        const img = imgs[0];
+        blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg } });
+        continue;
+      }
+
+      // --- Button (single link styled as button) ---
+      if (links.length >= 1 && imgs.length === 0 && text.length < 100) {
+        const a = links[0] as HTMLAnchorElement;
+        const aStyle = attr(a, "style");
+        const innerEl = a.querySelector("td, div, span, p") || a;
+        const innerStyle = attr(innerEl, "style");
+        const combined = aStyle + " " + innerStyle + " " + attr(sec, "style");
+        const btnCls = attr(a, "class") + " " + cls;
+        const isBtn = /background[-\s:]/i.test(combined) || /btn|button|cta/i.test(btnCls);
+
+        if (isBtn) {
+          const aBg = normColor(css(a, "backgroundColor") || css(innerEl, "backgroundColor") || "#111111");
+          const aColor = normColor(css(a, "color") || css(innerEl, "color") || "#ffffff");
+          blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: text || "Ver más", url: attr(a, "href"), bg_color: aBg, text_color: aColor } });
+          continue;
+        }
+      }
+
+      // --- Product card (image + price text) ---
+      const priceMatch = text.match(/\$\s?[\d.,]+/);
+      if (imgs.length >= 1 && priceMatch) {
+        const img = imgs[0];
+        const titleEl =
+          sec.querySelector("h1, h2, h3, h4") ||
+          sec.querySelector("[style*='font-weight:700'], [style*='font-weight: 700']");
+        const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
+        blocks.push({
+          id: uid("product"), type: "product", props: {
+            ...DEFAULTS.product,
+            title: titleEl?.textContent?.trim() || text.slice(0, 60),
+            price: priceMatch[0],
+            image_url: attr(img, "src"),
+            url: lnk,
+            bg_color: bg,
+          },
+        });
+        continue;
+      }
+
+      // --- Text block (catch-all) ---
+      // For table rows, unwrap the TD to get actual content
+      let contentEl: Element = sec;
+      if (sec.tagName === "TR") {
+        const tds = Array.from(sec.querySelectorAll("td"));
+        if (tds.length === 1) contentEl = tds[0];
+        else if (tds.length > 1) {
+          // Multi-column row: use the one with the most text
+          contentEl = tds.reduce((best, td) =>
+            (td.textContent?.length || 0) > (best.textContent?.length || 0) ? td : best
+          );
+        }
+      }
+
+      const content = contentEl.innerHTML.trim();
+      if (content && text.replace(/\s/g, "").length > 0) {
+        blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content, bg_color: bg } });
+      }
+    }
+
+    return blocks;
+  } catch {
+    return [];
+  }
+}
+
 // ── HTML generation ────────────────────────────────────────────────────────────
 function priceHtml(price: string, compareAt: string): string {
   if (!compareAt) {
@@ -666,12 +877,13 @@ export function TemplateBlockEditor({
   const [subject, setSubject] = useState(initialSubject);
   const [previewText, setPreviewText] = useState(initialPreviewText);
   const [tab, setTab] = useState<"editor" | "preview" | "html" | "plain">(
-    initialMode === "plain" ? "plain" : initialHtmlOverride ? "html" : "editor"
+    initialMode === "plain" ? "plain" : initialHtmlOverride ? "editor" : "editor"
   );
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [favorites, setFavorites] = useState<Block[]>(() => loadFavorites());
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
   const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
+  const [convertMsg, setConvertMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
   const isPlainMode = tab === "plain";
@@ -702,6 +914,23 @@ export function TemplateBlockEditor({
     const next = [...favorites, fav];
     setFavorites(next);
     saveFavorites(next);
+  }
+
+  function handleConvertToBlocks() {
+    const source = htmlOverride ?? "";
+    if (!source.trim()) return;
+    const parsed = htmlToBlocks(source);
+    if (parsed.length === 0) {
+      setConvertMsg({ type: "err", text: "No se pudieron detectar bloques en este HTML. Puedes editarlo directamente en la pestaña HTML." });
+      setTimeout(() => setConvertMsg(null), 5000);
+      return;
+    }
+    setBlocks(parsed);
+    setHtmlOverride(null);
+    setSelectedId(null);
+    setTab("editor");
+    setConvertMsg({ type: "ok", text: `${parsed.length} bloques importados. Revisa el resultado y ajusta lo que necesites.` });
+    setTimeout(() => setConvertMsg(null), 6000);
   }
 
   function update(id: string, props: Block["props"]) {
@@ -867,16 +1096,47 @@ export function TemplateBlockEditor({
               )}
             </div>
 
+            {/* Conversion notification */}
+            {convertMsg && (
+              <div className={`mx-4 mt-3 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 shrink-0 ${convertMsg.type === "ok" ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+                {convertMsg.type === "ok" ? "✓" : "⚠"} {convertMsg.text}
+              </div>
+            )}
+
             {/* Editor canvas */}
             {tab === "editor" && (
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="max-w-[600px] mx-auto bg-white shadow-md rounded overflow-hidden">
                   {blocks.length === 0 ? (
+                    htmlOverride ? (
+                      <div className="py-16 px-8 text-center">
+                        <div className="text-5xl mb-4">🔍</div>
+                        <p className="font-semibold text-gray-800 text-base mb-2">Este template tiene HTML personalizado</p>
+                        <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+                          Puedes convertirlo a bloques editables para modificarlo visualmente,<br />
+                          o ir a la pestaña <strong>HTML</strong> para editar el código directamente.
+                        </p>
+                        <button
+                          onClick={handleConvertToBlocks}
+                          className="inline-flex items-center gap-2 px-6 py-3 bg-brand-600 text-white rounded-xl text-sm font-semibold hover:bg-brand-700 transition-colors shadow-md"
+                        >
+                          ✨ Convertir HTML a bloques editables
+                        </button>
+                        <p className="text-xs text-gray-400 mt-4">La conversión es aproximada — se detectan secciones automáticamente.</p>
+                        <button
+                          onClick={() => setTab("html")}
+                          className="mt-3 text-xs text-brand-500 hover:text-brand-700 underline block mx-auto"
+                        >
+                          Ir al editor HTML →
+                        </button>
+                      </div>
+                    ) : (
                     <div className="py-24 text-center text-gray-400">
                       <Layout size={40} className="mx-auto mb-3 opacity-20" />
                       <p className="font-medium text-sm">Agrega bloques desde el panel izquierdo</p>
                       <p className="text-xs mt-1 opacity-70">Haz clic en cualquier bloque para empezar</p>
                     </div>
+                    )
                   ) : (
                     blocks.map((block, i) => (
                       <div key={block.id} onClick={() => setSelectedId(block.id)}
@@ -938,12 +1198,21 @@ export function TemplateBlockEditor({
                         {htmlOverride !== null ? "HTML personalizado ✎" : "HTML generado"}
                       </span>
                       {htmlOverride !== null && (
-                        <button
-                          onClick={() => setHtmlOverride(null)}
-                          className="text-xs text-amber-400 hover:text-amber-200 transition-colors border border-amber-700 rounded px-2 py-0.5"
-                        >
-                          Regenerar desde bloques
-                        </button>
+                        blocks.length === 0 ? (
+                          <button
+                            onClick={handleConvertToBlocks}
+                            className="text-xs text-green-400 hover:text-green-200 transition-colors border border-green-700 rounded px-2 py-0.5 font-semibold"
+                          >
+                            ✨ Convertir a bloques editables
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setHtmlOverride(null)}
+                            className="text-xs text-amber-400 hover:text-amber-200 transition-colors border border-amber-700 rounded px-2 py-0.5"
+                          >
+                            Regenerar desde bloques
+                          </button>
+                        )
                       )}
                     </div>
                     <button onClick={() => navigator.clipboard.writeText(previewHtml)}
