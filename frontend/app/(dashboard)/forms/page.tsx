@@ -218,15 +218,15 @@ export default function FormsPage() {
             <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
               <MousePointerClick size={24} className="text-gray-300" />
             </div>
-            <p className="text-gray-900 font-semibold">Sin formularios</p>
-            <p className="text-gray-400 text-sm mt-1 mb-6">
-              Crea un pop-up para capturar suscriptores en happylapiz.cl
+            <p className="text-gray-900 font-semibold mb-1">Sin formularios aún</p>
+            <p className="text-gray-500 text-sm mt-1 mb-2 max-w-sm mx-auto">
+              Crea tu primer formulario para capturar suscriptores. Después de crearlo podrás configurar el diseño, colores, campos personalizados (nombre del destinatario, edad, fecha de cumpleaños) y pasos múltiples.
             </p>
             <Link
               href="/forms/new"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors"
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-semibold hover:bg-brand-700 transition-colors mt-4"
             >
-              <Plus size={15} /> Crear formulario
+              <Plus size={15} /> Crear mi primer formulario
             </Link>
           </div>
         ) : (
