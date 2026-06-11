@@ -182,13 +182,21 @@ export function htmlToBlocks(htmlStr: string): Block[] {
         const bg = bgColor(el);
         const elCls = attr(el, "class");
 
-        // ── kl-header-link-bar → Header ──────────────────────────────────
+        // ── kl-header-link-bar → Header (logo) or Button (CTA bar) ──────
         if (/kl-header-link-bar/.test(elCls)) {
-          const logoImg = imgs.find((i) => /logo|brand/i.test(attr(i, "src") + attr(i, "alt"))) || imgs[0];
+          // Filter out imgs with empty/missing src (MSO placeholders)
+          const realImgs = imgs.filter((i) => attr(i, "src").trim() !== "");
+          const logoImg = realImgs.find((i) => /logo|brand/i.test(attr(i, "src") + attr(i, "alt"))) || realImgs[0];
           if (logoImg) {
             const w = attr(logoImg, "width") || attr(logoImg, "height") || "160";
             const lnk = logoImg.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "https://www.happylapiz.cl";
             blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: attr(logoImg, "src"), logo_width: w, link: lnk, bg_color: bg } });
+          } else if (links.length > 0) {
+            // No logo → this is a CTA button bar (e.g. "Finaliza tu compra")
+            const a = links[0];
+            const btnText = (a.textContent || "").trim();
+            // bg comes from the parent td with inline background-color
+            blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: btnText || "Ver más", url: attr(a, "href"), bg_color: bg !== "#ffffff" ? bg : "#111111", text_color: normColor(css(a, "color") || "#ffffff") } });
           }
           continue;
         }
@@ -225,26 +233,37 @@ export function htmlToBlocks(htmlStr: string): Block[] {
           continue;
         }
 
-        // ── kl-product → Product ─────────────────────────────────────────
+        // ── kl-product → one or more Product blocks ──────────────────────
+        // Klaviyo puts multiple products as `.kl-product-cell-stack` cells
+        // inside a single `.kl-product` wrapper. Process each cell separately.
         if (/\bkl-product\b/.test(elCls)) {
-          const img = imgs[0];
-          const priceMatch = text.match(/\$\s?[\d.,]+/);
-          const titleLink = links.find((a) => (a.textContent || "").trim().length > 5);
-          const lnk = titleLink?.getAttribute("href") || img?.closest("a")?.getAttribute("href") || "";
-          const title = titleLink?.textContent?.trim() || text.slice(0, 60);
-          // Deduplicate: skip if we already have a product with same URL
-          if (blocks.some((b) => b.type === "product" && b.props.url === lnk && lnk)) continue;
-          if (img || priceMatch) {
-            blocks.push({
-              id: uid("product"), type: "product", props: {
-                ...DEFAULTS.product,
-                title,
-                price: priceMatch?.[0] || "",
-                image_url: img ? attr(img, "src") : "",
-                url: lnk,
-                bg_color: bg,
-              },
-            });
+          const cells = Array.from(el.querySelectorAll(".kl-product-cell-stack"));
+          const targets: Element[] = cells.length > 0 ? cells : [el];
+
+          for (const cell of targets) {
+            const cellImgs = Array.from(cell.querySelectorAll("img")).filter(
+              (img) => !/tracking|pixel|spacer/i.test(attr(img, "src")) && attr(img, "src").trim() !== ""
+            );
+            const cellLinks = Array.from(cell.querySelectorAll("a[href]"));
+            const cellText = (cell.textContent || "").trim();
+            const priceMatch = cellText.match(/\$\s?[\d.,]+/);
+            const titleLink = cellLinks.find((a) => (a.textContent || "").trim().length > 5);
+            const cellImg = cellImgs[0];
+            const lnk = titleLink?.getAttribute("href") || cellImg?.closest("a")?.getAttribute("href") || "";
+            const title = titleLink?.textContent?.trim() || cellText.slice(0, 60);
+            if (blocks.some((b) => b.type === "product" && b.props.url === lnk && lnk)) continue;
+            if (cellImg || priceMatch) {
+              blocks.push({
+                id: uid("product"), type: "product", props: {
+                  ...DEFAULTS.product,
+                  title,
+                  price: priceMatch?.[0] || "",
+                  image_url: cellImg ? attr(cellImg, "src") : "",
+                  url: lnk,
+                  bg_color: bg,
+                },
+              });
+            }
           }
           continue;
         }
