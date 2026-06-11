@@ -63,7 +63,7 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
   button: {
     text: "Ver más",
     url: "https://www.happylapiz.cl",
-    bg_color: "#682ae7",
+    bg_color: "#111111",
     text_color: "#ffffff",
     align: "center",
     border_radius: "5",
@@ -80,7 +80,7 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     url: "https://www.happylapiz.cl",
     description: "",
     button_text: "Comprar",
-    button_color: "#682ae7",
+    button_color: "#111111",
     bg_color: "#ffffff",
   },
   coupon: {
