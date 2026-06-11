@@ -29,6 +29,7 @@ export default function EditTemplatePage() {
   const [initialBlocks, setInitialBlocks] = useState<Block[]>([]);
   const [initialPlainText, setInitialPlainText] = useState("");
   const [initialMode, setInitialMode] = useState<"blocks" | "plain">("blocks");
+  const [initialHtmlOverride, setInitialHtmlOverride] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -38,6 +39,13 @@ export default function EditTemplatePage() {
       setInitialBlocks(state.blocks);
       setInitialPlainText(state.plainText);
       setInitialMode(state.mode);
+
+      // If there are no saved blocks and no plain-text state, the template was created
+      // without the block editor. Load html_content as the HTML override so the content
+      // is visible and editable in the "HTML" tab without corruption on save.
+      const hasNoBlockData = !state.blocks.length && !state.plainText;
+      setInitialHtmlOverride(hasNoBlockData && tpl.html_content ? tpl.html_content : null);
+
       setReady(true);
     }
   }, [tpl]);
@@ -100,6 +108,7 @@ export default function EditTemplatePage() {
             initialBlocks={initialBlocks}
             initialPlainText={initialPlainText}
             initialMode={initialMode}
+            initialHtmlOverride={initialHtmlOverride}
             initialName={tpl.name}
             initialSubject={tpl.subject_default}
             initialPreviewText={tpl.preview_text ?? ""}

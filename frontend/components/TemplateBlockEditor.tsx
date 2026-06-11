@@ -641,6 +641,7 @@ interface Props {
   initialName?: string;
   initialSubject?: string;
   initialPreviewText?: string;
+  initialHtmlOverride?: string | null;
   onSave: (data: TemplateEditorSaveData) => void;
   saving?: boolean;
   saved?: boolean;
@@ -653,6 +654,7 @@ export function TemplateBlockEditor({
   initialName = "",
   initialSubject = "",
   initialPreviewText = "",
+  initialHtmlOverride = null,
   onSave,
   saving = false,
   saved = false,
@@ -664,12 +666,12 @@ export function TemplateBlockEditor({
   const [subject, setSubject] = useState(initialSubject);
   const [previewText, setPreviewText] = useState(initialPreviewText);
   const [tab, setTab] = useState<"editor" | "preview" | "html" | "plain">(
-    initialMode === "plain" ? "plain" : "editor"
+    initialMode === "plain" ? "plain" : initialHtmlOverride ? "html" : "editor"
   );
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [favorites, setFavorites] = useState<Block[]>(() => loadFavorites());
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
-  const [htmlOverride, setHtmlOverride] = useState<string | null>(null);
+  const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
 
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
   const isPlainMode = tab === "plain";
