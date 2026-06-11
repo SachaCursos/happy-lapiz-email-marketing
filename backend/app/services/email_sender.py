@@ -34,13 +34,31 @@ Recibiste este correo porque eres cliente de <strong style="color:#6b7280">Happy
 </div>"""
 
 
+def _unsub_link(email: str) -> str:
+    """Return a styled anchor tag for the unsubscribe link."""
+    url = unsub_url(email)
+    return (
+        f'<a href="{url}" style="color:#727272;text-decoration:underline;" target="_blank">'
+        "Cancelar suscripción"
+        "</a>"
+    )
+
+
+def replace_unsub_tag(html: str, email: str) -> str:
+    """Replace {% unsubscribe %} with a proper anchor link before Jinja2 rendering.
+    Must run before Jinja2 to avoid 'Unknown tag unsubscribe' syntax error."""
+    link = _unsub_link(email)
+    return html.replace("{% unsubscribe %}", link)
+
+
 def _inject_footer(html: str, email: str) -> str:
     url = unsub_url(email)
     if "##unsub##" in html:
         return html.replace("##unsub##", url)
     lower = html.lower()
-    # Don't inject if the template already has an unsubscribe block
-    if "cancelar suscripci" in lower or "/unsub/" in lower:
+    # Don't inject if the template already has an unsubscribe block.
+    # Check for the link text OR the /unsubscribe path in the URL.
+    if "cancelar suscripci" in lower or "/unsubscribe" in lower:
         return html
     footer = _FOOTER.format(url=url)
     # Inject inside the email container div, not after </body>
@@ -64,6 +82,9 @@ def _unsub_headers(email: str) -> dict:
 
 
 def render_html(html_content: str, contact: Contact, coupon_code: str = "") -> str:
+    # Replace {% unsubscribe %} before Jinja2 parses the template — Jinja2 would
+    # throw "Unknown tag 'unsubscribe'" if left as-is.
+    html_content = replace_unsub_tag(html_content, contact.email)
     tpl = Jinja2Template(html_content)
     return tpl.render(
         nombre=_fmt_nombre(contact.name, contact.email),

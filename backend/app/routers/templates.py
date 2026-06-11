@@ -117,7 +117,7 @@ def send_template_test(
     from jinja2 import Environment, ChainableUndefined
     from app.core.config import settings
     from app.core.unsub_token import unsub_url
-    from app.services.email_sender import _inject_footer, _unsub_headers
+    from app.services.email_sender import _inject_footer, _unsub_headers, replace_unsub_tag
 
     tpl = session.get(Template, template_id)
     if not tpl or not tpl.html_content:
@@ -175,7 +175,8 @@ def send_template_test(
         "event": {"extra": {"checkout_url": checkout_url}},
     }
 
-    raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub)
+    # Replace {% unsubscribe %} with anchor link BEFORE Jinja2 (avoids syntax error)
+    raw_html = replace_unsub_tag(tpl.html_content, email)
     _env = Environment(undefined=ChainableUndefined)
     html = _inject_footer(_env.from_string(raw_html).render(**vars_), email)
 
