@@ -107,6 +107,7 @@ export function htmlToBlocks(htmlStr: string): Block[] {
   let counter = Date.now();
   const uid = (t: string) => `${t}_${counter++}`;
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function attr(el: Element, a: string) { return el.getAttribute(a) || ""; }
   function css(el: Element, prop: string): string {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,184 +130,305 @@ export function htmlToBlocks(htmlStr: string): Block[] {
     }
     return "#ffffff";
   }
+  // Clean up Klaviyo/MJML inner HTML — strip table wrappers, keep text+anchors
+  function cleanKlaviyoText(el: Element): string {
+    // Return inner HTML but clean up excessive nesting from table-based layout
+    const clone = el.cloneNode(true) as Element;
+    // Remove MSO conditional comments and empty spans
+    clone.querySelectorAll("[style*='mso-'], [class*='mso']").forEach((e) => e.remove());
+    return clone.innerHTML.trim();
+  }
 
   try {
     const doc = new DOMParser().parseFromString(htmlStr, "text/html");
-    const blocks: Block[] = [];
 
-    // ── Find top-level sections ──────────────────────────────────────────────
-    const tableCount = doc.querySelectorAll("table").length;
-    let sections: Element[] = [];
+    // ── Detect template type ────────────────────────────────────────────────
+    const isKlaviyo =
+      !!doc.querySelector("td.kl-text, td.kl-image, .kl-header-link-bar, .kl-product, [class*='component-wrapper']");
+    const hasCssClasses =
+      !isKlaviyo && !!doc.querySelector(".header, .hero, .container, .wrapper, .cta-btn, .coupon-section");
 
-    if (tableCount > 3) {
-      // Table-based layout (Klaviyo / MJML)
-      // Walk up to find the outermost content table, then use its direct TRs as sections
-      const outerTable =
-        doc.querySelector("body > table") ||
-        doc.querySelector("body > center > table") ||
-        doc.querySelector("body > div > table") ||
-        doc.querySelector("table");
+    // ════════════════════════════════════════════════════════════════════════
+    // KLAVIYO / MJML PARSER
+    // Uses semantic CSS classes to find blocks in document order.
+    // ════════════════════════════════════════════════════════════════════════
+    if (isKlaviyo) {
+      const blocks: Block[] = [];
+      const processed = new WeakSet<Element>();
 
-      if (outerTable) {
-        let rows = Array.from(outerTable.querySelectorAll(":scope > tbody > tr, :scope > tr"));
-        if (rows.length <= 1) {
-          // Single wrapper row — go one level deeper
-          const td = rows[0]?.querySelector("td");
-          const inner = td?.querySelector("table");
-          if (inner) rows = Array.from(inner.querySelectorAll(":scope > tbody > tr, :scope > tr"));
-        }
-        sections = rows;
-      }
+      // Collect all semantic Klaviyo elements in DOM order
+      const semanticSelector =
+        ".kl-header-link-bar, td.kl-image, td.kl-text, table.kl-product, div.kl-product";
+      const allSemantic = Array.from(doc.querySelectorAll(semanticSelector));
 
-      // Fallback: all TRs not nested inside other TRs
-      if (sections.length === 0) {
-        sections = Array.from(doc.querySelectorAll("tr")).filter(
-          (tr) => !tr.parentElement?.closest("tr")
+      for (const el of allSemantic) {
+        // Skip if already handled as part of an ancestor
+        let skip = false;
+        let p: Element | null = el.parentElement;
+        while (p) { if (processed.has(p)) { skip = true; break; } p = p.parentElement; }
+        if (skip) continue;
+
+        // Skip invisible/hidden MSO duplicate elements
+        const elStyle = attr(el, "style");
+        if (/opacity:\s*0|display:\s*none|max-height:\s*0/i.test(elStyle)) continue;
+        if (attr(el, "role") === "presentation" && /opacity:\s*0/i.test(elStyle)) continue;
+
+        processed.add(el);
+        const text = (el.textContent || "").trim();
+        const imgs = Array.from(el.querySelectorAll("img")).filter(
+          (img) => !/tracking|pixel|spacer/i.test(attr(img, "src"))
         );
+        const links = Array.from(el.querySelectorAll("a[href]"));
+        const bg = bgColor(el);
+        const elCls = attr(el, "class");
+
+        // ── kl-header-link-bar → Header ──────────────────────────────────
+        if (/kl-header-link-bar/.test(elCls)) {
+          const logoImg = imgs.find((i) => /logo|brand/i.test(attr(i, "src") + attr(i, "alt"))) || imgs[0];
+          if (logoImg) {
+            const w = attr(logoImg, "width") || attr(logoImg, "height") || "160";
+            const lnk = logoImg.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "https://www.happylapiz.cl";
+            blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: attr(logoImg, "src"), logo_width: w, link: lnk, bg_color: bg } });
+          }
+          continue;
+        }
+
+        // ── td.kl-image → Image ──────────────────────────────────────────
+        if (/\bkl-image\b/.test(elCls)) {
+          const img = imgs[0];
+          if (img) {
+            blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg } });
+          }
+          continue;
+        }
+
+        // ── td.kl-text → Text or Button ──────────────────────────────────
+        if (/\bkl-text\b/.test(elCls)) {
+          // Skip unsubscribe footer
+          if (/unsubscribe|baja|cancelar suscripci/i.test(text)) continue;
+
+          // If block contains only a single anchor with short text → Button
+          const nonSpaceText = text.replace(/\s| /g, "");
+          const isCtaOnly = links.length === 1 && imgs.length === 0 && nonSpaceText.length < 80
+            && nonSpaceText.length > 0;
+          if (isCtaOnly) {
+            const a = links[0];
+            const href = attr(a, "href");
+            // Detect button color from nested table/td with bgcolor
+            const bgEl = el.querySelector("[bgcolor], [style*='background']");
+            const btnBg = (bgEl ? attr(bgEl, "bgcolor") || css(bgEl, "backgroundColor") : "") || "#111111";
+            const btnColor = css(a, "color") || "#ffffff";
+            blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: text || "Ver más", url: href, bg_color: normColor(btnBg), text_color: normColor(btnColor) } });
+          } else if (nonSpaceText.length > 0) {
+            blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content: cleanKlaviyoText(el), bg_color: bg } });
+          }
+          continue;
+        }
+
+        // ── kl-product → Product ─────────────────────────────────────────
+        if (/\bkl-product\b/.test(elCls)) {
+          const img = imgs[0];
+          const priceMatch = text.match(/\$\s?[\d.,]+/);
+          const titleLink = links.find((a) => (a.textContent || "").trim().length > 5);
+          const lnk = titleLink?.getAttribute("href") || img?.closest("a")?.getAttribute("href") || "";
+          const title = titleLink?.textContent?.trim() || text.slice(0, 60);
+          // Deduplicate: skip if we already have a product with same URL
+          if (blocks.some((b) => b.type === "product" && b.props.url === lnk && lnk)) continue;
+          if (img || priceMatch) {
+            blocks.push({
+              id: uid("product"), type: "product", props: {
+                ...DEFAULTS.product,
+                title,
+                price: priceMatch?.[0] || "",
+                image_url: img ? attr(img, "src") : "",
+                url: lnk,
+                bg_color: bg,
+              },
+            });
+          }
+          continue;
+        }
       }
-    } else {
-      // Div / class-based layout
+
+      return blocks;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CSS-CLASS BASED PARSER (e.g. template 3: .header, .hero, .container)
+    // ════════════════════════════════════════════════════════════════════════
+    if (hasCssClasses) {
+      const blocks: Block[] = [];
+      const container = doc.querySelector(".container, .wrapper, [class*='container']") || doc.body;
+
+      const sections = Array.from(container.children).filter(
+        (el) => !["STYLE", "SCRIPT", "HEAD"].includes(el.tagName)
+      );
+
+      for (const sec of sections) {
+        const cls = attr(sec, "class");
+        const text = (sec.textContent || "").trim();
+        const imgs = Array.from(sec.querySelectorAll("img"));
+        const links = Array.from(sec.querySelectorAll("a[href]"));
+        const bg = bgColor(sec);
+
+        if (!text && imgs.length === 0) continue;
+
+        // Header
+        if (/header|logo/i.test(cls)) {
+          const img = imgs[0];
+          if (img) {
+            const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
+            blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: attr(img, "src"), logo_width: attr(img, "width") || "160", link: lnk, bg_color: bg } });
+          }
+          continue;
+        }
+
+        // CTA button
+        if (/btn|button|cta/i.test(cls) || (links.length === 1 && imgs.length === 0 && text.length < 80)) {
+          if (links.length === 1) {
+            const a = links[0];
+            const aBg = normColor(css(a, "backgroundColor") || css(sec, "backgroundColor") || "#111111");
+            const aColor = normColor(css(a, "color") || "#ffffff");
+            blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: text || "Ver más", url: attr(a, "href"), bg_color: aBg, text_color: aColor } });
+            continue;
+          }
+        }
+
+        // Coupon
+        if (/coupon/i.test(cls) || text.includes("coupon_code")) {
+          const codeEl = sec.querySelector(".coupon-code, [class*='coupon-code']") || sec;
+          blocks.push({ id: uid("coupon"), type: "coupon", props: { ...DEFAULTS.coupon, code: text.includes("coupon_code") ? "{{ coupon_code }}" : codeEl.textContent?.trim() || "{{ coupon_code }}", bg_color: bg } });
+          continue;
+        }
+
+        // Single image
+        if (imgs.length === 1 && text.replace(/\s/g, "").length < 20) {
+          const img = imgs[0];
+          blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg } });
+          continue;
+        }
+
+        // Text (catch-all)
+        const content = sec.innerHTML.trim();
+        if (content && text.replace(/\s/g, "").length > 0) {
+          blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content, bg_color: bg } });
+        }
+      }
+      return blocks;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // DIV-BASED INLINE STYLE PARSER (e.g. template 1: nested divs with style="...")
+    // ════════════════════════════════════════════════════════════════════════
+    {
+      const blocks: Block[] = [];
+
+      // Find the main max-width container
       const container =
-        doc.querySelector(".container") ||
-        doc.querySelector(".wrapper") ||
+        doc.querySelector("[style*='max-width']") ||
         doc.querySelector("[style*='max-width']") ||
         doc.body;
 
-      sections = Array.from(container.children).filter(
-        (el) => !["STYLE", "SCRIPT", "LINK", "META", "TITLE", "HEAD"].includes(el.tagName)
+      let sections = Array.from(container.children).filter(
+        (el) => !["STYLE", "SCRIPT"].includes(el.tagName)
       );
-
-      // Unwrap single outer div
       if (sections.length === 1) {
         const inner = Array.from(sections[0].children).filter(
           (el) => !["STYLE", "SCRIPT"].includes(el.tagName)
         );
         if (inner.length > 1) sections = inner;
       }
+
+      function classifySection(sec: Element): void {
+        const text = (sec.textContent || "").trim();
+        const imgs = Array.from(sec.querySelectorAll("img"));
+        const links = Array.from(sec.querySelectorAll("a[href]"));
+        const bg = bgColor(sec);
+        const secStyle = attr(sec, "style");
+
+        if (!text && imgs.length === 0) return;
+
+        // Single image → header or image
+        if (imgs.length === 1 && text.replace(/\s/g, "").length < 25) {
+          const img = imgs[0];
+          const src = attr(img, "src");
+          const w = attr(img, "width") || "160";
+          const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
+          const seemsLogo = /logo|brand/i.test(src) || parseInt(w) < 300 || blocks.length === 0;
+          if (seemsLogo) {
+            blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: src, logo_width: w, link: lnk, bg_color: bg } });
+          } else {
+            blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src, alt: attr(img, "alt"), link: lnk, bg_color: bg } });
+          }
+          return;
+        }
+
+        // Standalone image
+        if (imgs.length === 1 && links.length === 1 && text.replace(/[^a-z0-9]/gi, "").length < 30) {
+          const img = imgs[0];
+          blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: links[0].getAttribute("href") || "", bg_color: bg } });
+          return;
+        }
+
+        // Coupon
+        if (text.includes("coupon_code") || /cupón|código descuento/i.test(text)) {
+          blocks.push({ id: uid("coupon"), type: "coupon", props: { ...DEFAULTS.coupon, code: "{{ coupon_code }}", bg_color: bg } });
+          return;
+        }
+
+        // Divider
+        if (sec.querySelector("hr")) {
+          blocks.push({ id: uid("divider"), type: "divider", props: { ...DEFAULTS.divider } });
+          return;
+        }
+
+        // Section containing a grid of product links — process children individually
+        const isGrid = /flex|grid/i.test(secStyle) && links.length >= 2;
+        if (isGrid) {
+          Array.from(sec.children).forEach(classifySection);
+          return;
+        }
+
+        // Product card (has image + price)
+        const priceMatch = text.match(/\$\s?[\d.,]+/);
+        if (imgs.length >= 1 && priceMatch) {
+          const img = imgs[0];
+          const titleEl = sec.querySelector("p[style*='font-weight:700'], p[style*='font-weight: 700'], strong");
+          const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
+          if (blocks.some((b) => b.type === "product" && b.props.url === lnk && lnk)) return;
+          blocks.push({
+            id: uid("product"), type: "product", props: {
+              ...DEFAULTS.product,
+              title: titleEl?.textContent?.trim() || text.slice(0, 60),
+              price: priceMatch[0],
+              image_url: attr(img, "src"),
+              url: lnk,
+              bg_color: bg,
+            },
+          });
+          return;
+        }
+
+        // Single styled link → button
+        if (links.length === 1 && imgs.length === 0 && text.length < 100) {
+          const a = links[0] as HTMLAnchorElement;
+          const aBg = normColor(css(a, "backgroundColor") || css(sec, "backgroundColor") || "");
+          if (aBg && aBg !== "#ffffff") {
+            blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: text || "Ver más", url: attr(a, "href"), bg_color: aBg, text_color: normColor(css(a, "color") || "#ffffff") } });
+            return;
+          }
+        }
+
+        // Text block
+        const content = sec.innerHTML.trim();
+        if (content && text.replace(/\s/g, "").length > 0) {
+          blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content, bg_color: bg } });
+        }
+      }
+
+      sections.forEach(classifySection);
+      return blocks;
     }
-
-    // ── Classify each section ────────────────────────────────────────────────
-    for (const sec of sections) {
-      const text = (sec.textContent || "").trim();
-      const imgs = Array.from(sec.querySelectorAll("img"));
-      const links = Array.from(sec.querySelectorAll("a[href]"));
-      const bg = bgColor(sec);
-
-      // --- Empty / spacer ---
-      if (!text && imgs.length === 0) {
-        const h = parseInt(attr(sec, "height") || css(sec, "height") || "0");
-        if (h > 8) blocks.push({ id: uid("spacer"), type: "spacer", props: { ...DEFAULTS.spacer, height: String(h) } });
-        continue;
-      }
-
-      // --- Divider ---
-      if (sec.querySelector("hr") && text.length < 5) {
-        const hr = sec.querySelector("hr")!;
-        blocks.push({ id: uid("divider"), type: "divider", props: { ...DEFAULTS.divider, color: normColor(css(hr, "borderTopColor") || "#e5e7eb") } });
-        continue;
-      }
-
-      // --- Coupon block ---
-      const cls = attr(sec, "class") + " " + Array.from(sec.querySelectorAll("[class]")).map((e) => attr(e, "class")).join(" ");
-      const hasCouponCls = /coupon/i.test(cls);
-      const hasCouponVar = text.includes("coupon_code");
-      if (hasCouponCls || hasCouponVar) {
-        const codeEl = sec.querySelector(".coupon-code, [class*='coupon-code'], [style*='monospace'], [style*='letter-spacing']") || sec;
-        const titleEl = sec.querySelector("h2, h3, strong, p");
-        blocks.push({
-          id: uid("coupon"), type: "coupon", props: {
-            ...DEFAULTS.coupon,
-            title: titleEl?.textContent?.trim() || "Tu código de descuento",
-            code: hasCouponVar ? "{{ coupon_code }}" : (codeEl?.textContent?.trim() || "{{ coupon_code }}"),
-            bg_color: bg,
-          },
-        });
-        continue;
-      }
-
-      // --- Header / logo (single image, minimal text) ---
-      if (imgs.length === 1 && text.replace(/\s/g, "").length < 25) {
-        const img = imgs[0];
-        const src = attr(img, "src");
-        const w = attr(img, "width") || "160";
-        const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
-        const seemsLogo = /logo|brand|icon/i.test(src) || /logo/i.test(attr(img, "alt")) || parseInt(w) < 320;
-
-        if (seemsLogo || blocks.length === 0) {
-          blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: src, logo_width: w, link: lnk, bg_color: bg } });
-          continue;
-        }
-        blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src, alt: attr(img, "alt"), link: lnk, bg_color: bg } });
-        continue;
-      }
-
-      // --- Standalone image (single image, very short text like alt) ---
-      if (imgs.length === 1 && text.replace(/[^a-zA-Z0-9áéíóúñ]/gi, "").length < 40) {
-        const img = imgs[0];
-        blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg } });
-        continue;
-      }
-
-      // --- Button (single link styled as button) ---
-      if (links.length >= 1 && imgs.length === 0 && text.length < 100) {
-        const a = links[0] as HTMLAnchorElement;
-        const aStyle = attr(a, "style");
-        const innerEl = a.querySelector("td, div, span, p") || a;
-        const innerStyle = attr(innerEl, "style");
-        const combined = aStyle + " " + innerStyle + " " + attr(sec, "style");
-        const btnCls = attr(a, "class") + " " + cls;
-        const isBtn = /background[-\s:]/i.test(combined) || /btn|button|cta/i.test(btnCls);
-
-        if (isBtn) {
-          const aBg = normColor(css(a, "backgroundColor") || css(innerEl, "backgroundColor") || "#111111");
-          const aColor = normColor(css(a, "color") || css(innerEl, "color") || "#ffffff");
-          blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: text || "Ver más", url: attr(a, "href"), bg_color: aBg, text_color: aColor } });
-          continue;
-        }
-      }
-
-      // --- Product card (image + price text) ---
-      const priceMatch = text.match(/\$\s?[\d.,]+/);
-      if (imgs.length >= 1 && priceMatch) {
-        const img = imgs[0];
-        const titleEl =
-          sec.querySelector("h1, h2, h3, h4") ||
-          sec.querySelector("[style*='font-weight:700'], [style*='font-weight: 700']");
-        const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
-        blocks.push({
-          id: uid("product"), type: "product", props: {
-            ...DEFAULTS.product,
-            title: titleEl?.textContent?.trim() || text.slice(0, 60),
-            price: priceMatch[0],
-            image_url: attr(img, "src"),
-            url: lnk,
-            bg_color: bg,
-          },
-        });
-        continue;
-      }
-
-      // --- Text block (catch-all) ---
-      // For table rows, unwrap the TD to get actual content
-      let contentEl: Element = sec;
-      if (sec.tagName === "TR") {
-        const tds = Array.from(sec.querySelectorAll("td"));
-        if (tds.length === 1) contentEl = tds[0];
-        else if (tds.length > 1) {
-          // Multi-column row: use the one with the most text
-          contentEl = tds.reduce((best, td) =>
-            (td.textContent?.length || 0) > (best.textContent?.length || 0) ? td : best
-          );
-        }
-      }
-
-      const content = contentEl.innerHTML.trim();
-      if (content && text.replace(/\s/g, "").length > 0) {
-        blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content, bg_color: bg } });
-      }
-    }
-
-    return blocks;
   } catch {
     return [];
   }
