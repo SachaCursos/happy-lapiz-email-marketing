@@ -18,6 +18,27 @@ export interface Block {
 }
 
 // ── Defaults ───────────────────────────────────────────────────────────────────
+// Happy Lápiz brand palette (extracted from Klaviyo templates)
+const BRAND_PALETTE = [
+  "#682ae7", // morado marca
+  "#2a2ee7", // azul link
+  "#222222", // texto oscuro
+  "#727272", // texto secundario
+  "#fcfcfc", // fondo sección
+  "#ffffff", // blanco
+  "#000000", // negro
+  "#e53e3e", // precio oferta
+];
+
+// Font options seen in Klaviyo + estándar email
+const FONT_OPTIONS = [
+  { label: "Helvetica Neue (Klaviyo)", value: "'Helvetica Neue', Arial, sans-serif" },
+  { label: "Sistema / Sans-serif", value: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" },
+  { label: "Georgia (Serif)", value: "Georgia, 'Times New Roman', serif" },
+  { label: "Verdana", value: "Verdana, Geneva, Tahoma, sans-serif" },
+  { label: "Courier New (Monospace)", value: "'Courier New', Courier, monospace" },
+];
+
 const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
   header: {
     logo_url: "https://cdn.shopify.com/s/files/1/0751/8441/0881/files/logo-happy-lapiz.png",
@@ -26,10 +47,11 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     link: "https://www.happylapiz.cl",
   },
   text: {
-    content: `<p style="margin:0;font-size:15px;line-height:1.75;color:#333333;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">Hola, <strong>{{ nombre }}</strong> 👋<br/><br/>Escribe tu mensaje aquí.</p>`,
+    content: `<p style="margin:0;font-size:15px;line-height:1.75;color:#222222;font-family:'Helvetica Neue',Arial,sans-serif;">Hola, <strong>{{ nombre }}</strong> 👋<br/><br/>Escribe tu mensaje aquí.</p>`,
     bg_color: "#ffffff",
     padding_y: "24",
     padding_x: "32",
+    font_family: "'Helvetica Neue', Arial, sans-serif",
   },
   image: {
     src: "",
@@ -41,11 +63,14 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
   button: {
     text: "Ver más",
     url: "https://www.happylapiz.cl",
-    bg_color: "#111111",
+    bg_color: "#682ae7",
     text_color: "#ffffff",
     align: "center",
-    border_radius: "8",
-    font_size: "15",
+    border_radius: "5",
+    font_size: "16",
+    letter_spacing: "1",
+    font_family: "'Helvetica Neue', Arial, sans-serif",
+    full_width: false,
   },
   product: {
     title: "Nombre del producto",
@@ -53,9 +78,9 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     compare_at_price: "",
     image_url: "",
     url: "https://www.happylapiz.cl",
-    description: "Descripción breve del producto.",
-    button_text: "Comprar ahora",
-    button_color: "#111111",
+    description: "",
+    button_text: "Comprar",
+    button_color: "#682ae7",
     bg_color: "#ffffff",
   },
   coupon: {
@@ -64,7 +89,7 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     subtitle: "Úsalo en tu próxima compra",
     bg_color: "#f9fafb",
     text_color: "#111111",
-    border_color: "#d1d5db",
+    border_color: "#682ae7",
   },
   divider: {
     color: "#e5e7eb",
@@ -501,10 +526,12 @@ function blockHtml(block: Block): string {
   </a>
 </div>`;
 
-    case "text":
-      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;">
+    case "text": {
+      const ff = (p.font_family as string) || "'Helvetica Neue', Arial, sans-serif";
+      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;font-family:${ff};">
   ${p.content}
 </div>`;
+    }
 
     case "image": {
       const img = `<img src="${p.src}" alt="${p.alt}" style="width:100%;display:block;${p.border_radius !== "0" ? `border-radius:${p.border_radius}px;` : ""}" />`;
@@ -515,27 +542,36 @@ function blockHtml(block: Block): string {
 
     case "button": {
       const align = p.align === "left" ? "left" : p.align === "right" ? "right" : "center";
+      const ff = (p.font_family as string) || "'Helvetica Neue', Arial, sans-serif";
+      const ls = p.letter_spacing ? `letter-spacing:${p.letter_spacing}px;` : "";
+      if (p.full_width) {
+        // Full-width CTA bar (like Klaviyo kl-header-link-bar)
+        return `<div style="background:${p.bg_color};padding:12px 0;text-align:center;">
+  <a href="${p.url}" style="color:${p.text_color};font-size:${p.font_size}px;font-weight:400;text-decoration:none;font-family:${ff};${ls}display:inline-block;padding:4px 8px;">
+    ${p.text}
+  </a>
+</div>`;
+      }
       return `<div style="padding:16px 32px;text-align:${align};background:#ffffff;">
-  <a href="${p.url}" style="display:inline-block;background:${p.bg_color};color:${p.text_color};font-size:${p.font_size}px;font-weight:600;padding:14px 32px;border-radius:${p.border_radius}px;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+  <a href="${p.url}" style="display:inline-block;background:${p.bg_color};color:${p.text_color};font-size:${p.font_size}px;font-weight:400;padding:10px 24px;border-radius:${p.border_radius}px;text-decoration:none;font-family:${ff};${ls}">
     ${p.text}
   </a>
 </div>`;
     }
 
-    case "product":
-      return `<div style="background:${p.bg_color};padding:24px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    <tr>
-      ${p.image_url ? `<td width="140" valign="top" style="padding-right:20px;"><a href="${p.url}" style="display:block;"><img src="${p.image_url}" alt="${p.title}" width="140" style="border-radius:8px;display:block;" /></a></td>` : ""}
-      <td valign="top">
-        <p style="margin:0 0 8px;font-size:17px;font-weight:700;color:#111;font-family:-apple-system,sans-serif;">${p.title}</p>
-        ${priceHtml(p.price as string, p.compare_at_price as string)}
-        ${p.description ? `<p style="margin:0 0 16px;font-size:14px;color:#666;line-height:1.6;font-family:-apple-system,sans-serif;">${p.description}</p>` : ""}
-        <a href="${p.url}" style="display:inline-block;background:${p.button_color};color:#ffffff;font-size:14px;font-weight:600;padding:10px 24px;border-radius:6px;text-decoration:none;font-family:-apple-system,sans-serif;">${p.button_text}</a>
-      </td>
-    </tr>
-  </table>
+    case "product": {
+      const font = "'Helvetica Neue', Arial, sans-serif";
+      const priceInline = (p.compare_at_price as string)
+        ? `<p style="margin:0 0 5px;text-align:center;"><span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:${font};margin-right:6px;">${p.compare_at_price}</span><span style="font-size:14px;font-weight:bold;color:#e53e3e;font-family:${font};">${p.price}</span></p>`
+        : `<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:#222222;font-family:${font};text-align:center;">${p.price}</p>`;
+      return `<div style="background:${p.bg_color};padding:9px;text-align:center;">
+  ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" /></a>` : ""}
+  <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:${font};text-align:center;">${p.title}</p>
+  ${priceInline}
+  ${p.description ? `<p style="margin:0 0 8px;font-size:13px;color:#666666;font-family:${font};text-align:center;">${p.description}</p>` : ""}
+  <a href="${p.url}" style="display:inline-block;margin-top:9px;background:${p.button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:${font};">${p.button_text}</a>
 </div>`;
+    }
 
     case "coupon":
       return `<div style="background:${p.bg_color};padding:28px 32px;text-align:center;">
@@ -697,45 +733,44 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
           </div>;
     case "button": {
       const align = p.align === "left" ? "left" : p.align === "right" ? "right" : "center";
+      const ls = p.letter_spacing ? `${p.letter_spacing}px` : "normal";
+      if (p.full_width) {
+        return (
+          <div style={{ background: p.bg_color as string, padding: "12px 0", textAlign: "center" }}>
+            <span style={{ color: p.text_color as string, fontSize: `${p.font_size}px`, fontWeight: 400, letterSpacing: ls }}>
+              {p.text as string}
+            </span>
+          </div>
+        );
+      }
       return (
         <div style={{ padding: "14px 24px", textAlign: align as "center" | "left" | "right", background: "#ffffff" }}>
-          <span style={{ display: "inline-block", background: p.bg_color as string, color: p.text_color as string, padding: "10px 24px", borderRadius: `${p.border_radius}px`, fontSize: `${p.font_size}px`, fontWeight: 600 }}>
+          <span style={{ display: "inline-block", background: p.bg_color as string, color: p.text_color as string, padding: "10px 24px", borderRadius: `${p.border_radius}px`, fontSize: `${p.font_size}px`, fontWeight: 400, letterSpacing: ls }}>
             {p.text as string}
           </span>
         </div>
       );
     }
-    case "product":
-      // compact = vertical card (used when multiple products share a row)
-      if (compact) {
-        return (
-          <div style={{ background: p.bg_color as string, padding: "12px 8px", textAlign: "center", height: "100%" }}>
-            {p.image_url
-              ? <img src={p.image_url as string} alt="" style={{ width: "100%", maxHeight: 110, objectFit: "cover", borderRadius: 6, display: "block", margin: "0 auto 8px" }} />
-              : <div style={{ width: "100%", height: 90, background: "#f3f4f6", borderRadius: 6, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af", fontSize: 10 }}>Imagen</div>}
-            <p style={{ margin: "0 0 4px", fontWeight: 700, fontSize: 12, lineHeight: 1.3 }}>{p.title as string}</p>
-            <p style={{ margin: "0 0 8px", fontWeight: 800, fontSize: 13, color: "#111" }}>{p.price as string}</p>
-            <span style={{ background: p.button_color as string, color: "#fff", padding: "4px 12px", borderRadius: 5, fontSize: 10, fontWeight: 600 }}>{p.button_text as string}</span>
-          </div>
-        );
-      }
+    case "product": {
+      // Shared vertical card layout (same for single and multi-column)
+      const cardStyle: React.CSSProperties = { background: p.bg_color as string, padding: compact ? "12px 8px" : "14px 24px", textAlign: "center", height: "100%" };
+      const imgH = compact ? 110 : 140;
       return (
-        <div style={{ background: p.bg_color as string, padding: "14px 24px", display: "flex", gap: 14, alignItems: "flex-start" }}>
+        <div style={cardStyle}>
           {p.image_url
-            ? <img src={p.image_url as string} alt="" style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
-            : <div style={{ width: 88, height: 88, background: "#f3f4f6", borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af", fontSize: 10 }}>Imagen</div>}
-          <div>
-            <p style={{ margin: "0 0 3px", fontWeight: 700, fontSize: 14 }}>{p.title as string}</p>
-            {p.compare_at_price
-              ? <p style={{ margin: "0 0 6px" }}>
-                  <span style={{ fontSize: 12, color: "#9ca3af", textDecoration: "line-through", marginRight: 6 }}>{p.compare_at_price as string}</span>
-                  <span style={{ fontSize: 15, fontWeight: 800, color: "#e53e3e" }}>{p.price as string}</span>
-                </p>
-              : <p style={{ margin: "0 0 6px", fontWeight: 800, fontSize: 15 }}>{p.price as string}</p>}
-            <span style={{ background: p.button_color as string, color: "#fff", padding: "5px 14px", borderRadius: 6, fontSize: 11, fontWeight: 600 }}>{p.button_text as string}</span>
-          </div>
+            ? <img src={p.image_url as string} alt="" style={{ width: "100%", maxHeight: imgH, objectFit: "cover", borderRadius: 6, display: "block", margin: "0 auto 8px" }} />
+            : <div style={{ width: "100%", height: compact ? 90 : 110, background: "#f3f4f6", borderRadius: 6, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af", fontSize: 10 }}>Imagen</div>}
+          <p style={{ margin: "0 0 3px", fontWeight: 700, fontSize: compact ? 12 : 14, lineHeight: 1.3, fontFamily: "'Helvetica Neue',Arial,sans-serif" }}>{p.title as string}</p>
+          {p.compare_at_price
+            ? <p style={{ margin: "0 0 8px" }}>
+                <span style={{ fontSize: 11, color: "#9ca3af", textDecoration: "line-through", marginRight: 5 }}>{p.compare_at_price as string}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#e53e3e" }}>{p.price as string}</span>
+              </p>
+            : <p style={{ margin: "0 0 8px", fontWeight: 400, fontSize: compact ? 12 : 14, color: "#222222" }}>{p.price as string}</p>}
+          <span style={{ background: p.button_color as string, color: "#fff", padding: compact ? "4px 12px" : "8px 18px", borderRadius: 5, fontSize: compact ? 10 : 13, fontWeight: 400, display: "inline-block" }}>{p.button_text as string}</span>
         </div>
       );
+    }
     case "coupon":
       return (
         <div style={{ background: p.bg_color as string, padding: "16px 24px", textAlign: "center" }}>
@@ -781,11 +816,22 @@ function NI({ value, onChange, min = 0, max = 9999 }: { value: string | number; 
 }
 function CI({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <div className="flex items-center gap-2">
-      <input type="color" value={value || "#ffffff"} onChange={(e) => onChange(e.target.value)}
-        className="w-9 h-9 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0" />
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="#ffffff"
-        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500" />
+    <div className="space-y-2">
+      <div className="flex gap-1.5 flex-wrap">
+        {BRAND_PALETTE.map((c) => (
+          <button key={c} type="button" onClick={() => onChange(c)}
+            title={c}
+            style={{ background: c, outline: value?.toLowerCase() === c.toLowerCase() ? "2px solid #6366f1" : "2px solid transparent", outlineOffset: 2 }}
+            className="w-6 h-6 rounded-full cursor-pointer hover:scale-110 transition-transform border border-gray-300"
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <input type="color" value={value || "#ffffff"} onChange={(e) => onChange(e.target.value)}
+          className="w-9 h-9 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0" />
+        <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="#ffffff"
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500" />
+      </div>
     </div>
   );
 }
@@ -908,6 +954,12 @@ function PropsPanel({
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none" />
           <p className="text-xs text-gray-400 mt-1">Variables: {"{{ nombre }}"}, {"{{ coupon_code }}"}</p>
         </Field>
+        <Field label="Tipografía del bloque">
+          <select value={(p.font_family as string) || FONT_OPTIONS[0].value} onChange={(e) => set("font_family", e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+            {FONT_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+          </select>
+        </Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Padding vertical"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} /></Field>
@@ -928,17 +980,33 @@ function PropsPanel({
         <Field label="URL de destino"><TI value={p.url as string} onChange={(v) => set("url", v)} placeholder="https://..." /></Field>
         <Field label="Color del botón"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
         <Field label="Color del texto"><CI value={p.text_color as string} onChange={(v) => set("text_color", v)} /></Field>
-        <Field label="Alineación">
-          <select value={p.align as string} onChange={(e) => set("align", e.target.value)}
+        <Field label="Tipografía">
+          <select value={(p.font_family as string) || FONT_OPTIONS[0].value} onChange={(e) => set("font_family", e.target.value)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-            <option value="left">Izquierda</option>
-            <option value="center">Centro</option>
-            <option value="right">Derecha</option>
+            {FONT_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
         </Field>
-        <div className="grid grid-cols-2 gap-3">
+        <Field label="Estilo">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!p.full_width} onChange={(e) => set("full_width", e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500" />
+            <span className="text-sm text-gray-700">Ancho completo (barra CTA)</span>
+          </label>
+        </Field>
+        {!p.full_width && (
+          <Field label="Alineación">
+            <select value={p.align as string} onChange={(e) => set("align", e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+              <option value="left">Izquierda</option>
+              <option value="center">Centro</option>
+              <option value="right">Derecha</option>
+            </select>
+          </Field>
+        )}
+        <div className="grid grid-cols-3 gap-3">
           <Field label="Borde radius"><NI value={p.border_radius as string} onChange={(v) => set("border_radius", v)} /></Field>
-          <Field label="Tamaño fuente"><NI value={p.font_size as string} onChange={(v) => set("font_size", v)} min={10} max={30} /></Field>
+          <Field label="Fuente (px)"><NI value={p.font_size as string} onChange={(v) => set("font_size", v)} min={10} max={36} /></Field>
+          <Field label="Letter-spacing"><NI value={(p.letter_spacing as string) || "0"} onChange={(v) => set("letter_spacing", v)} min={0} max={10} /></Field>
         </div>
       </>}
 
