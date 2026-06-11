@@ -398,6 +398,15 @@ def _build_embed_js(cfg: dict) -> str:
       var radius    = (D.border_radius !== undefined ? D.border_radius : {radius}) + 'px';
       var fontFam   = D.font       || '{font}';
 
+      // Load Google Font if needed
+      var _gFonts = {{'Poppins':'Poppins:wght@400;600;700','Montserrat':'Montserrat:wght@400;600;700',"'Playfair Display'":"Playfair+Display:wght@400;700","'DM Sans'":"DM+Sans:wght@400;600"}};
+      if (_gFonts[fontFam]) {{
+        var _fl = document.createElement('link');
+        _fl.rel = 'stylesheet';
+        _fl.href = 'https://fonts.googleapis.com/css2?family=' + _gFonts[fontFam] + '&display=swap';
+        document.head.appendChild(_fl);
+      }}
+
       var STYLES = [
         '@keyframes hbSlideUp{{from{{transform:translateY(80px);opacity:0}}to{{transform:translateY(0);opacity:1}}}}',
         '@keyframes hbFadeIn{{from{{opacity:0;transform:scale(0.96)}}to{{opacity:1;transform:scale(1)}}}}',

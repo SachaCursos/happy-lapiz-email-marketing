@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formsApi } from "@/lib/api";
@@ -32,7 +32,32 @@ const DEFAULT_DESIGN: FormDesign = {
   font: "system-ui",
 };
 
+const HAPPY_LAPIZ_DESIGN: FormDesign = {
+  header_bg: "#233dff",
+  header_bg2: "#849bff",
+  header_text: "#ffffff",
+  body_bg: "#ffffff",
+  btn_bg: "#ffd51e",
+  btn_bg2: "#ffc827",
+  btn_text: "#111111",
+  input_border: "#d8dfff",
+  border_radius: 16,
+  font: "Poppins",
+};
+
+// Colores de marca Happy Lápiz (desde plantillas_de_la_marca)
+const BRAND_PALETTE = [
+  { hex: "#ffd51e", name: "Amarillo principal" },
+  { hex: "#ffc827", name: "Amarillo oscuro" },
+  { hex: "#233dff", name: "Azul fuerte" },
+  { hex: "#849bff", name: "Azul claro" },
+  { hex: "#d8dfff", name: "Azul pastel" },
+  { hex: "#ffffff", name: "Blanco" },
+  { hex: "#111111", name: "Negro" },
+];
+
 const FONTS = [
+  { value: "Poppins", label: "Poppins ★ (tipografía Happy Lápiz)" },
   { value: "system-ui", label: "Sistema (por defecto)" },
   { value: "Inter", label: "Inter" },
   { value: "Georgia", label: "Georgia" },
@@ -149,25 +174,43 @@ function PopupPreview({
   );
 }
 
+const GOOGLE_FONT_URLS: Record<string, string> = {
+  "Poppins": "https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap",
+  "Montserrat": "https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap",
+  "'Playfair Display'": "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap",
+  "'DM Sans'": "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600&display=swap",
+};
+
 // ── Design Editor ─────────────────────────────────────────────────────────────
 function DesignEditor({
   design,
   onChange,
 }: { design: FormDesign; onChange: (d: FormDesign) => void }) {
+  // Load Google Font for live preview
+  useEffect(() => {
+    const url = GOOGLE_FONT_URLS[design.font];
+    if (!url) return;
+    if (document.querySelector(`link[href="${url}"]`)) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = url;
+    document.head.appendChild(link);
+  }, [design.font]);
+
   function set(key: keyof FormDesign, val: string | number) {
     onChange({ ...design, [key]: val });
   }
 
   function ColorRow({ label, k }: { label: string; k: keyof FormDesign }) {
     return (
-      <div className="flex items-center gap-3">
-        <label className="text-sm text-gray-600 w-36 flex-shrink-0">{label}</label>
-        <div className="flex items-center gap-2">
+      <div className="space-y-1.5">
+        <label className="text-sm text-gray-600">{label}</label>
+        <div className="flex items-center gap-2 flex-wrap">
           <input
             type="color"
             value={design[k] as string}
             onChange={(e) => set(k, e.target.value)}
-            className="w-9 h-9 rounded-lg border border-gray-200 cursor-pointer p-0.5"
+            className="w-9 h-9 rounded-lg border border-gray-200 cursor-pointer p-0.5 shrink-0"
           />
           <input
             type="text"
@@ -175,6 +218,22 @@ function DesignEditor({
             onChange={(e) => set(k, e.target.value)}
             className="w-24 border border-gray-200 rounded-lg px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
+          <div className="flex gap-1 flex-wrap">
+            {BRAND_PALETTE.map((c) => (
+              <button
+                key={c.hex}
+                type="button"
+                title={c.name}
+                onClick={() => set(k, c.hex)}
+                className={`w-6 h-6 rounded-full border-2 hover:scale-110 transition-transform shrink-0 ${
+                  (design[k] as string).toLowerCase() === c.hex.toLowerCase()
+                    ? "border-gray-700 scale-110"
+                    : "border-white shadow-sm"
+                }`}
+                style={{ background: c.hex }}
+              />
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -182,6 +241,35 @@ function DesignEditor({
 
   return (
     <div className="space-y-5">
+      {/* Preset Happy Lápiz */}
+      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-yellow-800">Diseño Happy Lápiz</p>
+          <p className="text-xs text-yellow-700 mt-0.5">Aplica los colores y tipografía oficiales de la marca con un clic.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange({ ...HAPPY_LAPIZ_DESIGN })}
+          className="shrink-0 px-4 py-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap"
+        >
+          Aplicar ★
+        </button>
+      </div>
+
+      {/* Paleta de referencia */}
+      <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Paleta Happy Lápiz</p>
+        <div className="flex gap-2 flex-wrap">
+          {BRAND_PALETTE.map((c) => (
+            <div key={c.hex} className="flex flex-col items-center gap-1">
+              <div className="w-8 h-8 rounded-lg border border-gray-200 shadow-sm" style={{ background: c.hex }} />
+              <span className="text-xs text-gray-400 font-mono">{c.hex}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-gray-400 mt-2">Haz clic en cualquier círculo de color para aplicarlo al campo correspondiente.</p>
+      </div>
+
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
         <p className="text-sm font-semibold text-gray-700">Encabezado</p>
         <ColorRow label="Color primario" k="header_bg" />
@@ -193,9 +281,9 @@ function DesignEditor({
         <p className="text-sm font-semibold text-gray-700">Cuerpo</p>
         <ColorRow label="Fondo del popup" k="body_bg" />
         <ColorRow label="Borde de inputs" k="input_border" />
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-600 w-36 flex-shrink-0">Radio de bordes</label>
-          <div className="flex items-center gap-3 flex-1">
+        <div>
+          <label className="text-sm text-gray-600">Radio de bordes</label>
+          <div className="flex items-center gap-3 mt-1.5">
             <input
               type="range"
               min={0} max={32} step={2}
@@ -217,19 +305,23 @@ function DesignEditor({
 
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
         <p className="text-sm font-semibold text-gray-700">Tipografía</p>
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-600 w-36 flex-shrink-0">Fuente</label>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1.5">Fuente</label>
           <select
             value={design.font}
             onChange={(e) => set("font", e.target.value)}
-            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-brand-500"
           >
             {FONTS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
+          {design.font === "Poppins" && (
+            <p className="text-xs text-yellow-600 font-medium mt-1">★ Tipografía oficial Happy Lápiz</p>
+          )}
         </div>
       </div>
 
       <button
+        type="button"
         onClick={() => onChange({ ...DEFAULT_DESIGN })}
         className="text-xs text-gray-400 hover:text-gray-700 underline"
       >
