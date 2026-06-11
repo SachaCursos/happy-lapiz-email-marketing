@@ -181,9 +181,56 @@ export function htmlToBlocks(htmlStr: string): Block[] {
       const blocks: Block[] = [];
       const processed = new WeakSet<Element>();
 
-      // Collect all semantic Klaviyo elements in DOM order
+      // Helper: extract one product block from a kl-product-cell-stack element
+      const extractProduct = (cell: Element, cellBg: string): void => {
+        const cellImgs = Array.from(cell.querySelectorAll("img")).filter(
+          (img) => !/tracking|pixel|spacer/i.test(attr(img, "src")) && attr(img, "src").trim() !== ""
+        );
+        const cellLinks = Array.from(cell.querySelectorAll("a[href]"));
+        const cellText = (cell.textContent || "").trim();
+        const priceMatch = cellText.match(/\$\s?[\d.,]+/);
+        const cellImg = cellImgs[0];
+
+        const titleEl =
+          cell.querySelector("td[style*='font-weight:bold'], td[style*='font-weight: bold']") ||
+          cell.querySelector(".kl-product-subblock td");
+        const titleRaw = titleEl?.textContent?.trim() || "";
+        const title = titleRaw && !/^\$/.test(titleRaw) ? titleRaw : cellText.slice(0, 80);
+
+        const lnk = cellImg?.closest("a")?.getAttribute("href") || cellLinks[0]?.getAttribute("href") || "";
+
+        const btnLink = cellLinks.find((a) => {
+          const t = (a.textContent || "").trim();
+          return t.length > 0 && t.length < 30 && !/^https?/i.test(t);
+        });
+        const buttonText = btnLink?.textContent?.trim() || "Comprar";
+
+        const btnColorEl = cell.querySelector("[bgcolor]");
+        const btnColorAttr = btnColorEl ? attr(btnColorEl, "bgcolor") : "";
+        const btnColorStyle = !btnColorAttr ? (() => {
+          const bgEl = cell.querySelector("[style*='background:#'], [style*='background: #']");
+          const m = bgEl ? attr(bgEl, "style").match(/background(?:-color)?:\s*(#[0-9a-fA-F]{3,8})/) : null;
+          return m ? m[1] : "";
+        })() : "";
+        const buttonColor = btnColorAttr || btnColorStyle || "#111111";
+
+        if (blocks.some((b) => b.type === "product" && b.props.url === lnk && lnk)) return;
+        if (cellImg || priceMatch) {
+          blocks.push({
+            id: uid("product"), type: "product", props: {
+              ...DEFAULTS.product, title, price: priceMatch?.[0] || "",
+              image_url: cellImg ? attr(cellImg, "src") : "",
+              url: lnk, button_text: buttonText, button_color: buttonColor, bg_color: cellBg,
+            },
+          });
+        }
+      };
+
+      // Collect all semantic Klaviyo elements in DOM order.
+      // .kl-product-cell-stack is included as a fallback: if the parent div.kl-product
+      // is not found or fails to locate child cells, the cells are processed directly.
       const semanticSelector =
-        ".kl-header-link-bar, td.kl-image, td.kl-text, table.kl-product, div.kl-product";
+        ".kl-header-link-bar, td.kl-image, td.kl-text, table.kl-product, div.kl-product, .kl-product-cell-stack";
       const allSemantic = Array.from(doc.querySelectorAll(semanticSelector));
 
       for (const el of allSemantic) {
@@ -256,67 +303,21 @@ export function htmlToBlocks(htmlStr: string): Block[] {
           continue;
         }
 
-        // ── kl-product → one or more Product blocks ──────────────────────
-        // Klaviyo puts multiple products as `.kl-product-cell-stack` cells
-        // inside a single `.kl-product` wrapper. Process each cell separately.
+        // ── div/table.kl-product → iterate child cells ────────────────────
         if (/\bkl-product\b/.test(elCls)) {
           const cells = Array.from(el.querySelectorAll(".kl-product-cell-stack"));
-          const targets: Element[] = cells.length > 0 ? cells : [el];
+          // If no cells found as descendants, individual .kl-product-cell-stack
+          // elements in allSemantic will handle products directly (ancestor check
+          // won't block them since they're not inside this processed element).
+          for (const cell of cells) extractProduct(cell, bg);
+          continue;
+        }
 
-          for (const cell of targets) {
-            const cellImgs = Array.from(cell.querySelectorAll("img")).filter(
-              (img) => !/tracking|pixel|spacer/i.test(attr(img, "src")) && attr(img, "src").trim() !== ""
-            );
-            const cellLinks = Array.from(cell.querySelectorAll("a[href]"));
-            const cellText = (cell.textContent || "").trim();
-            const priceMatch = cellText.match(/\$\s?[\d.,]+/);
-            const cellImg = cellImgs[0];
-
-            // Title: Klaviyo puts it in a bold <td>, NOT inside an <a> tag
-            const titleEl =
-              cell.querySelector("td[style*='font-weight:bold'], td[style*='font-weight: bold']") ||
-              cell.querySelector(".kl-product-subblock td");
-            // Exclude price cells from title candidate
-            const titleRaw = titleEl?.textContent?.trim() || "";
-            const title = titleRaw && !/^\$/.test(titleRaw) ? titleRaw : cellText.slice(0, 80);
-
-            // URL: prefer image link, fallback to any link
-            const lnk = cellImg?.closest("a")?.getAttribute("href") || cellLinks[0]?.getAttribute("href") || "";
-
-            // Button text: the shortest non-empty link text (the "Comprar" link)
-            const btnLink = cellLinks.find((a) => {
-              const t = (a.textContent || "").trim();
-              return t.length > 0 && t.length < 30 && !/^https?/i.test(t);
-            });
-            const buttonText = btnLink?.textContent?.trim() || "Comprar";
-
-            // Button color: look for bgcolor attribute (Klaviyo uses it on the button td)
-            const btnColorEl = cell.querySelector("[bgcolor]");
-            const btnColorAttr = btnColorEl ? attr(btnColorEl, "bgcolor") : "";
-            // Fallback: parse background: #xxx from style attribute
-            const btnColorStyle = !btnColorAttr ? (() => {
-              const bgEl = cell.querySelector("[style*='background:#'], [style*='background: #']");
-              const m = bgEl ? attr(bgEl, "style").match(/background(?:-color)?:\s*(#[0-9a-fA-F]{3,8})/) : null;
-              return m ? m[1] : "";
-            })() : "";
-            const buttonColor = btnColorAttr || btnColorStyle || "#111111";
-
-            if (blocks.some((b) => b.type === "product" && b.props.url === lnk && lnk)) continue;
-            if (cellImg || priceMatch) {
-              blocks.push({
-                id: uid("product"), type: "product", props: {
-                  ...DEFAULTS.product,
-                  title,
-                  price: priceMatch?.[0] || "",
-                  image_url: cellImg ? attr(cellImg, "src") : "",
-                  url: lnk,
-                  button_text: buttonText,
-                  button_color: buttonColor,
-                  bg_color: bg,
-                },
-              });
-            }
-          }
+        // ── .kl-product-cell-stack → single product (fallback / direct match) ──
+        // Reached when no ancestor div.kl-product was processed (cells are
+        // siblings of div.kl-product in the DOM, or div.kl-product was absent).
+        if (/\bkl-product-cell-stack\b/.test(elCls)) {
+          extractProduct(el, bg);
           continue;
         }
       }
