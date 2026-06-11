@@ -38,8 +38,17 @@ def _inject_footer(html: str, email: str) -> str:
     url = unsub_url(email)
     if "##unsub##" in html:
         return html.replace("##unsub##", url)
-    footer = _FOOTER.format(url=url)
     lower = html.lower()
+    # Don't inject if the template already has an unsubscribe block
+    if "cancelar suscripci" in lower or "/unsub/" in lower:
+        return html
+    footer = _FOOTER.format(url=url)
+    # Inject inside the email container div, not after </body>
+    # to avoid unconstrained content that triggers mobile zoom-out
+    insert_before = "</div>\n</td></tr>\n</table>"
+    idx = lower.rfind(insert_before)
+    if idx != -1:
+        return html[:idx] + footer + html[idx:]
     idx = lower.rfind("</body>")
     if idx != -1:
         return html[:idx] + footer + html[idx:]

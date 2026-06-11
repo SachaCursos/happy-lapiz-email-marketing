@@ -528,7 +528,7 @@ function blockHtml(block: Block): string {
 
     case "text": {
       const ff = (p.font_family as string) || "'Helvetica Neue', Arial, sans-serif";
-      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;font-family:${ff};">
+      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;font-family:${ff};word-break:break-word;overflow-wrap:break-word;">
   ${p.content}
 </div>`;
     }
@@ -652,6 +652,7 @@ export function blocksToHtml(blocks: Block[]): string {
 body { margin:0; padding:0; background:#ffffff; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
 table, td { border-collapse:collapse; mso-table-lspace:0; mso-table-rspace:0; }
 img { border:0; line-height:100%; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; display:block; max-width:100%; }
+a { word-break:break-word; overflow-wrap:break-word; }
 @media only screen and (max-width:600px) {
   .email-container { width:100% !important; max-width:100% !important; }
   .email-body td { padding-left:0 !important; padding-right:0 !important; }
