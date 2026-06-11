@@ -595,8 +595,50 @@ function FieldsEditor({ fields, onChange }: { fields: FormField[]; onChange: (f:
 
   const existingKeys = new Set(fields.map((f) => f.key));
 
+  // Quick-add state
+  const [quickLabel, setQuickLabel] = useState("");
+  const [quickType, setQuickType] = useState<FormField["type"]>("text");
+
+  function quickAdd() {
+    const label = quickLabel.trim();
+    if (!label) return;
+    const key = label.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || `campo_${fields.length + 1}`;
+    const uniqueKey = existingKeys.has(key) ? `${key}_${fields.length + 1}` : key;
+    onChange([...fields, { key: uniqueKey, label, type: quickType, required: false, placeholder: "" }]);
+    setQuickLabel("");
+  }
+
   return (
     <div className="space-y-3">
+      {/* Quick-add new field */}
+      <div className="bg-white border-2 border-dashed border-brand-300 rounded-xl p-3">
+        <p className="text-xs font-semibold text-gray-500 mb-2">Nuevo campo personalizado</p>
+        <div className="flex gap-2">
+          <input
+            value={quickLabel}
+            onChange={(e) => setQuickLabel(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); quickAdd(); } }}
+            placeholder="Ej: ¿Cuál es su apodo?"
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <select
+            value={quickType}
+            onChange={(e) => setQuickType(e.target.value as FormField["type"])}
+            className="border border-gray-300 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <button
+            type="button"
+            onClick={quickAdd}
+            disabled={!quickLabel.trim()}
+            className="px-3 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-40 transition-colors flex items-center gap-1"
+          >
+            <Plus size={14} /> Agregar
+          </button>
+        </div>
+      </div>
+
       {/* Suggested presets */}
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
         <p className="text-xs font-semibold text-amber-700 mb-2.5">✨ Campos sugeridos para Happy Lápiz</p>
