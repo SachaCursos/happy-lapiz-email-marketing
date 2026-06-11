@@ -4,9 +4,9 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronUp, ChevronDown, Trash2, Plus, Eye, Layout, Code,
   Star, X, Monitor, Smartphone, Search, Link as LinkIcon,
-  AlignLeft,
+  AlignLeft, Send,
 } from "lucide-react";
-import { shopifyApi, ShopifyProduct } from "@/lib/api";
+import { shopifyApi, ShopifyProduct, api } from "@/lib/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type BlockType = "header" | "text" | "image" | "button" | "product" | "coupon" | "divider" | "spacer";
@@ -1146,6 +1146,7 @@ interface Props {
   initialSubject?: string;
   initialPreviewText?: string;
   initialHtmlOverride?: string | null;
+  templateId?: number;
   onSave: (data: TemplateEditorSaveData) => void;
   saving?: boolean;
   saved?: boolean;
@@ -1159,6 +1160,7 @@ export function TemplateBlockEditor({
   initialSubject = "",
   initialPreviewText = "",
   initialHtmlOverride = null,
+  templateId,
   onSave,
   saving = false,
   saved = false,
@@ -1169,6 +1171,10 @@ export function TemplateBlockEditor({
   const [name, setName] = useState(initialName);
   const [subject, setSubject] = useState(initialSubject);
   const [previewText, setPreviewText] = useState(initialPreviewText);
+  const [sendTestOpen, setSendTestOpen] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; cartFound?: boolean; checkoutUrl?: string } | null>(null);
   const [tab, setTab] = useState<"editor" | "preview" | "html" | "plain">(
     initialMode === "plain" ? "plain" : initialHtmlOverride ? "editor" : "editor"
   );
@@ -1306,12 +1312,101 @@ export function TemplateBlockEditor({
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-brand-500 hidden xl:block" />
           <div className="ml-auto flex items-center gap-2">
             {saved && <span className="text-sm text-green-600 font-medium">✓ Guardado</span>}
+            {templateId && (
+              <button onClick={() => { setSendTestOpen(true); setTestResult(null); }}
+                className="px-3 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5 transition-colors">
+                <Send size={13} /> Enviar prueba
+              </button>
+            )}
             <button onClick={handleSave} disabled={saving || !name || !subject}
               className="px-5 py-2 bg-brand-600 text-white rounded-lg text-sm font-semibold hover:bg-brand-700 disabled:opacity-60 transition-colors">
               {saving ? "Guardando..." : "Guardar"}
             </button>
           </div>
         </div>
+
+        {/* Send-test modal */}
+        {sendTestOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-bold text-gray-900 text-base">Enviar email de prueba</h2>
+                <button onClick={() => setSendTestOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+              </div>
+
+              <div className="space-y-4 text-sm text-gray-600 mb-5">
+                <p>
+                  Se enviará la plantilla renderizada con datos reales del carrito abandonado de ese email (si existe).
+                  Así podés verificar el link de checkout, el unsubscribe y todas las variables.
+                </p>
+                <div className="bg-gray-50 rounded-xl p-3 text-xs space-y-1 font-mono text-gray-500">
+                  <div><span className="text-brand-600">{"{{ first_name }}"}</span> → nombre del contacto</div>
+                  <div><span className="text-brand-600">{"{{ event.extra.checkout_url }}"}</span> → link del carrito real</div>
+                  <div><span className="text-brand-600">{"{% unsubscribe %}"}</span> → link de baja real</div>
+                  <div><span className="text-brand-600">{"{{ coupon_code }}"}</span> → "CODIGO-PRUEBA"</div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Email destinatario</label>
+                  <input
+                    type="email"
+                    value={testEmail}
+                    onChange={(e) => setTestEmail(e.target.value)}
+                    placeholder="tucorreo@ejemplo.com"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Si este email dejó un carrito abandonado, se usarán sus datos reales.</p>
+                </div>
+
+                {testResult && (
+                  <div className={`rounded-xl p-3 text-sm ${testResult.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                    <p className="font-semibold">{testResult.msg}</p>
+                    {testResult.ok && (
+                      <div className="mt-2 text-xs space-y-1">
+                        <p>{testResult.cartFound ? "✅ Carrito encontrado — variables reales usadas" : "⚠️ Sin carrito — variables de ejemplo usadas"}</p>
+                        {testResult.checkoutUrl && (
+                          <p>🔗 Checkout URL: <a href={testResult.checkoutUrl} target="_blank" rel="noopener noreferrer" className="underline break-all">{testResult.checkoutUrl}</a></p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  onClick={async () => {
+                    if (!testEmail.trim()) return;
+                    setTestSending(true);
+                    setTestResult(null);
+                    try {
+                      const res = await api.post(`/templates/${templateId}/send-test`, {
+                        to_email: testEmail.trim(),
+                        subject: subject ? `[PRUEBA] ${subject}` : undefined,
+                      });
+                      setTestResult({
+                        ok: true,
+                        msg: `✓ Email enviado a ${testEmail}`,
+                        cartFound: res.data.cart_data_found,
+                        checkoutUrl: res.data.checkout_url_used,
+                      });
+                    } catch (e: unknown) {
+                      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Error al enviar";
+                      setTestResult({ ok: false, msg });
+                    } finally {
+                      setTestSending(false);
+                    }
+                  }}
+                  disabled={testSending || !testEmail.trim()}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-brand-600 text-white rounded-xl text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 transition-colors"
+                >
+                  <Send size={14} />
+                  {testSending ? "Enviando..." : "Enviar ahora"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 3-panel */}
         <div className="flex flex-1 overflow-hidden">

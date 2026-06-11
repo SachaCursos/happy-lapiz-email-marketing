@@ -112,6 +112,7 @@ export default function EditTemplatePage() {
             initialName={tpl.name}
             initialSubject={tpl.subject_default}
             initialPreviewText={tpl.preview_text ?? ""}
+            templateId={tplId}
             onSave={(data) => mutation.mutate(data)}
             saving={mutation.isPending}
             saved={saved}
