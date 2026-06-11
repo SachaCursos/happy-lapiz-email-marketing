@@ -532,8 +532,48 @@ function blockHtml(block: Block): string {
   }
 }
 
+// Renders 2–3 consecutive product blocks as a multi-column email row
+function productRowHtml(products: Block[]): string {
+  const n = products.length;
+  const colPct = n === 2 ? "50%" : "33.333%";
+  const bg = (products[0].props.bg_color as string) || "#ffffff";
+  const cols = products.map((b) => {
+    const p = b.props;
+    return `<td width="${colPct}" valign="top" style="padding:16px 12px;text-align:center;vertical-align:top;">
+  ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" width="160" style="display:block;margin:0 auto 12px;max-width:100%;border-radius:6px;" /></a>` : ""}
+  <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#111;font-family:-apple-system,sans-serif;text-align:center;">${p.title}</p>
+  ${priceHtml(p.price as string, p.compare_at_price as string)}
+  <a href="${p.url}" style="display:inline-block;margin-top:8px;background:${p.button_color};color:#ffffff;font-size:13px;font-weight:600;padding:8px 20px;border-radius:6px;text-decoration:none;font-family:-apple-system,sans-serif;">${p.button_text}</a>
+</td>`;
+  }).join("\n");
+  return `<div style="background:${bg};padding:8px 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+${cols}
+  </tr></table>
+</div>`;
+}
+
 export function blocksToHtml(blocks: Block[]): string {
   if (!blocks.length) return "";
+
+  // Group consecutive product blocks (max 3 per row) for multi-column layout
+  const groups: Array<Block | Block[]> = [];
+  for (const block of blocks) {
+    const last = groups[groups.length - 1];
+    if (block.type === "product" && Array.isArray(last) && last.length < 3) {
+      last.push(block);
+    } else if (block.type === "product") {
+      groups.push([block]);
+    } else {
+      groups.push(block);
+    }
+  }
+
+  const bodyHtml = groups.map((g) => {
+    if (Array.isArray(g)) return g.length === 1 ? blockHtml(g[0]) : productRowHtml(g);
+    return blockHtml(g);
+  }).join("\n");
+
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -545,7 +585,7 @@ export function blocksToHtml(blocks: Block[]): string {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr><td align="center" style="padding:24px 16px;">
 <div style="max-width:600px;width:100%;background:#ffffff;overflow:hidden;">
-${blocks.map(blockHtml).join("\n")}
+${bodyHtml}
 </div>
 </td></tr>
 </table>
@@ -590,7 +630,7 @@ export function parseJsonBlocks(raw: unknown): Block[] {
 }
 
 // ── Canvas block visual preview ────────────────────────────────────────────────
-function BlockPreview({ block }: { block: Block }) {
+function BlockPreview({ block, compact = false }: { block: Block; compact?: boolean }) {
   const p = block.props;
   const [imgError, setImgError] = useState(false);
 
@@ -635,6 +675,19 @@ function BlockPreview({ block }: { block: Block }) {
       );
     }
     case "product":
+      // compact = vertical card (used when multiple products share a row)
+      if (compact) {
+        return (
+          <div style={{ background: p.bg_color as string, padding: "12px 8px", textAlign: "center", height: "100%" }}>
+            {p.image_url
+              ? <img src={p.image_url as string} alt="" style={{ width: "100%", maxHeight: 110, objectFit: "cover", borderRadius: 6, display: "block", margin: "0 auto 8px" }} />
+              : <div style={{ width: "100%", height: 90, background: "#f3f4f6", borderRadius: 6, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af", fontSize: 10 }}>Imagen</div>}
+            <p style={{ margin: "0 0 4px", fontWeight: 700, fontSize: 12, lineHeight: 1.3 }}>{p.title as string}</p>
+            <p style={{ margin: "0 0 8px", fontWeight: 800, fontSize: 13, color: "#111" }}>{p.price as string}</p>
+            <span style={{ background: p.button_color as string, color: "#fff", padding: "4px 12px", borderRadius: 5, fontSize: 10, fontWeight: 600 }}>{p.button_text as string}</span>
+          </div>
+        );
+      }
       return (
         <div style={{ background: p.bg_color as string, padding: "14px 24px", display: "flex", gap: 14, alignItems: "flex-start" }}>
           {p.image_url
@@ -1278,37 +1331,64 @@ export function TemplateBlockEditor({
                       <p className="text-xs mt-1 opacity-70">Haz clic en cualquier bloque para empezar</p>
                     </div>
                     )
-                  ) : (
-                    blocks.map((block, i) => (
-                      <div key={block.id} onClick={() => setSelectedId(block.id)}
-                        className={`relative group cursor-pointer transition-all ${
-                          selectedId === block.id
-                            ? "ring-2 ring-brand-500 ring-inset"
-                            : "hover:ring-2 hover:ring-blue-200 hover:ring-inset"
-                        }`}>
-                        <BlockPreview block={block} />
-                        <div className={`absolute top-1 right-1 flex gap-1 z-10 ${selectedId === block.id ? "flex" : "hidden group-hover:flex"}`}>
-                          <button onClick={(e) => { e.stopPropagation(); move(block.id, "up"); }} disabled={i === 0}
-                            className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center">
-                            <ChevronUp size={11} />
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); move(block.id, "down"); }} disabled={i === blocks.length - 1}
-                            className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center">
-                            <ChevronDown size={11} />
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); remove(block.id); }}
-                            className="w-6 h-6 bg-white border border-red-200 rounded shadow text-red-400 hover:bg-red-50 flex items-center justify-center">
-                            <Trash2 size={11} />
-                          </button>
-                        </div>
-                        {selectedId === block.id && (
-                          <div className="absolute top-1 left-1 text-xs bg-brand-600 text-white px-2 py-0.5 rounded font-medium z-10 pointer-events-none">
-                            {PALETTE.find((x) => x.type === block.type)?.label}
+                  ) : (() => {
+                    // Group consecutive product blocks into rows (max 3 per row)
+                    type CanvasGroup =
+                      | { kind: "single"; block: Block; idx: number }
+                      | { kind: "product-row"; items: Array<{ block: Block; idx: number }> };
+                    const canvasGroups: CanvasGroup[] = [];
+                    blocks.forEach((block, idx) => {
+                      if (block.type === "product") {
+                        const last = canvasGroups[canvasGroups.length - 1];
+                        if (last?.kind === "product-row" && last.items.length < 3) {
+                          last.items.push({ block, idx });
+                        } else {
+                          canvasGroups.push({ kind: "product-row", items: [{ block, idx }] });
+                        }
+                      } else {
+                        canvasGroups.push({ kind: "single", block, idx });
+                      }
+                    });
+
+                    return canvasGroups.map((group) => {
+                      if (group.kind === "single") {
+                        const { block, idx } = group;
+                        return (
+                          <div key={block.id} onClick={() => setSelectedId(block.id)}
+                            className={`relative group cursor-pointer transition-all ${selectedId === block.id ? "ring-2 ring-brand-500 ring-inset" : "hover:ring-2 hover:ring-blue-200 hover:ring-inset"}`}>
+                            <BlockPreview block={block} />
+                            <div className={`absolute top-1 right-1 flex gap-1 z-10 ${selectedId === block.id ? "flex" : "hidden group-hover:flex"}`}>
+                              <button onClick={(e) => { e.stopPropagation(); move(block.id, "up"); }} disabled={idx === 0} className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronUp size={11} /></button>
+                              <button onClick={(e) => { e.stopPropagation(); move(block.id, "down"); }} disabled={idx === blocks.length - 1} className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronDown size={11} /></button>
+                              <button onClick={(e) => { e.stopPropagation(); remove(block.id); }} className="w-6 h-6 bg-white border border-red-200 rounded shadow text-red-400 hover:bg-red-50 flex items-center justify-center"><Trash2 size={11} /></button>
+                            </div>
+                            {selectedId === block.id && <div className="absolute top-1 left-1 text-xs bg-brand-600 text-white px-2 py-0.5 rounded font-medium z-10 pointer-events-none">{PALETTE.find((x) => x.type === block.type)?.label}</div>}
                           </div>
-                        )}
-                      </div>
-                    ))
-                  )}
+                        );
+                      }
+                      // product-row: flex grid
+                      const rowBg = group.items[0].block.props.bg_color as string || "#ffffff";
+                      return (
+                        <div key={group.items.map((x) => x.block.id).join("-")}
+                          style={{ background: rowBg, display: "flex" }}>
+                          {group.items.map(({ block, idx }) => (
+                            <div key={block.id} onClick={() => setSelectedId(block.id)}
+                              style={{ flex: 1 }}
+                              className={`relative group cursor-pointer transition-all ${selectedId === block.id ? "ring-2 ring-brand-500 ring-inset" : "hover:ring-2 hover:ring-blue-200 hover:ring-inset"}`}>
+                              <BlockPreview block={block} compact />
+                              <div className={`absolute top-1 right-1 flex gap-1 z-10 ${selectedId === block.id ? "flex" : "hidden group-hover:flex"}`}>
+                                <button onClick={(e) => { e.stopPropagation(); move(block.id, "up"); }} disabled={idx === 0} className="w-5 h-5 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronUp size={9} /></button>
+                                <button onClick={(e) => { e.stopPropagation(); move(block.id, "down"); }} disabled={idx === blocks.length - 1} className="w-5 h-5 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronDown size={9} /></button>
+                                <button onClick={(e) => { e.stopPropagation(); remove(block.id); }} className="w-5 h-5 bg-white border border-red-200 rounded shadow text-red-400 hover:bg-red-50 flex items-center justify-center"><Trash2 size={9} /></button>
+                              </div>
+                              {selectedId === block.id && <div className="absolute top-1 left-1 text-xs bg-brand-600 text-white px-1.5 py-0.5 rounded font-medium z-10 pointer-events-none">Producto</div>}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    });
+                  })()
+                  }
                 </div>
               </div>
             )}
