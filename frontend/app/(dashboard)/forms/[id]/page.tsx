@@ -567,10 +567,17 @@ const PRESET_FIELDS: FormField[] = [
 
 // ── Custom fields editor ──────────────────────────────────────────────────────
 function FieldsEditor({ fields, onChange }: { fields: FormField[]; onChange: (f: FormField[]) => void }) {
+  // Raw textarea value per field index — lets the user type spaces freely;
+  // only converted to the options array on blur (trim happens then, not on every keystroke).
+  const [rawOptions, setRawOptions] = useState<Record<number, string>>({});
+
   function update(i: number, patch: Partial<FormField>) {
     onChange(fields.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
   }
-  function remove(i: number) { onChange(fields.filter((_, idx) => idx !== i)); }
+  function remove(i: number) {
+    setRawOptions((prev) => { const next = { ...prev }; delete next[i]; return next; });
+    onChange(fields.filter((_, idx) => idx !== i));
+  }
   function move(i: number, dir: -1 | 1) {
     const next = [...fields];
     const j = i + dir;
@@ -663,7 +670,18 @@ function FieldsEditor({ fields, onChange }: { fields: FormField[]; onChange: (f:
             {field.type === "select" && (
               <div className="col-span-3">
                 <label className="block text-xs text-gray-500 mb-1">Opciones (una por línea)</label>
-                <textarea value={(field.options ?? []).join("\n")} onChange={(e) => update(i, { options: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })} rows={3} className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-brand-500" placeholder={"Opción 1\nOpción 2"} />
+                <textarea
+                  value={rawOptions[i] !== undefined ? rawOptions[i] : (field.options ?? []).join("\n")}
+                  onChange={(e) => setRawOptions((prev) => ({ ...prev, [i]: e.target.value }))}
+                  onBlur={(e) => {
+                    const opts = e.target.value.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+                    update(i, { options: opts });
+                    setRawOptions((prev) => { const next = { ...prev }; delete next[i]; return next; });
+                  }}
+                  rows={3}
+                  className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  placeholder={"Opción 1\nOpción 2"}
+                />
               </div>
             )}
           </div>
