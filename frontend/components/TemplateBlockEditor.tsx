@@ -1196,6 +1196,15 @@ export function TemplateBlockEditor({
   const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
   const [convertMsg, setConvertMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
+  // When the editor tab is active and there's a pending HTML override with no blocks,
+  // auto-convert so the user lands directly in the editable canvas instead of a dead screen.
+  useEffect(() => {
+    if (tab === "editor" && htmlOverride && blocks.length === 0) {
+      handleConvertToBlocks();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
   const isPlainMode = tab === "plain";
 
@@ -1229,6 +1238,8 @@ export function TemplateBlockEditor({
 
   function handleConvertToBlocks() {
     const source = htmlOverride ?? "";
+    // Always switch to editor tab, even on failure
+    setTab("editor");
     if (!source.trim()) return;
     const parsed = htmlToBlocks(source);
     if (parsed.length === 0) {
@@ -1239,8 +1250,7 @@ export function TemplateBlockEditor({
     setBlocks(parsed);
     setHtmlOverride(null);
     setSelectedId(null);
-    setTab("editor");
-    setConvertMsg({ type: "ok", text: `${parsed.length} bloques importados. Revisa el resultado y ajusta lo que necesites.` });
+    setConvertMsg({ type: "ok", text: `${parsed.length} bloques importados. Revisa y guarda.` });
     setTimeout(() => setConvertMsg(null), 6000);
   }
 
@@ -1473,7 +1483,15 @@ export function TemplateBlockEditor({
             {/* Tab bar */}
             <div className="flex items-center border-b border-gray-200 bg-white px-1 shrink-0">
               {(["editor", "preview", "html", "plain"] as const).map((t) => (
-                <button key={t} onClick={() => setTab(t)}
+                <button key={t}
+                  onClick={() => {
+                    // Switching to editor with a pending HTML override → auto-convert
+                    if (t === "editor" && htmlOverride) {
+                      handleConvertToBlocks();
+                    } else {
+                      setTab(t);
+                    }
+                  }}
                   className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${t === tab ? "border-brand-600 text-brand-700" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
                   {t === "editor" && <><Layout size={13} /> Editar</>}
                   {t === "preview" && <><Eye size={13} /> Preview</>}
@@ -1625,21 +1643,22 @@ export function TemplateBlockEditor({
                         {htmlOverride !== null ? "HTML personalizado ✎" : "HTML generado"}
                       </span>
                       {htmlOverride !== null && (
-                        blocks.length === 0 ? (
+                        <>
                           <button
                             onClick={handleConvertToBlocks}
                             className="text-xs text-green-400 hover:text-green-200 transition-colors border border-green-700 rounded px-2 py-0.5 font-semibold"
                           >
-                            ✨ Convertir a bloques editables
+                            ✨ Convertir a bloques
                           </button>
-                        ) : (
-                          <button
-                            onClick={() => setHtmlOverride(null)}
-                            className="text-xs text-amber-400 hover:text-amber-200 transition-colors border border-amber-700 rounded px-2 py-0.5"
-                          >
-                            Regenerar desde bloques
-                          </button>
-                        )
+                          {blocks.length > 0 && (
+                            <button
+                              onClick={() => setHtmlOverride(null)}
+                              className="text-xs text-amber-400 hover:text-amber-200 transition-colors border border-amber-700 rounded px-2 py-0.5"
+                            >
+                              ↩ Revertir a bloques
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                     <button onClick={() => navigator.clipboard.writeText(previewHtml)}
