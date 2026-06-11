@@ -212,8 +212,6 @@ export function htmlToBlocks(htmlStr: string): Block[] {
 
         // ── td.kl-text → Text or Button ──────────────────────────────────
         if (/\bkl-text\b/.test(elCls)) {
-          // Skip unsubscribe footer
-          if (/unsubscribe|baja|cancelar suscripci/i.test(text)) continue;
 
           // If block contains only a single anchor with short text → Button
           const nonSpaceText = text.replace(/\s| /g, "");
@@ -247,10 +245,37 @@ export function htmlToBlocks(htmlStr: string): Block[] {
             const cellLinks = Array.from(cell.querySelectorAll("a[href]"));
             const cellText = (cell.textContent || "").trim();
             const priceMatch = cellText.match(/\$\s?[\d.,]+/);
-            const titleLink = cellLinks.find((a) => (a.textContent || "").trim().length > 5);
             const cellImg = cellImgs[0];
-            const lnk = titleLink?.getAttribute("href") || cellImg?.closest("a")?.getAttribute("href") || "";
-            const title = titleLink?.textContent?.trim() || cellText.slice(0, 60);
+
+            // Title: Klaviyo puts it in a bold <td>, NOT inside an <a> tag
+            const titleEl =
+              cell.querySelector("td[style*='font-weight:bold'], td[style*='font-weight: bold']") ||
+              cell.querySelector(".kl-product-subblock td");
+            // Exclude price cells from title candidate
+            const titleRaw = titleEl?.textContent?.trim() || "";
+            const title = titleRaw && !/^\$/.test(titleRaw) ? titleRaw : cellText.slice(0, 80);
+
+            // URL: prefer image link, fallback to any link
+            const lnk = cellImg?.closest("a")?.getAttribute("href") || cellLinks[0]?.getAttribute("href") || "";
+
+            // Button text: the shortest non-empty link text (the "Comprar" link)
+            const btnLink = cellLinks.find((a) => {
+              const t = (a.textContent || "").trim();
+              return t.length > 0 && t.length < 30 && !/^https?/i.test(t);
+            });
+            const buttonText = btnLink?.textContent?.trim() || "Comprar";
+
+            // Button color: look for bgcolor attribute (Klaviyo uses it on the button td)
+            const btnColorEl = cell.querySelector("[bgcolor]");
+            const btnColorAttr = btnColorEl ? attr(btnColorEl, "bgcolor") : "";
+            // Fallback: parse background: #xxx from style attribute
+            const btnColorStyle = !btnColorAttr ? (() => {
+              const bgEl = cell.querySelector("[style*='background:#'], [style*='background: #']");
+              const m = bgEl ? attr(bgEl, "style").match(/background(?:-color)?:\s*(#[0-9a-fA-F]{3,8})/) : null;
+              return m ? m[1] : "";
+            })() : "";
+            const buttonColor = btnColorAttr || btnColorStyle || "#111111";
+
             if (blocks.some((b) => b.type === "product" && b.props.url === lnk && lnk)) continue;
             if (cellImg || priceMatch) {
               blocks.push({
@@ -260,6 +285,8 @@ export function htmlToBlocks(htmlStr: string): Block[] {
                   price: priceMatch?.[0] || "",
                   image_url: cellImg ? attr(cellImg, "src") : "",
                   url: lnk,
+                  button_text: buttonText,
+                  button_color: buttonColor,
                   bg_color: bg,
                 },
               });
@@ -537,13 +564,17 @@ function productRowHtml(products: Block[]): string {
   const n = products.length;
   const colPct = n === 2 ? "50%" : "33.333%";
   const bg = (products[0].props.bg_color as string) || "#ffffff";
+  const font = "'Helvetica Neue',Arial,sans-serif";
   const cols = products.map((b) => {
     const p = b.props;
-    return `<td width="${colPct}" valign="top" style="padding:16px 12px;text-align:center;vertical-align:top;">
-  ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" width="160" style="display:block;margin:0 auto 12px;max-width:100%;border-radius:6px;" /></a>` : ""}
-  <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#111;font-family:-apple-system,sans-serif;text-align:center;">${p.title}</p>
-  ${priceHtml(p.price as string, p.compare_at_price as string)}
-  <a href="${p.url}" style="display:inline-block;margin-top:8px;background:${p.button_color};color:#ffffff;font-size:13px;font-weight:600;padding:8px 20px;border-radius:6px;text-decoration:none;font-family:-apple-system,sans-serif;">${p.button_text}</a>
+    const priceInline = p.compare_at_price
+      ? `<p style="margin:0 0 5px;text-align:center;"><span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:${font};margin-right:6px;">${p.compare_at_price}</span><span style="font-size:14px;font-weight:bold;color:#e53e3e;font-family:${font};">${p.price}</span></p>`
+      : `<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:#222222;font-family:${font};text-align:center;">${p.price}</p>`;
+    return `<td width="${colPct}" valign="top" style="padding:9px 9px;text-align:center;vertical-align:top;">
+  ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" /></a>` : ""}
+  <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:${font};text-align:center;">${p.title}</p>
+  ${priceInline}
+  <a href="${p.url}" style="display:inline-block;margin-top:9px;background:${p.button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:${font};">${p.button_text}</a>
 </td>`;
   }).join("\n");
   return `<div style="background:${bg};padding:8px 0;">
