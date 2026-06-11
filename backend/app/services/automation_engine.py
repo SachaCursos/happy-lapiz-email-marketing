@@ -10,6 +10,7 @@ Two-phase processing:
 """
 import json
 import logging
+import random
 import threading
 import time
 from datetime import datetime, timedelta
@@ -125,6 +126,22 @@ def _passes_condition(condition: str | None, enrollment: AutomationEnrollment, s
     return True
 
 
+def _pick_variant(step: dict) -> tuple[dict, str | None]:
+    """If the step has A/B variants, randomly pick one by weight. Returns (effective_step, variant_label)."""
+    variants = step.get("variants")
+    if not variants or len(variants) < 2:
+        return step, None
+    total_weight = sum(float(v.get("weight", 1)) for v in variants)
+    rand = random.uniform(0, total_weight)
+    cumulative = 0.0
+    for v in variants:
+        cumulative += float(v.get("weight", 1))
+        if rand <= cumulative:
+            return {**step, "template_id": v["template_id"], "subject": v["subject"]}, str(v["variant"])
+    last = variants[-1]
+    return {**step, "template_id": last["template_id"], "subject": last["subject"]}, str(last["variant"])
+
+
 def _send_email_step(
     session: Session,
     auto: Automation,
@@ -133,6 +150,7 @@ def _send_email_step(
     step: dict,
     step_number: int,
     extra_vars: dict | None = None,
+    variant: str | None = None,
 ) -> None:
     """Send the email for a specific step and record the run."""
     tpl = session.get(Template, int(step["template_id"]))
@@ -148,8 +166,18 @@ def _send_email_step(
         step_number=step_number,
         triggered_at=datetime.utcnow(),
         status="failed",
+        variant_sent=variant,
     )
     try:
+        # Generate dynamic coupon if automation has one configured
+        coupon_code: str | None = None
+        if auto.coupon_campaign_id:
+            try:
+                from app.routers.forms import _generate_dynamic_coupon
+                coupon_code = _generate_dynamic_coupon(session, auto.coupon_campaign_id, contact.email)
+            except Exception as exc:
+                logger.warning("Coupon generation failed for %s: %s", contact.email, exc)
+
         nombre = _fmt_nombre(contact.name, contact.email)
         first_name = nombre.split()[0] if contact.name else ""
         vars_ = {
@@ -161,6 +189,7 @@ def _send_email_step(
             "ticket_medio": contact.ticket_medio or 0,
             "total_spent": contact.total_spent or 0,
             "shipping_city": contact.shipping_city or "",
+            "coupon_code": coupon_code or "",
             **(extra_vars or {}),
         }
         raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
@@ -179,7 +208,7 @@ def _send_email_step(
         run.status = "sent"
         run.resend_id = resend_id
         run.executed_at = datetime.utcnow()
-        logger.info("Automation %d step %d sent to %s", auto.id, step_number, contact.email)
+        logger.info("Automation %d step %d variant=%s sent to %s", auto.id, step_number, variant or "-", contact.email)
     except Exception as exc:
         run.error = str(exc)[:500]
         run.executed_at = datetime.utcnow()
@@ -245,7 +274,8 @@ def _process_enrollments(session: Session) -> None:
                 )
 
             extra_vars = json.loads(enrollment.extra_vars_json or "{}")
-            _send_email_step(session, auto, contact, enrollment.trigger_key, step, enrollment.next_step, extra_vars)
+            effective_step, variant_label = _pick_variant(step)
+            _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
 
         # Advance to next step
         next_step_num = enrollment.next_step + 1

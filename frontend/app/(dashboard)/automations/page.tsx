@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi } from "@/lib/api";
-import { Automation, AutomationStats, AutomationPending, AutomationStep, Template } from "@/lib/types";
+import { Automation, AutomationStats, AutomationVariantStat, AutomationPending, AutomationStep, Template } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch } from "lucide-react";
+import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch, FlaskConical } from "lucide-react";
 import Link from "next/link";
 
 const TRIGGER_LABELS: Record<string, { label: string; description: string; color: string }> = {
@@ -364,6 +364,26 @@ function AutomationRow({ auto, templates }: { auto: Automation; templates: Templ
           </button>
         </div>
       </div>
+
+      {stats?.variants && stats.variants.length > 0 && (
+        <div className="border-t border-gray-100 px-5 py-3 bg-purple-50">
+          <p className="text-xs font-semibold text-purple-700 flex items-center gap-1.5 mb-2">
+            <FlaskConical size={11} /> Resultados A/B
+          </p>
+          <div className="flex gap-4 flex-wrap">
+            {stats.variants.map((v: AutomationVariantStat) => (
+              <div key={v.variant} className="flex items-center gap-3 bg-white border border-purple-200 rounded-lg px-3 py-2 text-xs">
+                <span className="font-bold text-purple-700 w-4">
+                  {v.variant}
+                </span>
+                <span className="text-gray-600">{v.sent} env.</span>
+                <span className="text-blue-600">{v.open_rate}% abr.</span>
+                <span className="text-green-600">{v.click_rate}% clic</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {editing && (
         <EditPanel

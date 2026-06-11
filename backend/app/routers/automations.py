@@ -143,6 +143,31 @@ def automation_stats(
     """), {"aid": auto_id}).fetchone()
 
     orders, revenue = conv
+
+    variant_rows = session.execute(text("""
+        SELECT
+            variant_sent,
+            COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
+            COUNT(*) FILTER (WHERE opened_at IS NOT NULL)     AS opened,
+            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
+        FROM automation_runs
+        WHERE automation_id = :aid AND variant_sent IS NOT NULL
+        GROUP BY variant_sent
+        ORDER BY variant_sent
+    """), {"aid": auto_id}).fetchall()
+
+    variants_stats = [
+        {
+            "variant":    row[0],
+            "sent":       int(row[1] or 0),
+            "opened":     int(row[2] or 0),
+            "clicked":    int(row[3] or 0),
+            "open_rate":  round(int(row[2] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+            "click_rate": round(int(row[3] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+        }
+        for row in variant_rows
+    ]
+
     return {
         "total":      int(total or 0),
         "sent":       int(sent),
@@ -154,6 +179,7 @@ def automation_stats(
         "orders":     int(orders or 0),
         "revenue":    float(revenue or 0),
         "last_run":   last_run,
+        "variants":   variants_stats,
     }
 
 

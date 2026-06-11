@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formsApi, api } from "@/lib/api";
 import { SignupForm } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { Plus, MousePointerClick, ExternalLink, Trash2, ToggleLeft, ToggleRight, Gift, Copy, Check, Calendar } from "lucide-react";
+import { Plus, MousePointerClick, ExternalLink, Trash2, ToggleLeft, ToggleRight, Gift, Copy, Check, Calendar, Settings2 } from "lucide-react";
 import Link from "next/link";
 
 // ─── Gift recipients section ──────────────────────────────────────────────────
@@ -253,8 +253,8 @@ export default function FormsPage() {
                 </div>
                 <p className="text-xs text-gray-400 shrink-0">{formatDate(f.created_at)}</p>
                 <div className="flex items-center gap-2 shrink-0">
-                  <Link href={`/forms/${f.id}`} className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Ver embed code">
-                    <ExternalLink size={14} />
+                  <Link href={`/forms/${f.id}`} className="p-2 rounded-lg border border-brand-200 text-brand-600 hover:bg-brand-50 transition-colors" title="Configurar diseño y ajustes">
+                    <Settings2 size={14} />
                   </Link>
                   <button onClick={() => toggleMutation.mutate(f)} disabled={toggleMutation.isPending} title={f.status === "active" ? "Pausar" : "Activar"} className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-50">
                     {f.status === "active" ? <ToggleRight size={16} className="text-green-500" /> : <ToggleLeft size={16} />}

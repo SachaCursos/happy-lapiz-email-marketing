@@ -25,6 +25,8 @@ def _run_migrations():
         "ALTER TABLE signupform ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
         "ALTER TABLE signupform ADD COLUMN IF NOT EXISTS coupon_automation_id INTEGER",
         "ALTER TABLE formsubmission ADD COLUMN IF NOT EXISTS coupon_code VARCHAR",
+        "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS variant_sent VARCHAR",
+        "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
     ]
     with Session(engine) as session:
         for sql in migrations:

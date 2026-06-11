@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
-import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff } from "lucide-react";
+import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X } from "lucide-react";
 import Link from "next/link";
 
 // ── Trigger definitions ────────────────────────────────────────────────────────
@@ -127,12 +127,118 @@ function TimerPicker({ label, hint, value, unit, units, onValueChange, onUnitCha
 }
 
 // ── Step card ────────────────────────────────────────────────────────────────
+const VARIANT_COLORS = [
+  { bg: "bg-purple-100", text: "text-purple-700", border: "border-purple-300" },
+  { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300" },
+  { bg: "bg-teal-100",   text: "text-teal-700",   border: "border-teal-300" },
+  { bg: "bg-pink-100",   text: "text-pink-700",   border: "border-pink-300" },
+];
+
+interface VariantState {
+  variant: string;       // "A", "B", "C", "D"
+  subject: string;
+  templateId: number | "";
+  weight: number;
+}
+
 interface StepState {
   delayValue: number;
   delayUnit: TimeUnit;
   templateId: number | "";
   subject: string;
   condition: string;
+  variants: VariantState[];  // empty = no A/B test
+}
+
+function VariantEditor({
+  variants,
+  templates,
+  onChange,
+}: {
+  variants: VariantState[];
+  templates: Template[];
+  onChange: (v: VariantState[]) => void;
+}) {
+  const totalWeight = variants.reduce((s, v) => s + v.weight, 0);
+
+  function addVariant() {
+    const labels = ["A", "B", "C", "D"];
+    const next = labels[variants.length] ?? String(variants.length + 1);
+    const even = Math.floor(100 / (variants.length + 1));
+    const updated = variants.map((v) => ({ ...v, weight: even }));
+    onChange([...updated, { variant: next, subject: "", templateId: "", weight: even }]);
+  }
+
+  function removeVariant(idx: number) {
+    if (variants.length <= 2) return;
+    const updated = variants.filter((_, i) => i !== idx);
+    const even = Math.floor(100 / updated.length);
+    onChange(updated.map((v) => ({ ...v, weight: even })));
+  }
+
+  function updateVariant(idx: number, patch: Partial<VariantState>) {
+    onChange(variants.map((v, i) => (i === idx ? { ...v, ...patch } : v)));
+  }
+
+  return (
+    <div className="space-y-3">
+      {variants.map((v, i) => {
+        const col = VARIANT_COLORS[i % VARIANT_COLORS.length];
+        return (
+          <div key={v.variant} className={`rounded-lg border ${col.border} bg-white p-3 space-y-2`}>
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${col.bg} ${col.text}`}>
+                Variante {v.variant}
+              </span>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500">Peso</label>
+                <input
+                  type="number" min={1} max={100} value={v.weight}
+                  onChange={(e) => updateVariant(i, { weight: Math.max(1, Number(e.target.value)) })}
+                  className="w-16 border border-gray-300 rounded px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <span className="text-xs text-gray-400">%</span>
+                {variants.length > 2 && (
+                  <button onClick={() => removeVariant(i)} className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+            <select
+              value={v.templateId}
+              onChange={(e) => updateVariant(i, { templateId: Number(e.target.value) || "" })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Seleccionar plantilla...</option>
+              {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <input
+              value={v.subject}
+              onChange={(e) => updateVariant(i, { subject: e.target.value })}
+              placeholder={`Asunto variante ${v.variant}...`}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+        );
+      })}
+
+      <div className="flex items-center justify-between">
+        {variants.length < 4 && (
+          <button
+            type="button"
+            onClick={addVariant}
+            className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1 font-medium"
+          >
+            <Plus size={12} /> Agregar variante
+          </button>
+        )}
+        <span className={`text-xs ml-auto font-medium ${Math.abs(totalWeight - 100) > 2 ? "text-red-500" : "text-gray-400"}`}>
+          Total: {totalWeight}% {Math.abs(totalWeight - 100) > 2 ? "(debe sumar 100)" : "✓"}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function StepCard({
@@ -155,6 +261,7 @@ function StepCard({
   onRemove: () => void;
 }) {
   const condOptions = EXIT_CONDITIONS[triggerType] ?? EXIT_CONDITIONS["_default"];
+  const abEnabled = step.variants.length >= 2;
 
   return (
     <div className="relative border border-gray-200 rounded-xl bg-white overflow-hidden">
@@ -171,12 +278,42 @@ function StepCard({
           <span className="text-sm font-semibold text-gray-700">
             {isFirst ? "Primer correo" : `Correo ${stepNum}`}
           </span>
+          {abEnabled && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium flex items-center gap-1">
+              <FlaskConical size={10} /> A/B
+            </span>
+          )}
         </div>
-        {total > 1 && (
-          <button onClick={onRemove} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-            <Trash2 size={14} />
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            title={abEnabled ? "Desactivar A/B test" : "Activar A/B test"}
+            onClick={() => {
+              if (abEnabled) {
+                // Disable: restore from variant A (or clear)
+                const a = step.variants[0];
+                onChange({ ...step, templateId: a?.templateId ?? "", subject: a?.subject ?? "", variants: [] });
+              } else {
+                // Enable: seed from current template/subject
+                onChange({
+                  ...step,
+                  variants: [
+                    { variant: "A", subject: step.subject, templateId: step.templateId, weight: 50 },
+                    { variant: "B", subject: "",           templateId: step.templateId, weight: 50 },
+                  ],
+                });
+              }
+            }}
+            className={`p-1.5 rounded-lg transition-colors ${abEnabled ? "bg-purple-100 text-purple-700 hover:bg-purple-200" : "text-gray-400 hover:text-purple-600 hover:bg-purple-50"}`}
+          >
+            <FlaskConical size={14} />
           </button>
-        )}
+          {total > 1 && (
+            <button onClick={onRemove} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="px-5 py-4 space-y-4">
@@ -230,23 +367,37 @@ function StepCard({
           </div>
         )}
 
-        {/* Template */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla de email *</label>
-          <select value={step.templateId} onChange={(e) => onChange({ ...step, templateId: Number(e.target.value) || "" })}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
-            <option value="">Seleccionar plantilla...</option>
-            {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        </div>
-
-        {/* Subject */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Asunto del email *</label>
-          <input value={step.subject} onChange={(e) => onChange({ ...step, subject: e.target.value })}
-            placeholder='ej. ¡Tu carrito te está esperando, {{ first_name }}!'
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-        </div>
+        {/* Template + Subject (or A/B variants) */}
+        {abEnabled ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+              <FlaskConical size={13} className="text-purple-500" />
+              Variantes A/B
+            </label>
+            <VariantEditor
+              variants={step.variants}
+              templates={templates}
+              onChange={(v) => onChange({ ...step, variants: v })}
+            />
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla de email *</label>
+              <select value={step.templateId} onChange={(e) => onChange({ ...step, templateId: Number(e.target.value) || "" })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
+                <option value="">Seleccionar plantilla...</option>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Asunto del email *</label>
+              <input value={step.subject} onChange={(e) => onChange({ ...step, subject: e.target.value })}
+                placeholder='ej. ¡Tu carrito te está esperando, {{ first_name }}!'
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -263,7 +414,7 @@ export default function NewAutomationPage() {
 
   // Steps
   const [steps, setSteps] = useState<StepState[]>([
-    { delayValue: 1, delayUnit: "horas", templateId: "", subject: "", condition: "not_recovered" },
+    { delayValue: 1, delayUnit: "horas", templateId: "", subject: "", condition: "not_recovered", variants: [] },
   ]);
 
   // Lookback (trigger-level config, only for event triggers)
@@ -300,7 +451,7 @@ export default function NewAutomationPage() {
     const defaultCondition = (EXIT_CONDITIONS[triggerType] ?? EXIT_CONDITIONS["_default"])[0].value;
     setSteps((prev) => [
       ...prev,
-      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", condition: defaultCondition },
+      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", condition: defaultCondition, variants: [] },
     ]);
   }
 
@@ -328,13 +479,28 @@ export default function NewAutomationPage() {
         };
       }
 
-      const stepsPayload: AutomationStep[] = steps.map((s, i) => ({
-        step: i + 1,
-        delay_hours: toHours(s.delayValue, s.delayUnit),
-        template_id: Number(s.templateId),
-        subject: s.subject,
-        condition: i === 0 ? null : (s.condition as AutomationStep["condition"]),
-      }));
+      const stepsPayload: AutomationStep[] = steps.map((s, i) => {
+        const base = {
+          step: i + 1,
+          delay_hours: toHours(s.delayValue, s.delayUnit),
+          condition: i === 0 ? null : (s.condition as AutomationStep["condition"]),
+        };
+        if (s.variants.length >= 2) {
+          return {
+            ...base,
+            variants: s.variants.map((v) => ({
+              variant: v.variant,
+              subject: v.subject,
+              template_id: Number(v.templateId),
+              weight: v.weight,
+            })),
+            // Legacy fallback from variant A
+            template_id: Number(s.variants[0].templateId),
+            subject: s.variants[0].subject,
+          };
+        }
+        return { ...base, template_id: Number(s.templateId), subject: s.subject };
+      });
 
       return automationsApi.create({
         name,
@@ -352,7 +518,12 @@ export default function NewAutomationPage() {
     },
   });
 
-  const isValid = name && steps.every((s) => s.templateId && s.subject);
+  const isValid = name && steps.every((s) => {
+    if (s.variants.length >= 2) {
+      return s.variants.every((v) => v.templateId && v.subject);
+    }
+    return s.templateId && s.subject;
+  });
 
   return (
     <div className="p-8 max-w-2xl">

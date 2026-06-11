@@ -225,12 +225,20 @@ export type AutomationTrigger =
   | "form_submitted";
 export type AutomationStatus = "active" | "paused";
 
+export interface AutomationVariant {
+  variant: string;      // "A", "B", "C", "D"
+  subject: string;
+  template_id: number;
+  weight: number;
+}
+
 export interface AutomationStep {
   step: number;
   delay_hours: number;
   template_id: number;
   subject: string;
   condition: "not_purchased" | "not_recovered" | "always" | null;
+  variants?: AutomationVariant[];
 }
 
 export interface Automation {
@@ -242,6 +250,7 @@ export interface Automation {
   template_id: number | null;
   subject: string | null;
   status: string;
+  coupon_campaign_id: number | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
@@ -274,6 +283,15 @@ export interface AutomationPending {
   contacts: AutomationPendingContact[];
 }
 
+export interface AutomationVariantStat {
+  variant: string;
+  sent: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
+}
+
 export interface AutomationStats {
   total: number;
   sent: number;
@@ -285,6 +303,7 @@ export interface AutomationStats {
   orders: number;
   revenue: number;
   last_run: string | null;
+  variants: AutomationVariantStat[];
 }
 
 export interface OverviewStats {

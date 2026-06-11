@@ -14,9 +14,11 @@ class Automation(SQLModel, table=True):
     # Legacy single-step fields (kept for backwards compat)
     template_id: Optional[int] = Field(default=None, foreign_key="templates.id")
     subject: Optional[str] = Field(default=None)
-    # Multi-step: list of {step, delay_hours, template_id, subject, condition}
+    # Multi-step: list of {step, delay_hours, template_id, subject, condition, variants?}
     steps: Optional[Any] = Field(default=None, sa_column=Column("steps", JSON))
     status: str = Field(default="active")
+    # Optional dynamic coupon campaign to attach to every email in this automation
+    coupon_campaign_id: Optional[int] = Field(default=None)
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -54,6 +56,7 @@ class AutomationRun(SQLModel, table=True):
     error: Optional[str] = None
     opened_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
+    variant_sent: Optional[str] = None  # A/B test variant label ("A", "B", etc.)
 
 
 class AutomationCreate(SQLModel):
@@ -65,6 +68,7 @@ class AutomationCreate(SQLModel):
     # Legacy single-step (kept for compat)
     template_id: Optional[int] = None
     subject: Optional[str] = None
+    coupon_campaign_id: Optional[int] = None
 
 
 class AutomationUpdate(SQLModel):
@@ -75,6 +79,7 @@ class AutomationUpdate(SQLModel):
     template_id: Optional[int] = None
     subject: Optional[str] = None
     status: Optional[str] = None
+    coupon_campaign_id: Optional[int] = None
 
 
 class AutomationRead(SQLModel):
@@ -86,6 +91,7 @@ class AutomationRead(SQLModel):
     template_id: Optional[int]
     subject: Optional[str]
     status: str
+    coupon_campaign_id: Optional[int]
     created_by: Optional[int]
     created_at: datetime
     updated_at: datetime
@@ -105,6 +111,7 @@ class AutomationRunRead(SQLModel):
     error: Optional[str]
     opened_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
+    variant_sent: Optional[str] = None
 
 
 class AutomationEnrollmentRead(SQLModel):
