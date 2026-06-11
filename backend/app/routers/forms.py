@@ -85,6 +85,28 @@ def delete_form(
     session.commit()
 
 
+@router.get("/{form_id}/ab-stats")
+def form_ab_stats(
+    form_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    rows = session.execute(text("""
+        SELECT ab_variant, COUNT(*) as total
+        FROM form_submissions
+        WHERE form_id = :fid AND ab_variant IS NOT NULL
+        GROUP BY ab_variant
+        ORDER BY ab_variant
+    """), {"fid": form_id}).fetchall()
+    total_all = session.execute(text(
+        "SELECT COUNT(*) FROM form_submissions WHERE form_id = :fid"
+    ), {"fid": form_id}).scalar() or 0
+    return {
+        "total": total_all,
+        "variants": [{"variant_id": r[0], "submissions": r[1]} for r in rows],
+    }
+
+
 @router.get("/{form_id}/submissions")
 def list_submissions(
     form_id: int,
@@ -228,6 +250,7 @@ def submit_form(
         source_url=payload.source_url,
         extra_data=payload.extra_data or None,
         coupon_code=coupon_code,
+        ab_variant=payload.ab_variant or None,
     ))
     session.commit()
 
@@ -293,6 +316,7 @@ def embed_js(form_id: int, session: Session = Depends(get_session)):
         "has_dynamic_coupon": bool(f.coupon_campaign_id),
         "design": f.design_config or {},
         "steps": f.steps_config or [],
+        "ab_variants": f.ab_variants or [],
         "api": settings.BACKEND_PUBLIC_URL,
     }
 
@@ -385,6 +409,34 @@ def _build_embed_js(cfg: dict) -> str:
       var C = {cfg_json};
       var STORE_KEY = 'hb_form_' + C.id;
       if (sessionStorage.getItem(STORE_KEY)) return;
+
+      // ── A/B variant selection ─────────────────────────────────────────────
+      var _abVariant = null;
+      if (C.ab_variants && C.ab_variants.length >= 2) {{
+        var _abKey = 'hb_ab_' + C.id;
+        var _stored = sessionStorage.getItem(_abKey);
+        if (_stored) {{
+          // Use previously assigned variant (consistent per session)
+          for (var _i = 0; _i < C.ab_variants.length; _i++) {{
+            if (String(C.ab_variants[_i].id) === _stored) {{ _abVariant = C.ab_variants[_i]; break; }}
+          }}
+        }}
+        if (!_abVariant) {{
+          var _total = 0;
+          for (var _i = 0; _i < C.ab_variants.length; _i++) _total += parseFloat(C.ab_variants[_i].weight || 1);
+          var _rand = Math.random() * _total, _cum = 0;
+          for (var _i = 0; _i < C.ab_variants.length; _i++) {{
+            _cum += parseFloat(C.ab_variants[_i].weight || 1);
+            if (_rand <= _cum) {{ _abVariant = C.ab_variants[_i]; break; }}
+          }}
+          if (!_abVariant) _abVariant = C.ab_variants[C.ab_variants.length - 1];
+          sessionStorage.setItem(_abKey, String(_abVariant.id));
+        }}
+        // Override content with variant's values
+        if (_abVariant.title)       C.title       = _abVariant.title;
+        if (_abVariant.description) C.description = _abVariant.description;
+        if (_abVariant.button_text) C.button_text = _abVariant.button_text;
+      }}
 
       var D = C.design || {{}};
       var headerBg  = D.header_bg  || '{header_bg}';
@@ -624,6 +676,7 @@ def _build_embed_js(cfg: dict) -> str:
 
           var payload = Object.assign({{}}, collectedData);
           if (!Object.keys(payload.extra_data||{{}}).length) delete payload.extra_data;
+          if (_abVariant) payload.ab_variant = String(_abVariant.id);
 
           fetch(C.api + '/api/forms/' + C.id + '/submit', {{
             method: 'POST',

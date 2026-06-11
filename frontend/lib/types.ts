@@ -171,6 +171,24 @@ export interface FormStep {
   button_text: string;
 }
 
+export interface AbFormVariant {
+  id: string;          // "A", "B", "C"
+  title: string;
+  description: string;
+  button_text: string;
+  weight: number;
+}
+
+export interface AbFormVariantStat {
+  variant_id: string;
+  submissions: number;
+}
+
+export interface AbFormStats {
+  total: number;
+  variants: AbFormVariantStat[];
+}
+
 export interface SignupForm {
   id: number;
   name: string;
@@ -190,6 +208,7 @@ export interface SignupForm {
   steps_config: FormStep[] | null;
   coupon_campaign_id: number | null;
   coupon_automation_id: number | null;
+  ab_variants: AbFormVariant[] | null;
   status: "active" | "paused";
   created_by: number | null;
   created_at: string;

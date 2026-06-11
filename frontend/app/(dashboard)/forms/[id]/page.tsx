@@ -4,13 +4,13 @@ import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formsApi } from "@/lib/api";
-import { SignupForm, FormSubmission, FormField, FormDesign, FormStep } from "@/lib/types";
+import { SignupForm, FormSubmission, FormField, FormDesign, FormStep, AbFormVariant, AbFormStats } from "@/lib/types";
 import type { Automation } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import {
   ArrowLeft, Copy, Check, Users, Code, Plus, Trash2,
   ChevronUp, ChevronDown, Save, Eye, Palette, Layers,
-  Tag, Settings, GripVertical,
+  Tag, Settings, GripVertical, FlaskConical,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -896,13 +896,172 @@ function HtmlEditor({ form, onSave, saving }: { form: SignupForm; onSave: (html:
   );
 }
 
+// ── A/B Editor ────────────────────────────────────────────────────────────────
+const VARIANT_LABELS = ["A", "B", "C", "D"];
+
+function AbEditor({
+  formId,
+  form,
+  onSave,
+  saving,
+}: { formId: number; form: SignupForm; onSave: (variants: AbFormVariant[] | null) => void; saving: boolean }) {
+  const [variants, setVariants] = useState<AbFormVariant[]>(
+    form.ab_variants && form.ab_variants.length >= 2
+      ? form.ab_variants
+      : [
+          { id: "A", title: form.title, description: form.description || "", button_text: form.button_text, weight: 1 },
+          { id: "B", title: form.title, description: form.description || "", button_text: form.button_text, weight: 1 },
+        ]
+  );
+
+  const { data: stats } = useQuery<AbFormStats>({
+    queryKey: ["form-ab-stats", formId],
+    queryFn: () =>
+      fetch(`${BACKEND_URL}/api/forms/${formId}/ab-stats`, { credentials: "include" }).then((r) => r.json()),
+    staleTime: 30_000,
+    enabled: !!(form.ab_variants && form.ab_variants.length >= 2),
+  });
+
+  function updateVariant(idx: number, patch: Partial<AbFormVariant>) {
+    setVariants((prev) => prev.map((v, i) => (i === idx ? { ...v, ...patch } : v)));
+  }
+
+  function addVariant() {
+    if (variants.length >= 4) return;
+    const nextLabel = VARIANT_LABELS[variants.length];
+    setVariants((prev) => [...prev, { id: nextLabel, title: form.title, description: form.description || "", button_text: form.button_text, weight: 1 }]);
+  }
+
+  function removeVariant(idx: number) {
+    if (variants.length <= 2) return;
+    const updated = variants.filter((_, i) => i !== idx).map((v, i) => ({ ...v, id: VARIANT_LABELS[i] }));
+    setVariants(updated);
+  }
+
+  const totalWeight = variants.reduce((s, v) => s + (v.weight || 1), 0);
+
+  function statForVariant(id: string) {
+    return stats?.variants.find((s) => s.variant_id === id);
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 text-sm text-purple-800">
+        <p className="font-semibold mb-1">Test A/B de formularios</p>
+        <p>Crea variantes del popup con diferente título, descripción o botón. El script mostrará aleatoriamente una variante a cada visitante (ponderada por el peso) y registrará cuál convirtió.</p>
+      </div>
+
+      {/* Stats */}
+      {stats && stats.variants.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">Resultados del test</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-gray-100">
+            {variants.map((v) => {
+              const s = statForVariant(v.id);
+              const pct = stats.total > 0 ? Math.round(((s?.submissions ?? 0) / stats.total) * 100) : 0;
+              return (
+                <div key={v.id} className="px-4 py-4 text-center">
+                  <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-700 text-sm font-bold flex items-center justify-center mx-auto mb-1">{v.id}</div>
+                  <p className="text-2xl font-bold text-gray-900">{s?.submissions ?? 0}</p>
+                  <p className="text-xs text-gray-400">{pct}% de suscripciones</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Variant cards */}
+      {variants.map((v, idx) => (
+        <div key={idx} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b border-gray-100">
+            <div className="w-7 h-7 rounded-full bg-purple-600 text-white text-sm font-bold flex items-center justify-center">{v.id}</div>
+            <span className="text-sm font-semibold text-gray-800">Variante {v.id}</span>
+            <span className="ml-auto text-xs text-gray-400">{Math.round(((v.weight || 1) / totalWeight) * 100)}% del tráfico</span>
+            {variants.length > 2 && (
+              <button onClick={() => removeVariant(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+            )}
+          </div>
+          <div className="px-4 py-4 space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Título del popup</label>
+              <input
+                value={v.title}
+                onChange={(e) => updateVariant(idx, { title: e.target.value })}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Descripción</label>
+              <input
+                value={v.description}
+                onChange={(e) => updateVariant(idx, { description: e.target.value })}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Texto del botón</label>
+                <input
+                  value={v.button_text}
+                  onChange={(e) => updateVariant(idx, { button_text: e.target.value })}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Peso (tráfico relativo)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={v.weight}
+                  onChange={(e) => updateVariant(idx, { weight: Math.max(1, Number(e.target.value)) })}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <div className="flex gap-3">
+        {variants.length < 4 && (
+          <button
+            type="button"
+            onClick={addVariant}
+            className="flex items-center gap-2 px-4 py-2 border-2 border-dashed border-purple-300 text-purple-600 rounded-lg text-sm hover:bg-purple-50 transition-colors"
+          >
+            <Plus size={14} /> Agregar variante {VARIANT_LABELS[variants.length]}
+          </button>
+        )}
+        <button
+          onClick={() => onSave(variants.length >= 2 ? variants : null)}
+          disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-60 transition-colors"
+        >
+          <Save size={14} /> {saving ? "Guardando…" : "Guardar test A/B"}
+        </button>
+        {form.ab_variants && form.ab_variants.length >= 2 && (
+          <button
+            onClick={() => onSave(null)}
+            disabled={saving}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-500 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+          >
+            Desactivar test
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function FormDetailPage() {
   const { id } = useParams<{ id: string }>();
   const formId = Number(id);
   const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<"install" | "design" | "steps" | "fields" | "coupon" | "html">("install");
+  const [activeTab, setActiveTab] = useState<"install" | "design" | "steps" | "fields" | "coupon" | "html" | "ab">("install");
   const [previewStep, setPreviewStep] = useState(0);
 
   const { data: form, isLoading } = useQuery<SignupForm>({
@@ -949,6 +1108,7 @@ export default function FormDetailPage() {
     { key: "steps", label: "Pasos", icon: Layers },
     { key: "fields", label: `Campos${currentFields.length ? ` (${currentFields.length})` : ""}`, icon: Settings },
     { key: "coupon", label: "Cupón", icon: Tag },
+    { key: "ab", label: "Test A/B", icon: FlaskConical },
     { key: "html", label: "HTML", icon: Code },
   ] as { key: typeof activeTab; label: string; icon: typeof Code }[];
 
@@ -977,6 +1137,7 @@ export default function FormDetailPage() {
             <span>{TRIGGER_LABEL[form.popup_trigger]}</span>
             {currentSteps && currentSteps.length > 1 && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium">{currentSteps.length} pasos</span>}
             {hasCoupon && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-medium">Con cupón</span>}
+            {form.ab_variants && form.ab_variants.length >= 2 && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">Test A/B activo ({form.ab_variants.length} variantes)</span>}
           </div>
         </div>
         <div className="text-right">
@@ -1113,6 +1274,16 @@ export default function FormDetailPage() {
           {/* ── Tab: Cupón ── */}
           {activeTab === "coupon" && (
             <CouponEditor form={form} onSave={(d) => saveMutation.mutate(d)} saving={saveMutation.isPending} />
+          )}
+
+          {/* ── Tab: Test A/B ── */}
+          {activeTab === "ab" && (
+            <AbEditor
+              formId={formId}
+              form={form}
+              saving={saveMutation.isPending}
+              onSave={(variants) => saveMutation.mutate({ ab_variants: variants ?? undefined })}
+            />
           )}
 
           {/* ── Tab: HTML ── */}
