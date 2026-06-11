@@ -221,7 +221,7 @@ export function htmlToBlocks(htmlStr: string): Block[] {
             const a = links[0];
             const btnText = (a.textContent || "").trim();
             // bg comes from the parent td with inline background-color
-            blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: btnText || "Ver más", url: attr(a, "href"), bg_color: bg !== "#ffffff" ? bg : "#111111", text_color: normColor(css(a, "color") || "#ffffff") } });
+            blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: btnText || "Ver más", url: attr(a, "href"), bg_color: bg !== "#ffffff" ? bg : "#111111", text_color: normColor(css(a, "color") || "#ffffff"), full_width: true, border_radius: "0" } });
           }
           continue;
         }
@@ -642,16 +642,26 @@ export function blocksToHtml(blocks: Block[]): string {
   }).join("\n");
 
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
 <title>Email</title>
+<style>
+body { margin:0; padding:0; background:#ffffff; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+table, td { border-collapse:collapse; mso-table-lspace:0; mso-table-rspace:0; }
+img { border:0; line-height:100%; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; display:block; max-width:100%; }
+@media only screen and (max-width:600px) {
+  .email-container { width:100% !important; max-width:100% !important; }
+  .email-body td { padding-left:0 !important; padding-right:0 !important; }
+}
+</style>
 </head>
-<body style="margin:0;padding:0;background:#f3f4f6;">
+<body style="margin:0;padding:0;background:#ffffff;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-<tr><td align="center" style="padding:24px 16px;">
-<div style="max-width:600px;width:100%;background:#ffffff;overflow:hidden;">
+<tr><td align="center" style="padding:0;background:#ffffff;">
+<div class="email-container" style="max-width:600px;width:100%;background:#ffffff;overflow:hidden;margin:0 auto;">
 ${bodyHtml}
 </div>
 </td></tr>

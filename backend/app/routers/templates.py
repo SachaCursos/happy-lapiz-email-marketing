@@ -138,6 +138,8 @@ def send_template_test(
             SELECT first_name, subtotal_price, line_items, checkout_url
             FROM carritos_abandonados
             WHERE email = %s
+              AND (recovered = FALSE OR recovered IS NULL)
+              AND checkout_url IS NOT NULL
             ORDER BY created_at DESC
             LIMIT 1
         """, (email,))
