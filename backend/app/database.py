@@ -20,11 +20,11 @@ def create_db_and_tables():
 def _run_migrations():
     """Add columns that were added after initial table creation."""
     migrations = [
-        "ALTER TABLE signupform ADD COLUMN IF NOT EXISTS design_config JSONB",
-        "ALTER TABLE signupform ADD COLUMN IF NOT EXISTS steps_config JSONB",
-        "ALTER TABLE signupform ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
-        "ALTER TABLE signupform ADD COLUMN IF NOT EXISTS coupon_automation_id INTEGER",
-        "ALTER TABLE formsubmission ADD COLUMN IF NOT EXISTS coupon_code VARCHAR",
+        "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS design_config JSONB",
+        "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS steps_config JSONB",
+        "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
+        "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS coupon_automation_id INTEGER",
+        "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS coupon_code VARCHAR",
         "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS variant_sent VARCHAR",
         "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
     ]

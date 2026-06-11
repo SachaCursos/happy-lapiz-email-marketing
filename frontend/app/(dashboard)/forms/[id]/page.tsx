@@ -267,8 +267,28 @@ function StepsEditor({
 
   function enableMultiStep() {
     onChange([
-      { step: 1, title: form.title, description: form.description || "", fields: ["email"], button_text: "Continuar →" },
-      { step: 2, title: "¡Casi listo!", description: "Cuéntanos un poco más", fields: defaultSingleFields.filter((k) => k !== "email"), button_text: form.button_text },
+      { step: 1, title: form.title, description: form.description || "", fields: ["email", "name"], button_text: "Continuar →" },
+      { step: 2, title: "¡Casi listo!", description: "Cuéntanos un poco más", fields: defaultSingleFields.filter((k) => k !== "email" && k !== "name"), button_text: form.button_text },
+    ]);
+  }
+
+  function useGiftTemplate() {
+    const giftFields = customFields.map((f) => f.key);
+    onChange([
+      {
+        step: 1,
+        title: form.title || "¡Únete y recibe ofertas!",
+        description: form.description || "Suscríbete para recibir novedades exclusivas.",
+        fields: ["email", "name"],
+        button_text: "Continuar →",
+      },
+      {
+        step: 2,
+        title: "Cuéntanos más 🎁",
+        description: "Así podemos enviarte lo que más te sirve.",
+        fields: giftFields.length > 0 ? giftFields : ["para_quien", "destinatario_nombre", "destinatario_edad", "destinatario_cumpleanos"],
+        button_text: form.button_text || "Suscribirme",
+      },
     ]);
   }
 
@@ -300,8 +320,30 @@ function StepsEditor({
   return (
     <div className="space-y-5">
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-700">
-        Los pasos múltiples permiten dividir el formulario en varias pantallas. Por ejemplo: primero pedir el email, luego preguntar por el nombre y teléfono.
+        Los pasos múltiples permiten dividir el formulario en varias pantallas. Por ejemplo: paso 1 pide email + nombre, paso 2 pregunta por el destinatario del regalo.
       </div>
+
+      {!isMultiStep && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-2">
+          <p className="text-xs font-semibold text-purple-700">Plantillas rápidas</p>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={enableMultiStep}
+              className="px-3 py-2 bg-white border border-purple-300 text-purple-700 rounded-lg text-xs font-medium hover:bg-purple-50 transition-colors"
+            >
+              2 pasos — básico (email → más datos)
+            </button>
+            <button
+              type="button"
+              onClick={useGiftTemplate}
+              className="px-3 py-2 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-700 transition-colors"
+            >
+              🎁 2 pasos — flujo regalo (email+nombre → info destinatario)
+            </button>
+          </div>
+        </div>
+      )}
 
       <label className="flex items-center gap-3 cursor-pointer">
         <div
@@ -397,6 +439,40 @@ function StepsEditor({
   );
 }
 
+// ── Preset fields for common use cases ────────────────────────────────────────
+const PRESET_FIELDS: FormField[] = [
+  {
+    key: "para_quien",
+    label: "¿Para quién es el regalo?",
+    type: "select",
+    required: false,
+    placeholder: "",
+    options: ["Para mí", "Para un regalo"],
+  },
+  {
+    key: "destinatario_nombre",
+    label: "¿Cómo se llama?",
+    type: "text",
+    required: false,
+    placeholder: "Nombre del destinatario",
+  },
+  {
+    key: "destinatario_edad",
+    label: "¿Qué edad tiene?",
+    type: "select",
+    required: false,
+    placeholder: "",
+    options: ["0-3 años", "4-6 años", "7-9 años", "10-12 años", "13-17 años", "18-25 años", "26-40 años", "40+ años"],
+  },
+  {
+    key: "destinatario_cumpleanos",
+    label: "¿Cuál es su fecha de cumpleaños?",
+    type: "date",
+    required: false,
+    placeholder: "",
+  },
+];
+
 // ── Custom fields editor ──────────────────────────────────────────────────────
 function FieldsEditor({ fields, onChange }: { fields: FormField[]; onChange: (f: FormField[]) => void }) {
   function update(i: number, patch: Partial<FormField>) {
@@ -413,9 +489,40 @@ function FieldsEditor({ fields, onChange }: { fields: FormField[]; onChange: (f:
   function add() {
     onChange([...fields, { key: `campo_${fields.length + 1}`, label: "Nuevo campo", type: "text", required: false, placeholder: "" }]);
   }
+  function addPreset(preset: FormField) {
+    if (fields.some((f) => f.key === preset.key)) return;
+    onChange([...fields, preset]);
+  }
+
+  const existingKeys = new Set(fields.map((f) => f.key));
 
   return (
     <div className="space-y-3">
+      {/* Suggested presets */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <p className="text-xs font-semibold text-amber-700 mb-2.5">✨ Campos sugeridos para Happy Lápiz</p>
+        <div className="flex flex-wrap gap-2">
+          {PRESET_FIELDS.map((preset) => {
+            const added = existingKeys.has(preset.key);
+            return (
+              <button
+                key={preset.key}
+                onClick={() => addPreset(preset)}
+                disabled={added}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  added
+                    ? "bg-green-100 border-green-300 text-green-700 cursor-default"
+                    : "bg-white border-amber-300 text-amber-800 hover:bg-amber-100 hover:border-amber-400"
+                }`}
+              >
+                {added ? "✓ " : "+ "}{preset.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-amber-600 mt-2">Haz clic para agregar. Luego ve a la pestaña <strong>Pasos</strong> para distribuirlos en múltiples pantallas.</p>
+      </div>
+
       <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Campos fijos</div>
       {["Email * (requerido)", "Nombre (opcional)", "Teléfono (opcional)"].map((l) => (
         <div key={l} className="flex items-center gap-3 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl opacity-60">
@@ -472,7 +579,7 @@ function FieldsEditor({ fields, onChange }: { fields: FormField[]; onChange: (f:
       ))}
 
       <button onClick={add} className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-400 hover:text-brand-600 hover:border-brand-300 transition-colors">
-        <Plus size={15} /> Añadir campo
+        <Plus size={15} /> Añadir campo personalizado
       </button>
     </div>
   );
@@ -804,15 +911,13 @@ export default function FormDetailPage() {
           {activeTab === "design" && (
             <div className="space-y-4">
               <DesignEditor design={currentDesign} onChange={(d) => setLocalDesign(d)} />
-              {localDesign !== null && (
-                <button
-                  onClick={() => { saveMutation.mutate({ design_config: currentDesign }); setLocalDesign(null); }}
-                  disabled={saveMutation.isPending}
-                  className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-60 transition-colors"
-                >
-                  <Save size={14} /> {saveMutation.isPending ? "Guardando…" : "Guardar diseño"}
-                </button>
-              )}
+              <button
+                onClick={() => { saveMutation.mutate({ design_config: currentDesign }); setLocalDesign(null); }}
+                disabled={saveMutation.isPending || localDesign === null}
+                className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-40 transition-colors"
+              >
+                <Save size={14} /> {saveMutation.isPending ? "Guardando…" : localDesign === null ? "Sin cambios" : "Guardar diseño"}
+              </button>
             </div>
           )}
 
