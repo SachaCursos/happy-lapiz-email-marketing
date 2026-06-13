@@ -180,7 +180,8 @@ def send_template_test(
     _env = Environment(undefined=ChainableUndefined)
     html = _inject_footer(_env.from_string(raw_html).render(**vars_), email)
 
-    subject = body.subject or f"[PRUEBA] {tpl.subject_default or tpl.name}"
+    subject_tpl = body.subject or f"[PRUEBA] {tpl.subject_default or tpl.name}"
+    subject = _env.from_string(subject_tpl).render(**vars_)
 
     resend.api_key = settings.RESEND_API_KEY
     try:

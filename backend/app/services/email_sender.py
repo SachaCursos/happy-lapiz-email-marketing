@@ -138,7 +138,11 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
     resend.api_key = settings.RESEND_API_KEY
     coupon = _resolve_coupon(template.html_content, contact, campaign.id, session)
     html = _inject_footer(render_html(template.html_content, contact, coupon_code=coupon), contact.email)
-    subject = Jinja2Template(campaign.subject).render(nombre=_fmt_nombre(contact.name, contact.email))
+    subject = Jinja2Template(campaign.subject).render(
+        nombre=_fmt_nombre(contact.name, contact.email),
+        first_name=_fmt_nombre(contact.name, contact.email),
+        email=contact.email,
+    )
 
     send = session.exec(
         select(CampaignSend).where(
