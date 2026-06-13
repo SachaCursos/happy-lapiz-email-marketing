@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi, api } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
-import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag } from "lucide-react";
+import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart } from "lucide-react";
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
@@ -47,6 +47,13 @@ const EVENT_TRIGGERS = new Set<AutomationTrigger>([
   "confirmed_shipment", "delivered_shipment", "marked_out_for_delivery",
   "cancelled_order", "refunded_order", "coupon_assigned", "coupon_used",
   "viewed_product", "active_on_site", "subscribed_to_back_in_stock", "welcome",
+]);
+
+// Triggers where filtering by order count makes sense
+const ORDER_COUNT_FILTERABLE = new Set<AutomationTrigger>([
+  "placed_order", "ordered_product", "fulfilled_order", "fulfilled_partial_order",
+  "confirmed_shipment", "delivered_shipment", "marked_out_for_delivery",
+  "cancelled_order", "refunded_order", "abandoned_cart", "post_visit", "reactivation",
 ]);
 
 // Exit conditions: checked BEFORE sending each step from step 2 onwards.
@@ -432,6 +439,27 @@ export default function NewAutomationPage() {
   const [postVisitDays, setPostVisitDays] = useState(3);
   const [bookingDelayMinutes, setBookingDelayMinutes] = useState(5);
 
+  // Order count filter
+  const [orderCountPreset, setOrderCountPreset] = useState("none");
+  const [orderCountCustom, setOrderCountCustom] = useState(1);
+
+  function buildOrderCountFilter(): Record<string, unknown> | undefined {
+    const presets: Record<string, { operator: string; value: number }> = {
+      eq_1: { operator: "eq", value: 1 },
+      eq_2: { operator: "eq", value: 2 },
+      eq_3: { operator: "eq", value: 3 },
+      gte_2: { operator: "gte", value: 2 },
+      gte_3: { operator: "gte", value: 3 },
+      lte_2: { operator: "lte", value: 2 },
+    };
+    if (orderCountPreset === "none") return undefined;
+    if (presets[orderCountPreset]) return presets[orderCountPreset];
+    if (orderCountPreset === "eq_custom") return { operator: "eq", value: orderCountCustom };
+    if (orderCountPreset === "gte_custom") return { operator: "gte", value: orderCountCustom };
+    if (orderCountPreset === "lte_custom") return { operator: "lte", value: orderCountCustom };
+    return undefined;
+  }
+
   // Reset defaults when trigger type changes
   useEffect(() => {
     const def = TRIGGER_DEFAULTS[triggerType];
@@ -478,7 +506,7 @@ export default function NewAutomationPage() {
 
   const mutation = useMutation({
     mutationFn: () => {
-      let triggerConfig: Record<string, number> = {};
+      let triggerConfig: Record<string, unknown> = {};
 
       if (triggerType === "reactivation") {
         triggerConfig = { inactivity_days: inactivityDays, cooldown_days: cooldownDays };
@@ -490,6 +518,12 @@ export default function NewAutomationPage() {
         triggerConfig = {
           lookback_hours: toHours(lookbackValue, lookbackUnit as TimeUnit),
         };
+      }
+
+      // Attach order count filter if configured
+      const orderFilter = buildOrderCountFilter();
+      if (orderFilter && ORDER_COUNT_FILTERABLE.has(triggerType)) {
+        triggerConfig.order_count_filter = orderFilter;
       }
 
       const stepsPayload: AutomationStep[] = steps.map((s, i) => {
@@ -658,6 +692,60 @@ export default function NewAutomationPage() {
                   className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
                 <span className="text-sm text-gray-500">horas hacia atrás</span>
               </div>
+            </div>
+          )}
+
+          {/* Order count filter — shown for all purchase-related triggers */}
+          {ORDER_COUNT_FILTERABLE.has(triggerType) && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5 flex items-center gap-1.5">
+                <ShoppingCart size={13} className="text-gray-400" />
+                Filtro por número de compra del cliente
+              </label>
+              <select
+                value={orderCountPreset}
+                onChange={(e) => setOrderCountPreset(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="none">Sin filtro — todos los clientes</option>
+                <optgroup label="Compras específicas">
+                  <option value="eq_1">Solo primera compra (pedido #1)</option>
+                  <option value="eq_2">Solo segunda compra (pedido #2)</option>
+                  <option value="eq_3">Solo tercera compra (pedido #3)</option>
+                  <option value="eq_custom">Número de compra exacto...</option>
+                </optgroup>
+                <optgroup label="Rango">
+                  <option value="gte_2">Segunda compra o más (#2+)</option>
+                  <option value="gte_3">Tercera compra o más (#3+)</option>
+                  <option value="gte_custom">A partir de la compra #...</option>
+                  <option value="lte_2">Hasta la segunda compra (#1–2)</option>
+                  <option value="lte_custom">Hasta la compra #...</option>
+                </optgroup>
+              </select>
+
+              {/* Custom value input */}
+              {(orderCountPreset.endsWith("_custom")) && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-sm text-gray-600">
+                    {orderCountPreset.startsWith("eq") ? "Pedido #" : orderCountPreset.startsWith("gte") ? "A partir del pedido #" : "Hasta el pedido #"}
+                  </span>
+                  <input
+                    type="number" min={1} max={999} value={orderCountCustom}
+                    onChange={(e) => setOrderCountCustom(Math.max(1, Number(e.target.value)))}
+                    className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              )}
+
+              {/* Contextual hint */}
+              {orderCountPreset !== "none" && (
+                <div className="mt-2 text-xs rounded-lg px-3 py-2 border bg-blue-50 border-blue-100 text-blue-700">
+                  {triggerType === "abandoned_cart"
+                    ? <>Para carrito abandonado, el conteo refleja pedidos <strong>ya completados</strong> antes de este evento. «Primera compra» = clientes que nunca han comprado.</>
+                    : <>Para pedidos de Shopify, el conteo incluye el pedido actual. «Primera compra» (#1) = este es su primer pedido histórico en la tienda.</>
+                  }
+                </div>
+              )}
             </div>
           )}
         </div>

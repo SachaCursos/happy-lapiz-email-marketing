@@ -97,6 +97,24 @@ def _enroll(
     return True
 
 
+def _passes_order_count_filter(filter_cfg: dict | None, orders_count: int) -> bool:
+    """Return True if the contact's order count passes the configured filter.
+
+    operators: eq, lt, lte, gt, gte
+    value: integer (Shopify orders_count includes the current order for placed_order events)
+    """
+    if not filter_cfg:
+        return True
+    op = filter_cfg.get("operator", "eq")
+    val = int(filter_cfg.get("value", 1))
+    if op == "eq":  return orders_count == val
+    if op == "lt":  return orders_count < val
+    if op == "lte": return orders_count <= val
+    if op == "gt":  return orders_count > val
+    if op == "gte": return orders_count >= val
+    return True
+
+
 def _passes_condition(condition: str | None, enrollment: AutomationEnrollment, session: Session) -> bool:
     """Check enrollment condition before sending a step. Returns True if the step should be sent."""
     if not condition or condition == "always":
@@ -396,9 +414,12 @@ def _check_welcome(auto: Automation, session: Session) -> None:
         )
     ).all()
 
+    order_count_filter = config.get("order_count_filter")
     for contact in contacts:
         origin = (contact.origin_utm or "").strip()
         if origin in _BATCH_ORIGINS or origin.startswith("Formulario #"):
+            continue
+        if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
             continue
         trigger_key = f"welcome:{contact.id}"
         extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
@@ -421,7 +442,10 @@ def _check_post_visit(auto: Automation, session: Session) -> None:
         )
     ).all()
 
+    order_count_filter = config.get("order_count_filter")
     for contact in contacts:
+        if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
+            continue
         trigger_key = f"postvisit:{contact.id}:{target_date}"
         extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
         _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
@@ -447,6 +471,7 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
         )
     ).all()
 
+    order_count_filter = config.get("order_count_filter")
     for contact in contacts:
         recent_run = session.exec(
             select(AutomationRun).where(
@@ -457,6 +482,8 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
             )
         ).first()
         if recent_run:
+            continue
+        if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
             continue
         week = datetime.utcnow().strftime("%Y-W%W")
         trigger_key = f"reactivation:{contact.id}:{week}"
@@ -495,6 +522,13 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
         if contact and contact.opted_in is False:
             continue
+
+        # Apply order count filter (uses completed orders so far; for abandoned_cart
+        # value 0 = nunca ha comprado, 1 = ya compró una vez antes, etc.)
+        order_count_filter = config.get("order_count_filter")
+        if order_count_filter and contact:
+            if not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
+                continue
 
         # Atomically claim the cart to prevent concurrent duplicate enrollments
         claimed = session.execute(text("""
@@ -557,6 +591,8 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
         ORDER BY se.created_at ASC LIMIT 200
     """), {"topic": topic, "recent": cutoff_recent}).fetchall()
 
+    order_count_filter = config.get("order_count_filter")
+
     for row in rows:
         email = (row[1] or "").lower().strip()
         if not email:
@@ -566,6 +602,19 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             continue
         trigger_key = f"{trigger_type}:{row[0]}"
         payload = row[2] or {}
+
+        # Apply order count filter before enrolling.
+        # For Shopify order events the payload includes customer.orders_count which
+        # already reflects the current order (e.g. 1 for a first-time buyer).
+        if order_count_filter:
+            cust_count = payload.get("customer", {}).get("orders_count")
+            count_to_check = int(cust_count) if cust_count is not None else (contact.orders_count or 0)
+            if not _passes_order_count_filter(order_count_filter, count_to_check):
+                # Mark processed so the engine won't keep re-evaluating this event
+                session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+                session.commit()
+                continue
+
         items = payload.get("line_items", [])
         first_item = items[0].get("title", "") if items else ""
         tracking = ""

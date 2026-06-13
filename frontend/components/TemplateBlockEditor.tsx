@@ -59,6 +59,8 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     link: "",
     border_radius: "0",
     bg_color: "#ffffff",
+    width: "",        // empty = 100%; pixel value = fixed width centered
+    align: "center",
   },
   button: {
     text: "Ver más",
@@ -284,13 +286,43 @@ export function htmlToBlocks(htmlStr: string): Block[] {
         if (/\bkl-image\b/.test(elCls)) {
           const img = imgs[0];
           if (img) {
-            const wAttr = attr(img, "width");
-            const wNum = wAttr ? parseInt(wAttr, 10) : NaN;
-            const isLogo = !isNaN(wNum) && wNum <= 200;
+            // 1. Try img width attribute first
+            let wAttr = attr(img, "width");
+            // 2. Fallback: find width from td.kl-img-base-auto-width or similar wrapper
+            if (!wAttr || !/^\d+$/.test(wAttr.trim())) {
+              const autoTd = el.querySelector("[class*='kl-img'], [style*='width']");
+              if (autoTd) {
+                const tdStyle = attr(autoTd, "style");
+                const m = tdStyle.match(/(?:^|;)\s*width\s*:\s*(\d+)px/);
+                if (m) wAttr = m[1];
+                else {
+                  const tdW = attr(autoTd, "width");
+                  if (tdW && /^\d+$/.test(tdW)) wAttr = tdW;
+                }
+              }
+            }
+            // 3. Fallback: check img style
+            if (!wAttr || !/^\d+$/.test(wAttr.trim())) {
+              const m = attr(img, "style").match(/width\s*:\s*(\d+)px/);
+              if (m) wAttr = m[1];
+            }
+            const wNum = (wAttr && /^\d+$/.test(wAttr.trim())) ? parseInt(wAttr.trim(), 10) : NaN;
+
+            // Logo detection: BOTH small width AND logo-like src/alt OR colored background.
+            // A content image that happens to be small should NOT become a header block.
+            const srcAlt = (attr(img, "src") + " " + attr(img, "alt")).toLowerCase();
+            const bgNorm = bg.toLowerCase().replace(/\s/g, "");
+            const bgIsColored = bgNorm !== "#ffffff" && bgNorm !== "#fff" && bgNorm !== "white" && bgNorm !== "" && !/^#f[ef][ef][ef][ef]?$/i.test(bgNorm);
+            const looksLikeLogo = /logo|brand|hl[-_]|lapiz/i.test(srcAlt);
+            const isLogo = !isNaN(wNum) && wNum <= 200 && (bgIsColored || looksLikeLogo);
+
+            // Image alignment from kl-image td
+            const imgAlign = attr(el, "align") || "center";
+
             if (isLogo) {
               blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: attr(img, "src"), logo_width: wAttr || "160", link: img.closest("a")?.getAttribute("href") || "https://www.happylapiz.cl", bg_color: bg } });
             } else {
-              blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg } });
+              blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg, width: (!isNaN(wNum) && wNum < 560) ? String(wNum) : "", align: imgAlign } });
             }
           }
           continue;
@@ -312,7 +344,15 @@ export function htmlToBlocks(htmlStr: string): Block[] {
             const btnColor = css(a, "color") || "#ffffff";
             blocks.push({ id: uid("button"), type: "button", props: { ...DEFAULTS.button, text: text || "Ver más", url: href, bg_color: normColor(btnBg), text_color: normColor(btnColor) } });
           } else if (nonSpaceText.length > 0) {
-            blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content: cleanKlaviyoText(el), bg_color: bg } });
+            // Extract padding from Klaviyo inline style (e.g. padding-top:9px;padding-right:18px)
+            const elStyle = attr(el, "style");
+            const parsePad = (prop: string, fallback: number) => {
+              const m = elStyle.match(new RegExp(prop + "\\s*:\\s*(\\d+)px"));
+              return m ? parseInt(m[1], 10) : fallback;
+            };
+            const py = Math.round((parsePad("padding-top", 9) + parsePad("padding-bottom", 9)) / 2);
+            const px = Math.round((parsePad("padding-right", 18) + parsePad("padding-left", 18)) / 2);
+            blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content: cleanKlaviyoText(el), bg_color: bg, padding_y: String(py), padding_x: String(px) } });
           }
           continue;
         }
@@ -549,9 +589,18 @@ function blockHtml(block: Block): string {
     }
 
     case "image": {
-      const img = `<img src="${p.src}" alt="${p.alt}" style="width:100%;display:block;${p.border_radius !== "0" ? `border-radius:${p.border_radius}px;` : ""}" />`;
-      return `<div style="background:${p.bg_color};">
-  ${p.link ? `<a href="${p.link}" style="display:block;">${img}</a>` : img}
+      const wPx = p.width ? parseInt(p.width as string, 10) : 0;
+      const isFull = !wPx || wPx >= 560;
+      const rStr = p.border_radius && p.border_radius !== "0" ? `border-radius:${p.border_radius}px;` : "";
+      const imgStyle = isFull
+        ? `width:100%;height:auto;display:block;${rStr}`
+        : `width:${wPx}px;max-width:100%;height:auto;display:block;${rStr}`;
+      const wrapStyle = isFull
+        ? `background:${p.bg_color};`
+        : `background:${p.bg_color};text-align:${p.align || "center"};`;
+      const imgTag = `<img src="${p.src}" alt="${p.alt}" width="${isFull ? "600" : wPx}" style="${imgStyle}" />`;
+      return `<div style="${wrapStyle}">
+  ${p.link ? `<a href="${p.link}" style="display:${isFull ? "block" : "inline-block"};">${imgTag}</a>` : imgTag}
 </div>`;
     }
 
@@ -751,15 +800,19 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
           dangerouslySetInnerHTML={{ __html: p.content as string }}
         />
       );
-    case "image":
+    case "image": {
+      const wPx = p.width ? parseInt(p.width as string, 10) : 0;
+      const isFull = !wPx || wPx >= 560;
+      const br = p.border_radius && p.border_radius !== "0" ? `${p.border_radius}px` : 0;
       return p.src
-        ? <div style={{ background: p.bg_color as string }}>
+        ? <div style={{ background: p.bg_color as string, textAlign: isFull ? undefined : ((p.align || "center") as "center" | "left" | "right") }}>
             <img src={p.src as string} alt={p.alt as string}
-              style={{ width: "100%", display: "block", borderRadius: p.border_radius ? `${p.border_radius}px` : 0 }} />
+              style={{ width: isFull ? "100%" : `${wPx}px`, maxWidth: "100%", height: "auto", display: isFull ? "block" : "inline-block", borderRadius: br }} />
           </div>
         : <div style={{ background: "#f9fafb", height: 90, display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af", fontSize: 12 }}>
             Añade URL de imagen
           </div>;
+    }
     case "button": {
       const align = p.align === "left" ? "left" : p.align === "right" ? "right" : "center";
       const ls = p.letter_spacing ? `${p.letter_spacing}px` : "normal";
@@ -1051,6 +1104,18 @@ function PropsPanel({
         <Field label="URL de la imagen"><TI value={p.src as string} onChange={(v) => set("src", v)} placeholder="https://cdn.shopify.com/..." /></Field>
         <Field label="Texto alternativo"><TI value={p.alt as string} onChange={(v) => set("alt", v)} placeholder="Descripción de la imagen" /></Field>
         <Field label="Enlace al hacer clic"><TI value={p.link as string} onChange={(v) => set("link", v)} placeholder="https://..." /></Field>
+        <Field label="Ancho (px) — 0 = ancho completo">
+          <NI value={(p.width as string) || "0"} onChange={(v) => set("width", v === "0" ? "" : v)} min={0} max={600} />
+          <p className="text-xs text-gray-400 mt-1">Klaviyo usa 564px para ancho completo (600px − padding)</p>
+        </Field>
+        <Field label="Alineación">
+          <select value={(p.align as string) || "center"} onChange={(e) => set("align", e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+            <option value="left">Izquierda</option>
+            <option value="center">Centro</option>
+            <option value="right">Derecha</option>
+          </select>
+        </Field>
         <Field label="Border radius (px)"><NI value={p.border_radius as string} onChange={(v) => set("border_radius", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
       </>}
