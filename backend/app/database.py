@@ -20,6 +20,7 @@ def create_db_and_tables():
 def _run_migrations():
     """Add columns that were added after initial table creation."""
     migrations = [
+        "ALTER TABLE templates ALTER COLUMN subject_default SET DEFAULT ''",
         "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS design_config JSONB",
         "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS steps_config JSONB",
         "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",

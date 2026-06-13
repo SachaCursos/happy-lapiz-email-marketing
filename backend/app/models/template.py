@@ -10,7 +10,7 @@ class Template(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
-    subject_default: str
+    subject_default: str = Field(default="")
     preview_text: Optional[str] = None
     html_content: str = Field(sa_column=Column(Text))
     json_blocks: Optional[Any] = Field(default=None, sa_column=Column(JSONB))
@@ -21,7 +21,7 @@ class Template(SQLModel, table=True):
 
 class TemplateCreate(SQLModel):
     name: str
-    subject_default: str
+    subject_default: str = ""
     preview_text: Optional[str] = None
     html_content: str
     json_blocks: Optional[Any] = None
@@ -38,7 +38,7 @@ class TemplateUpdate(SQLModel):
 class TemplateRead(SQLModel):
     id: int
     name: str
-    subject_default: str
+    subject_default: Optional[str]
     preview_text: Optional[str]
     html_content: str
     json_blocks: Optional[Any]
