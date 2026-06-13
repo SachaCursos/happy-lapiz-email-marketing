@@ -41,7 +41,7 @@ const FONT_OPTIONS = [
 
 const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
   header: {
-    logo_url: "https://cdn.shopify.com/s/files/1/0751/8441/0881/files/logo-happy-lapiz.png",
+    logo_url: "https://cdn.shopify.com/s/files/1/0556/5343/3495/files/LOGO_HappyLapiz.png?v=1621889822",
     logo_width: "160",
     bg_color: "#ffffff",
     link: "https://www.happylapiz.cl",
@@ -280,11 +280,18 @@ export function htmlToBlocks(htmlStr: string): Block[] {
           continue;
         }
 
-        // ── td.kl-image → Image ──────────────────────────────────────────
+        // ── td.kl-image → Header (small/logo image) or Image ──────────────
         if (/\bkl-image\b/.test(elCls)) {
           const img = imgs[0];
           if (img) {
-            blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg } });
+            const wAttr = attr(img, "width");
+            const wNum = wAttr ? parseInt(wAttr, 10) : NaN;
+            const isLogo = !isNaN(wNum) && wNum <= 200;
+            if (isLogo) {
+              blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: attr(img, "src"), logo_width: wAttr || "160", link: img.closest("a")?.getAttribute("href") || "https://www.happylapiz.cl", bg_color: bg } });
+            } else {
+              blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(img, "src"), alt: attr(img, "alt"), link: img.closest("a")?.getAttribute("href") || "", bg_color: bg } });
+            }
           }
           continue;
         }
@@ -719,6 +726,9 @@ export function parseJsonBlocks(raw: unknown): Block[] {
 function BlockPreview({ block, compact = false }: { block: Block; compact?: boolean }) {
   const p = block.props;
   const [imgError, setImgError] = useState(false);
+  // Reset error when logo URL changes so a corrected/new URL is retried immediately
+  const logoUrl = p.logo_url as string | undefined;
+  useEffect(() => { setImgError(false); }, [logoUrl]);
 
   switch (block.type) {
     case "header":
