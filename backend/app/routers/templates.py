@@ -171,8 +171,12 @@ def send_template_test(
         "ticket_medio":  0,
         "total_spent":   0,
         "shipping_city": "",
-        # Mirrors Klaviyo's {{ event.extra.checkout_url }} nested access
-        "event": {"extra": {"checkout_url": checkout_url}},
+        # Mirrors Klaviyo's {{ event.extra.checkout_url }} nested access.
+        # checkout_url_with_coupon appends ?discount=CODE for Shopify auto-apply.
+        "event": {"extra": {
+            "checkout_url": checkout_url,
+            "checkout_url_with_coupon": f"{checkout_url}{'&' if '?' in checkout_url else '?'}discount=CODIGO-PRUEBA",
+        }},
     }
 
     # Replace {% unsubscribe %} with anchor link BEFORE Jinja2 (avoids syntax error)

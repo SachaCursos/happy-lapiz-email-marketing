@@ -54,8 +54,6 @@ export default function EditTemplatePage() {
     mutationFn: (data: TemplateEditorSaveData) =>
       templatesApi.update(tplId, {
         name: data.name,
-        subject_default: data.subject,
-        preview_text: data.previewText || null,
         html_content: data.html,
         json_blocks: data.blocks,
       }),
@@ -66,6 +64,7 @@ export default function EditTemplatePage() {
       setTimeout(() => setSaved(false), 2500);
     },
   });
+
 
   if (isLoading) {
     return (
@@ -110,8 +109,6 @@ export default function EditTemplatePage() {
             initialMode={initialMode}
             initialHtmlOverride={initialHtmlOverride}
             initialName={tpl.name}
-            initialSubject={tpl.subject_default}
-            initialPreviewText={tpl.preview_text ?? ""}
             templateId={tplId}
             onSave={(data) => mutation.mutate(data)}
             saving={mutation.isPending}

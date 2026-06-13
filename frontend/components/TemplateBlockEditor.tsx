@@ -1151,8 +1151,6 @@ function PlainTextEditor({
 // ── Main component ─────────────────────────────────────────────────────────────
 export interface TemplateEditorSaveData {
   name: string;
-  subject: string;
-  previewText: string;
   html: string;
   blocks: unknown;
 }
@@ -1162,8 +1160,6 @@ interface Props {
   initialPlainText?: string;
   initialMode?: "blocks" | "plain";
   initialName?: string;
-  initialSubject?: string;
-  initialPreviewText?: string;
   initialHtmlOverride?: string | null;
   templateId?: number;
   onSave: (data: TemplateEditorSaveData) => void;
@@ -1176,8 +1172,6 @@ export function TemplateBlockEditor({
   initialPlainText = "",
   initialMode = "blocks",
   initialName = "",
-  initialSubject = "",
-  initialPreviewText = "",
   initialHtmlOverride = null,
   templateId,
   onSave,
@@ -1188,8 +1182,6 @@ export function TemplateBlockEditor({
   const [plainText, setPlainText] = useState(initialPlainText);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState(initialName);
-  const [subject, setSubject] = useState(initialSubject);
-  const [previewText, setPreviewText] = useState(initialPreviewText);
   const [sendTestOpen, setSendTestOpen] = useState(false);
   const [testEmail, setTestEmail] = useState("");
   const [testSending, setTestSending] = useState(false);
@@ -1304,13 +1296,13 @@ export function TemplateBlockEditor({
   function handleSave() {
     if (isPlainMode) {
       onSave({
-        name, subject, previewText,
+        name,
         html: plainTextToHtml(plainText),
         blocks: { mode: "plain", text: plainText },
       });
     } else {
       onSave({
-        name, subject, previewText,
+        name,
         html: htmlOverride ?? blocksToHtml(blocks),
         blocks,
       });
@@ -1335,10 +1327,6 @@ export function TemplateBlockEditor({
         <div className="flex items-center gap-3 px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la plantilla *"
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium w-52 focus:outline-none focus:ring-2 focus:ring-brand-500" />
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Asunto del email *"
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1 max-w-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-          <input value={previewText} onChange={(e) => setPreviewText(e.target.value)} placeholder="Preview text (opcional)"
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-brand-500 hidden xl:block" />
           <div className="ml-auto flex items-center gap-2">
             {saved && <span className="text-sm text-green-600 font-medium">✓ Guardado</span>}
             {templateId && (
@@ -1347,7 +1335,7 @@ export function TemplateBlockEditor({
                 <Send size={13} /> Enviar prueba
               </button>
             )}
-            <button onClick={handleSave} disabled={saving || !name || !subject}
+            <button onClick={handleSave} disabled={saving || !name}
               className="px-5 py-2 bg-brand-600 text-white rounded-lg text-sm font-semibold hover:bg-brand-700 disabled:opacity-60 transition-colors">
               {saving ? "Guardando..." : "Guardar"}
             </button>
@@ -1411,7 +1399,7 @@ export function TemplateBlockEditor({
                     try {
                       const res = await api.post(`/templates/${templateId}/send-test`, {
                         to_email: testEmail.trim(),
-                        subject: subject ? `[PRUEBA] ${subject}` : undefined,
+                        subject: undefined,
                       });
                       setTestResult({
                         ok: true,

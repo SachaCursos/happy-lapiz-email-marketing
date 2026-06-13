@@ -192,9 +192,28 @@ def _send_email_step(
             "coupon_code": coupon_code or "",
             **(extra_vars or {}),
         }
+        # If there's a coupon code and a checkout URL, inject checkout_url_with_coupon
+        # so templates can use {{ event.extra.checkout_url_with_coupon }} to get the
+        # checkout URL with the discount pre-applied (Shopify supports ?discount=CODE).
+        if coupon_code:
+            event_extra = vars_.get("event", {}).get("extra", {})
+            raw_url = event_extra.get("checkout_url", "")
+            if raw_url:
+                sep = "&" if "?" in raw_url else "?"
+                event_extra["checkout_url_with_coupon"] = f"{raw_url}{sep}discount={coupon_code}"
         raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
         _env = Environment(undefined=ChainableUndefined)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
+
+        preview_text = step.get("preview_text", "")
+        if preview_text:
+            preheader = (
+                f'<span style="display:none;max-height:0;overflow:hidden;'
+                f'font-size:1px;line-height:1px;color:#fff;opacity:0">{preview_text}</span>'
+            )
+            # Insert right after <body ...> tag so email clients pick it up as preheader
+            import re as _re
+            html = _re.sub(r"(<body[^>]*>)", r"\1" + preheader, html, count=1) if "<body" in html.lower() else preheader + html
 
         resend.api_key = settings.RESEND_API_KEY
         result = resend.Emails.send({

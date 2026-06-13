@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { automationsApi, templatesApi } from "@/lib/api";
+import { automationsApi, templatesApi, api } from "@/lib/api";
 import { Automation, AutomationStats, AutomationVariantStat, AutomationPending, AutomationStep, Template } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch, FlaskConical } from "lucide-react";
+import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch, FlaskConical, Tag } from "lucide-react";
+
+interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
 
 const TRIGGER_LABELS: Record<string, { label: string; description: string; color: string }> = {
@@ -75,12 +77,14 @@ function delayLabel(hours: number): string {
 function EditPanel({
   auto,
   templates,
+  couponCampaigns,
   onSave,
   onCancel,
   saving,
 }: {
   auto: Automation;
   templates: Template[];
+  couponCampaigns: CouponCampaign[];
   onSave: (data: Partial<Automation>) => void;
   onCancel: () => void;
   saving: boolean;
@@ -92,6 +96,7 @@ function EditPanel({
       : [];
 
   const [name, setName] = useState(auto.name);
+  const [couponCampaignId, setCouponCampaignId] = useState<number | null>(auto.coupon_campaign_id ?? null);
   const [steps, setSteps] = useState<AutomationStep[]>(
     effectiveSteps.length > 0 ? effectiveSteps : [{ step: 1, delay_hours: 1, template_id: 0, subject: "", condition: null }]
   );
@@ -121,6 +126,27 @@ function EditPanel({
         <label className="block text-xs font-medium text-gray-600 mb-1">Nombre interno</label>
         <input value={name} onChange={(e) => setName(e.target.value)}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5">
+          <Tag size={11} /> Campaña de cupones (opcional)
+        </label>
+        <select
+          value={couponCampaignId ?? ""}
+          onChange={(e) => setCouponCampaignId(e.target.value ? Number(e.target.value) : null)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          <option value="">Sin cupón</option>
+          {couponCampaigns.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} — {c.discount_type === "percentage" ? `${c.discount_value}% OFF` : `$${c.discount_value.toLocaleString("es-CL")}`} ({c.prefix}-XXXX)
+            </option>
+          ))}
+        </select>
+        {couponCampaignId && (
+          <p className="text-xs text-purple-600 mt-1">Usa <code className="bg-purple-50 px-1 rounded">{"{{ coupon_code }}"}</code> o <code className="bg-purple-50 px-1 rounded">{"{{ event.extra.checkout_url_with_coupon }}"}</code> en la plantilla.</p>
+        )}
       </div>
 
       {/* Trigger config */}
@@ -185,6 +211,10 @@ function EditPanel({
               onChange={(e) => updateStep(i, { subject: e.target.value })}
               placeholder="Asunto del email"
               className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500" />
+            <input value={step.preview_text ?? ""}
+              onChange={(e) => updateStep(i, { preview_text: e.target.value || undefined })}
+              placeholder="Preview text (opcional)"
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500 text-gray-500" />
           </div>
         ))}
         <button onClick={addStep}
@@ -195,7 +225,7 @@ function EditPanel({
 
       <div className="flex gap-2 pt-1">
         <button
-          onClick={() => onSave({ name, steps: steps.map((s, i) => ({ ...s, step: i + 1 })), trigger_config: cfg as Record<string, number>, template_id: steps[0]?.template_id || null, subject: steps[0]?.subject || null })}
+          onClick={() => onSave({ name, steps: steps.map((s, i) => ({ ...s, step: i + 1 })), trigger_config: cfg as Record<string, number>, template_id: steps[0]?.template_id || null, subject: steps[0]?.subject || null, coupon_campaign_id: couponCampaignId })}
           disabled={saving || !isValid}
           className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 transition-colors"
         >
@@ -210,7 +240,7 @@ function EditPanel({
   );
 }
 
-function AutomationRow({ auto, templates }: { auto: Automation; templates: Template[] }) {
+function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation; templates: Template[]; couponCampaigns: CouponCampaign[] }) {
   const qc = useQueryClient();
   const [showRuns, setShowRuns] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -389,6 +419,7 @@ function AutomationRow({ auto, templates }: { auto: Automation; templates: Templ
         <EditPanel
           auto={auto}
           templates={templates}
+          couponCampaigns={couponCampaigns}
           onSave={(data) => updateMutation.mutate(data)}
           onCancel={() => setEditing(false)}
           saving={updateMutation.isPending}
@@ -510,6 +541,12 @@ export default function AutomationsPage() {
     staleTime: 5 * 60_000,
   });
 
+  const { data: couponCampaigns = [] } = useQuery<CouponCampaign[]>({
+    queryKey: ["coupon-campaigns"],
+    queryFn: () => api.get("/coupons/campaigns").then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+
   const activeCount = automations.filter((a) => a.status === "active").length;
   const pausedCount = automations.filter((a) => a.status !== "active").length;
 
@@ -590,7 +627,7 @@ export default function AutomationsPage() {
       ) : (
         <div className="space-y-3">
           {visible.map((a) => (
-            <AutomationRow key={a.id} auto={a} templates={templates} />
+            <AutomationRow key={a.id} auto={a} templates={templates} couponCampaigns={couponCampaigns} />
           ))}
         </div>
       )}

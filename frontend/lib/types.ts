@@ -256,6 +256,7 @@ export interface AutomationStep {
   delay_hours: number;
   template_id: number;
   subject: string;
+  preview_text?: string;
   condition: "not_purchased" | "not_recovered" | "always" | null;
   variants?: AutomationVariant[];
 }

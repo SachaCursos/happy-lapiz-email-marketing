@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { automationsApi, templatesApi } from "@/lib/api";
+import { automationsApi, templatesApi, api } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
-import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X } from "lucide-react";
+import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag } from "lucide-react";
+
+interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
 
 // ── Trigger definitions ────────────────────────────────────────────────────────
@@ -146,6 +148,7 @@ interface StepState {
   delayUnit: TimeUnit;
   templateId: number | "";
   subject: string;
+  previewText: string;
   condition: string;
   variants: VariantState[];  // empty = no A/B test
 }
@@ -396,6 +399,13 @@ function StepCard({
                 placeholder='ej. ¡Tu carrito te está esperando, {{ first_name }}!'
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Preview text <span className="text-gray-400 font-normal">(opcional)</span></label>
+              <input value={step.previewText} onChange={(e) => onChange({ ...step, previewText: e.target.value })}
+                placeholder='ej. Tu carrito tiene productos que te esperan...'
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              <p className="text-xs text-gray-400 mt-1">Texto gris que aparece bajo el asunto en el inbox.</p>
+            </div>
           </>
         )}
       </div>
@@ -414,7 +424,7 @@ export default function NewAutomationPage() {
 
   // Steps
   const [steps, setSteps] = useState<StepState[]>([
-    { delayValue: 1, delayUnit: "horas", templateId: "", subject: "", condition: "not_recovered", variants: [] },
+    { delayValue: 1, delayUnit: "horas", templateId: "", subject: "", previewText: "", condition: "not_recovered", variants: [] },
   ]);
 
   // Lookback (trigger-level config, only for event triggers)
@@ -445,13 +455,21 @@ export default function NewAutomationPage() {
     staleTime: 5 * 60_000,
   });
 
+  const { data: couponCampaigns = [] } = useQuery<CouponCampaign[]>({
+    queryKey: ["coupon-campaigns"],
+    queryFn: () => api.get("/coupons/campaigns").then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+
+  const [couponCampaignId, setCouponCampaignId] = useState<number | null>(null);
+
   const selectedTrigger = TRIGGERS.find((t) => t.value === triggerType)!;
 
   function addStep() {
     const defaultCondition = (EXIT_CONDITIONS[triggerType] ?? EXIT_CONDITIONS["_default"])[0].value;
     setSteps((prev) => [
       ...prev,
-      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", condition: defaultCondition, variants: [] },
+      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", previewText: "", condition: defaultCondition, variants: [] },
     ]);
   }
 
@@ -499,7 +517,7 @@ export default function NewAutomationPage() {
             subject: s.variants[0].subject,
           };
         }
-        return { ...base, template_id: Number(s.templateId), subject: s.subject };
+        return { ...base, template_id: Number(s.templateId), subject: s.subject, preview_text: s.previewText || undefined };
       });
 
       return automationsApi.create({
@@ -510,6 +528,7 @@ export default function NewAutomationPage() {
         // Keep legacy fields from step 1 for backwards compat
         template_id: Number(steps[0].templateId) || undefined,
         subject: steps[0].subject || undefined,
+        coupon_campaign_id: couponCampaignId ?? undefined,
       });
     },
     onSuccess: () => {
@@ -645,6 +664,33 @@ export default function NewAutomationPage() {
                 <span className="text-sm text-gray-500">horas hacia atrás</span>
               </div>
             </div>
+          )}
+        </div>
+
+        {/* Campaña de cupones */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
+            <Tag size={13} className="text-gray-400" /> Campaña de cupones (opcional)
+          </label>
+          <select
+            value={couponCampaignId ?? ""}
+            onChange={(e) => setCouponCampaignId(e.target.value ? Number(e.target.value) : null)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            <option value="">Sin cupón</option>
+            {couponCampaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} — {c.discount_type === "percentage" ? `${c.discount_value}% OFF` : `$${c.discount_value.toLocaleString("es-CL")}`} ({c.prefix}-XXXX)
+              </option>
+            ))}
+          </select>
+          {couponCampaignId && (
+            <div className="mt-2 bg-purple-50 border border-purple-100 rounded-lg px-3 py-2">
+              <p className="text-xs text-purple-700">En tu plantilla usa <code className="bg-white px-1 rounded border border-purple-200">{"{{ coupon_code }}"}</code> para mostrar el código, o <code className="bg-white px-1 rounded border border-purple-200">{"{{ event.extra.checkout_url_with_coupon }}"}</code> para el link al carrito con el descuento aplicado.</p>
+            </div>
+          )}
+          {couponCampaigns.length === 0 && (
+            <p className="text-xs text-gray-400 mt-1">No hay campañas de cupones. <a href="/coupons" className="text-brand-600 underline">Crear una en Cupones →</a></p>
           )}
         </div>
 
