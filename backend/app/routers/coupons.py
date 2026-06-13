@@ -100,7 +100,18 @@ def create_coupon_campaign(
         except Exception:
             pass  # Save locally even if Shopify fails
 
-    result = session.exec(text("""
+    # Ensure new columns exist (idempotent — safe to run on every create)
+    for col_sql in [
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
+    ]:
+        try:
+            session.execute(text(col_sql))
+            session.commit()
+        except Exception:
+            session.rollback()
+
+    result = session.execute(text("""
         INSERT INTO coupon_campaigns (name, shopify_discount_id, discount_type, discount_value,
             min_purchase, prefix, expires_at, applies_to, coupon_mode, static_code, created_by)
         VALUES (:name, :sid, :dtype, :dval, :minp, :prefix, :exp, :applies, :mode, :scode, :uid)
@@ -123,13 +134,25 @@ def create_coupon_campaign(
 
 @router.get("/campaigns")
 def list_coupon_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    rows = session.exec(text("""
-        SELECT id, name, discount_type, discount_value, prefix, expires_at, status, created_at,
-               (SELECT COUNT(*) FROM coupon_sends WHERE coupon_campaign_id = cc.id) as codes_sent,
-               COALESCE(coupon_mode, 'dynamic') as coupon_mode,
-               static_code
-        FROM coupon_campaigns cc ORDER BY created_at DESC
-    """)).all()
+    # Try full query with new columns; fall back to basic query if columns don't exist yet
+    try:
+        rows = session.execute(text("""
+            SELECT id, name, discount_type, discount_value, prefix, expires_at, status, created_at,
+                   (SELECT COUNT(*) FROM coupon_sends WHERE coupon_campaign_id = cc.id) as codes_sent,
+                   COALESCE(coupon_mode, 'dynamic') as coupon_mode,
+                   static_code
+            FROM coupon_campaigns cc ORDER BY created_at DESC
+        """)).fetchall()
+    except Exception:
+        session.rollback()
+        rows = session.execute(text("""
+            SELECT id, name, discount_type, discount_value, prefix, expires_at, status, created_at,
+                   (SELECT COUNT(*) FROM coupon_sends WHERE coupon_campaign_id = cc.id) as codes_sent
+            FROM coupon_campaigns cc ORDER BY created_at DESC
+        """)).fetchall()
+        return [{"id": r[0], "name": r[1], "discount_type": r[2], "discount_value": float(r[3]),
+                 "prefix": r[4], "expires_at": r[5], "status": r[6], "created_at": r[7],
+                 "codes_sent": r[8], "coupon_mode": "dynamic", "static_code": None} for r in rows]
     return [{"id": r[0], "name": r[1], "discount_type": r[2], "discount_value": float(r[3]),
              "prefix": r[4], "expires_at": r[5], "status": r[6], "created_at": r[7],
              "codes_sent": r[8], "coupon_mode": r[9], "static_code": r[10]} for r in rows]
