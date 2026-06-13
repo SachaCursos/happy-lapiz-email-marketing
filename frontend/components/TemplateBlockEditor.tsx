@@ -261,8 +261,15 @@ export function htmlToBlocks(htmlStr: string): Block[] {
           const logoImg = realImgs.find((i) => /logo|brand/i.test(attr(i, "src") + attr(i, "alt"))) || realImgs[0];
           if (logoImg) {
             const w = attr(logoImg, "width") || attr(logoImg, "height") || "160";
+            const wNum = parseInt(w, 10);
+            const isWideBanner = (!isNaN(wNum) && wNum >= 300) || /width\s*:\s*100%/i.test(attr(logoImg, "style"));
             const lnk = logoImg.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "https://www.happylapiz.cl";
-            blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: attr(logoImg, "src"), logo_width: w, link: lnk, bg_color: bg } });
+            if (isWideBanner) {
+              // Wide image in kl-header-link-bar → full-width image block, not a constrained logo
+              blocks.push({ id: uid("image"), type: "image", props: { ...DEFAULTS.image, src: attr(logoImg, "src"), alt: attr(logoImg, "alt"), link: lnk, bg_color: bg } });
+            } else {
+              blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: attr(logoImg, "src"), logo_width: w, link: lnk, bg_color: bg } });
+            }
           } else if (links.length > 0) {
             // No logo → this is a CTA button bar (e.g. "Finaliza tu compra")
             const a = links[0];
@@ -426,7 +433,7 @@ export function htmlToBlocks(htmlStr: string): Block[] {
           const src = attr(img, "src");
           const w = attr(img, "width") || "160";
           const lnk = img.closest("a")?.getAttribute("href") || links[0]?.getAttribute("href") || "";
-          const seemsLogo = /logo|brand/i.test(src) || parseInt(w) < 300 || blocks.length === 0;
+          const seemsLogo = /logo|brand/i.test(src) || parseInt(w) < 300;
           if (seemsLogo) {
             blocks.push({ id: uid("header"), type: "header", props: { ...DEFAULTS.header, logo_url: src, logo_width: w, link: lnk, bg_color: bg } });
           } else {
