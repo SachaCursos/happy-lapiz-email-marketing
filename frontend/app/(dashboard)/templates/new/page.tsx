@@ -17,8 +17,6 @@ export default function NewTemplatePage() {
     mutationFn: (data: TemplateEditorSaveData) =>
       templatesApi.create({
         name: data.name,
-        subject_default: data.subject,
-        preview_text: data.previewText || undefined,
         html_content: data.html,
         json_blocks: data.blocks,
       }),

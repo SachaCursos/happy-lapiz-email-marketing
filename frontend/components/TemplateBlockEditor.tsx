@@ -816,6 +816,47 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
   }
 }
 
+// ── Inline text editor (contentEditable) ──────────────────────────────────────
+function InlineTextEditor({
+  content,
+  style,
+  onCommit,
+}: {
+  content: string;
+  style: React.CSSProperties;
+  onCommit: (html: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.innerHTML = content;
+    ref.current.focus();
+    const range = document.createRange();
+    const sel = window.getSelection();
+    range.selectNodeContents(ref.current);
+    range.collapse(false);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      contentEditable
+      suppressContentEditableWarning
+      style={{ ...style, outline: "2px solid #6366f1", outlineOffset: "-2px", cursor: "text", minHeight: 40 }}
+      onBlur={(e) => onCommit(e.currentTarget.innerHTML)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") e.currentTarget.blur();
+      }}
+    />
+  );
+}
+
 // ── Properties panel helpers ───────────────────────────────────────────────────
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -949,11 +990,13 @@ function PropsPanel({
   onChange,
   onPickProduct,
   onSaveToFavorites,
+  isEditing = false,
 }: {
   block: Block;
   onChange: (p: Block["props"]) => void;
   onPickProduct: () => void;
   onSaveToFavorites: () => void;
+  isEditing?: boolean;
 }) {
   const p = block.props;
   const set = (k: string, v: string | number | boolean) => onChange({ ...p, [k]: v });
@@ -969,9 +1012,17 @@ function PropsPanel({
 
       {block.type === "text" && <>
         <Field label="Contenido HTML">
-          <textarea value={p.content as string} onChange={(e) => set("content", e.target.value)} rows={9}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none" />
-          <p className="text-xs text-gray-400 mt-1">Variables: {"{{ nombre }}"}, {"{{ coupon_code }}"}</p>
+          {isEditing ? (
+            <div className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2.5">
+              Editando en el canvas — haz clic fuera del bloque para terminar.
+            </div>
+          ) : (
+            <>
+              <textarea value={p.content as string} onChange={(e) => set("content", e.target.value)} rows={9}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none" />
+              <p className="text-xs text-gray-400 mt-1">Variables: {"{{ nombre }}"}, {"{{ coupon_code }}"}</p>
+            </>
+          )}
         </Field>
         <Field label="Tipografía del bloque">
           <select value={(p.font_family as string) || FONT_OPTIONS[0].value} onChange={(e) => set("font_family", e.target.value)}
@@ -1181,6 +1232,7 @@ export function TemplateBlockEditor({
   const [blocks, setBlocks] = useState<Block[]>(initialBlocks);
   const [plainText, setPlainText] = useState(initialPlainText);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState(initialName);
   const [sendTestOpen, setSendTestOpen] = useState(false);
   const [testEmail, setTestEmail] = useState("");
@@ -1573,10 +1625,31 @@ export function TemplateBlockEditor({
                       if (group.kind === "single") {
                         const { block, idx } = group;
                         return (
-                          <div key={block.id} onClick={() => setSelectedId(block.id)}
+                          <div key={block.id}
+                            onClick={() => {
+                              setSelectedId(block.id);
+                              if (block.type === "text") setEditingId(block.id);
+                              else setEditingId(null);
+                            }}
                             className={`relative group cursor-pointer transition-all ${selectedId === block.id ? "ring-2 ring-brand-500 ring-inset" : "hover:ring-2 hover:ring-blue-200 hover:ring-inset"}`}>
-                            <BlockPreview block={block} />
-                            <div className={`absolute top-1 right-1 flex gap-1 z-10 ${selectedId === block.id ? "flex" : "hidden group-hover:flex"}`}>
+                            {block.type === "text" && editingId === block.id ? (
+                              <InlineTextEditor
+                                content={block.props.content as string}
+                                style={{
+                                  background: block.props.bg_color as string,
+                                  padding: `${block.props.padding_y}px ${block.props.padding_x}px`,
+                                  fontSize: 13,
+                                  fontFamily: (block.props.font_family as string) || undefined,
+                                }}
+                                onCommit={(html) => {
+                                  update(block.id, { ...block.props, content: html });
+                                  setEditingId(null);
+                                }}
+                              />
+                            ) : (
+                              <BlockPreview block={block} />
+                            )}
+                            <div className={`absolute top-1 right-1 flex gap-1 z-10 ${selectedId === block.id && editingId !== block.id ? "flex" : "hidden group-hover:flex"}`}>
                               <button onClick={(e) => { e.stopPropagation(); move(block.id, "up"); }} disabled={idx === 0} className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronUp size={11} /></button>
                               <button onClick={(e) => { e.stopPropagation(); move(block.id, "down"); }} disabled={idx === blocks.length - 1} className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronDown size={11} /></button>
                               <button onClick={(e) => { e.stopPropagation(); remove(block.id); }} className="w-6 h-6 bg-white border border-red-200 rounded shadow text-red-400 hover:bg-red-50 flex items-center justify-center"><Trash2 size={11} /></button>
@@ -1591,7 +1664,7 @@ export function TemplateBlockEditor({
                         <div key={group.items.map((x) => x.block.id).join("-")}
                           style={{ background: rowBg, display: "flex" }}>
                           {group.items.map(({ block, idx }) => (
-                            <div key={block.id} onClick={() => setSelectedId(block.id)}
+                            <div key={block.id} onClick={() => { setSelectedId(block.id); setEditingId(null); }}
                               style={{ flex: 1 }}
                               className={`relative group cursor-pointer transition-all ${selectedId === block.id ? "ring-2 ring-brand-500 ring-inset" : "hover:ring-2 hover:ring-blue-200 hover:ring-inset"}`}>
                               <BlockPreview block={block} compact />
@@ -1688,6 +1761,7 @@ export function TemplateBlockEditor({
                     onChange={(props) => update(selected.id, props)}
                     onPickProduct={() => setProductPickerBlockId(selected.id)}
                     onSaveToFavorites={saveToFavorites}
+                    isEditing={editingId === selected.id}
                   />
                 ) : (
                   <div className="mt-12 text-center">
