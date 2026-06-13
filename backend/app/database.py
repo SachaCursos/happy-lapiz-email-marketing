@@ -27,6 +27,8 @@ def _run_migrations():
         "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS coupon_code VARCHAR",
         "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS variant_sent VARCHAR",
         "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
         # Coupon tables — created here so they exist even after a clean deploy
         """CREATE TABLE IF NOT EXISTS coupon_campaigns (
             id SERIAL PRIMARY KEY,
@@ -39,6 +41,8 @@ def _run_migrations():
             expires_at VARCHAR,
             applies_to VARCHAR NOT NULL DEFAULT 'all',
             status VARCHAR NOT NULL DEFAULT 'active',
+            coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic',
+            static_code VARCHAR,
             created_by INTEGER,
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
