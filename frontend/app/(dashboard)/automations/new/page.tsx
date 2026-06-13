@@ -53,15 +53,15 @@ const EVENT_TRIGGERS = new Set<AutomationTrigger>([
 // If the condition fails, the contact exits the flow immediately.
 const EXIT_CONDITIONS: Record<string, { value: string; label: string; hint: string }[]> = {
   abandoned_cart: [
-    { value: "not_purchased", label: "Si no realizó ninguna compra",      hint: "Detiene el flujo si el contacto compró algo desde que entró al flujo. Recomendado." },
-    { value: "always",        label: "Enviar siempre (sin condición)",    hint: "El correo se envía sin importar si ya compró." },
+    { value: "not_purchased", label: "Solo si aún NO ha comprado (recomendado)", hint: "" },
+    { value: "always",        label: "Siempre, aunque ya haya comprado",         hint: "" },
   ],
   placed_order: [
-    { value: "always", label: "Enviar siempre", hint: "" },
+    { value: "always", label: "Siempre", hint: "" },
   ],
   _default: [
-    { value: "not_purchased", label: "Si no realizó ninguna compra",      hint: "Detiene el flujo si el contacto compró algo desde que entró al flujo." },
-    { value: "always",        label: "Enviar siempre (sin condición)",    hint: "El correo se envía sin importar si ya compró." },
+    { value: "not_purchased", label: "Solo si aún NO ha comprado (recomendado)", hint: "" },
+    { value: "always",        label: "Siempre, aunque ya haya comprado",         hint: "" },
   ],
 };
 
@@ -340,16 +340,12 @@ function StepCard({
           )}
         </div>
 
-        {/* Exit condition (only from step 2 onwards) */}
+        {/* Send condition (only from step 2 onwards) */}
         {!isFirst && (
-          <div className={`rounded-lg border px-3 py-3 space-y-2 ${
-            step.condition === "always"
-              ? "bg-gray-50 border-gray-200"
-              : "bg-red-50 border-red-200"
-          }`}>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 space-y-2">
             <label className="block text-xs font-semibold flex items-center gap-1.5 text-gray-600">
               <GitBranch size={12} />
-              Condición de salida del flujo
+              ¿Enviar este correo solo si...?
             </label>
             <select value={step.condition} onChange={(e) => onChange({ ...step, condition: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
@@ -357,14 +353,13 @@ function StepCard({
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
-            {step.condition !== "always" && (
-              <p className="text-xs text-red-600 font-medium">
-                Si la condición no se cumple, el contacto sale del flujo y no recibirá este ni los siguientes correos.
-              </p>
-            )}
-            {step.condition === "always" && condOptions.find((o) => o.value === "always")?.hint && (
+            {step.condition === "always" ? (
               <p className="text-xs text-gray-500">
-                {condOptions.find((o) => o.value === "always")?.hint}
+                Este correo se enviará aunque el contacto ya haya comprado.
+              </p>
+            ) : (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                Si el contacto ya compró cuando llegue el momento de enviar este correo, <strong>no lo recibirá</strong> y saldrá del flujo.
               </p>
             )}
           </div>
@@ -744,7 +739,7 @@ export default function NewAutomationPage() {
               <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
                 <ShieldOff size={13} className="text-green-600 shrink-0 mt-0.5" />
                 <p className="text-xs text-green-700 font-medium">
-                  Si el contacto compra, sale automáticamente del flujo y no recibe los siguientes correos.
+                  Los correos con condición activa no se envían si el contacto ya compró — evita molestar a quien ya convirtió.
                 </p>
               </div>
             )}
