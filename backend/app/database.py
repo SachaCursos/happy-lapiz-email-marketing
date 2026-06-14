@@ -30,7 +30,16 @@ def _run_migrations():
         "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
-        # Shopify products cache table
+        # Shopify products cache table — recreate with correct schema if shopify_id column is missing
+        """DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'
+          ) THEN
+            DROP TABLE IF EXISTS shopify_products;
+          END IF;
+        END $$""",
         """CREATE TABLE IF NOT EXISTS shopify_products (
             id SERIAL PRIMARY KEY,
             shopify_id BIGINT UNIQUE NOT NULL,
