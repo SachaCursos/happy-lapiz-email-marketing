@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi, api } from "@/lib/api";
 import { Automation, AutomationStats, AutomationVariantStat, AutomationPending, AutomationStep, Template } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch, FlaskConical, Tag } from "lucide-react";
+import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch, FlaskConical, Tag, BarChart2 } from "lucide-react";
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
@@ -289,7 +289,9 @@ function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation;
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-gray-900 truncate">{auto.name}</h3>
+            <Link href={`/automations/${auto.id}`} className="font-semibold text-gray-900 truncate hover:text-brand-600 transition-colors">
+              {auto.name}
+            </Link>
             <span
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                 isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
@@ -357,6 +359,13 @@ function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation;
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <Link
+            href={`/automations/${auto.id}`}
+            title="Ver métricas detalladas"
+            className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-brand-50 hover:text-brand-600 hover:border-brand-300 transition-colors"
+          >
+            <BarChart2 size={14} />
+          </Link>
           <button
             onClick={() => { setEditing((v) => !v); setShowRuns(false); }}
             title="Editar"

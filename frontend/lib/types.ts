@@ -282,9 +282,13 @@ export interface AutomationRun {
   contact_id: number | null;
   contact_email: string;
   trigger_key: string;
+  step_number: number;
+  variant_sent: string | null;
   status: "sent" | "failed" | "skipped";
   triggered_at: string;
   executed_at: string | null;
+  opened_at: string | null;
+  clicked_at: string | null;
   resend_id: string | null;
   error: string | null;
 }
@@ -310,6 +314,16 @@ export interface AutomationVariantStat {
   clicked: number;
   open_rate: number;
   click_rate: number;
+}
+
+export interface AutomationStepStat {
+  step: number;
+  sent: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
+  variants: AutomationVariantStat[];
 }
 
 export interface AutomationStats {

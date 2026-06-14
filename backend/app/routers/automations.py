@@ -183,6 +183,65 @@ def automation_stats(
     }
 
 
+@router.get("/{auto_id}/step-stats")
+def automation_step_stats(
+    auto_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    """Per-step metrics breakdown, with A/B variant stats per step."""
+    step_rows = session.execute(text("""
+        SELECT
+            step_number,
+            COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
+            COUNT(*) FILTER (WHERE opened_at IS NOT NULL)     AS opened,
+            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
+        FROM automation_runs
+        WHERE automation_id = :aid
+        GROUP BY step_number
+        ORDER BY step_number
+    """), {"aid": auto_id}).fetchall()
+
+    variant_rows = session.execute(text("""
+        SELECT
+            step_number,
+            variant_sent,
+            COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
+            COUNT(*) FILTER (WHERE opened_at IS NOT NULL)     AS opened,
+            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
+        FROM automation_runs
+        WHERE automation_id = :aid AND variant_sent IS NOT NULL
+        GROUP BY step_number, variant_sent
+        ORDER BY step_number, variant_sent
+    """), {"aid": auto_id}).fetchall()
+
+    # Group variant rows by step (r[0]=step_number, r[1]=variant_sent, r[2-4]=counts)
+    from collections import defaultdict
+    variants_by_step: dict = defaultdict(list)
+    for r in variant_rows:
+        variants_by_step[int(r[0])].append({
+            "variant":    r[1],
+            "sent":       int(r[2] or 0),
+            "opened":     int(r[3] or 0),
+            "clicked":    int(r[4] or 0),
+            "open_rate":  round(int(r[3] or 0) / int(r[2]) * 100, 1) if r[2] else 0.0,
+            "click_rate": round(int(r[4] or 0) / int(r[2]) * 100, 1) if r[2] else 0.0,
+        })
+
+    return [
+        {
+            "step":       int(row[0]),
+            "sent":       int(row[1] or 0),
+            "opened":     int(row[2] or 0),
+            "clicked":    int(row[3] or 0),
+            "open_rate":  round(int(row[2] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+            "click_rate": round(int(row[3] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+            "variants":   variants_by_step.get(int(row[0]), []),
+        }
+        for row in step_rows
+    ]
+
+
 @router.get("/{auto_id}/pending")
 def automation_pending(
     auto_id: int,

@@ -132,6 +132,7 @@ export const automationsApi = {
   toggle: (id: number) => api.post(`/automations/${id}/toggle`),
   runs: (id: number) => api.get(`/automations/${id}/runs`),
   stats: (id: number) => api.get(`/automations/${id}/stats`),
+  stepStats: (id: number) => api.get(`/automations/${id}/step-stats`),
   pending: (id: number) => api.get(`/automations/${id}/pending`),
 };
 
