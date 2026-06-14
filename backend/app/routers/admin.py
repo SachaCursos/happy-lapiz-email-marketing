@@ -1,9 +1,12 @@
 import re
+import logging
 import httpx
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select, text
-from app.database import get_session
+from app.database import get_session, engine as db_engine
+
+logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.core.deps import get_current_user, require_admin
 from app.models.user import User
@@ -300,42 +303,37 @@ def fix_logo(
     return {"ok": True, "fixed": fixed, "logo_url": HL_LOGO}
 
 
-def _ensure_shopify_products_table(session: Session) -> None:
-    """Drop and recreate shopify_products if the shopify_id column is missing.
-    Uses its own nested commit so the schema fix is independent of the caller's transaction.
+_SHOPIFY_PRODUCTS_CREATE = """
+    CREATE TABLE shopify_products (
+        id SERIAL PRIMARY KEY,
+        shopify_id BIGINT UNIQUE NOT NULL,
+        title VARCHAR NOT NULL,
+        handle VARCHAR,
+        product_type VARCHAR,
+        tags TEXT,
+        vendor VARCHAR,
+        image_url TEXT,
+        price NUMERIC(10,2),
+        status VARCHAR NOT NULL DEFAULT 'active',
+        synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+"""
+
+def _ensure_shopify_products_table() -> None:
+    """Rebuild shopify_products with the correct schema if shopify_id column is missing.
+    Uses a raw AUTOCOMMIT connection so DDL can never be blocked by an open transaction.
     """
-    try:
-        has_col = session.execute(text(
+    with db_engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        row = conn.execute(text(
             "SELECT COUNT(*) FROM information_schema.columns "
             "WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'"
         )).scalar()
-        session.commit()
-    except Exception:
-        session.rollback()
-        has_col = 1  # assume table is fine if we can't check
 
-    if has_col == 0:
-        try:
-            session.execute(text("DROP TABLE IF EXISTS shopify_products"))
-            session.execute(text("""
-                CREATE TABLE shopify_products (
-                    id SERIAL PRIMARY KEY,
-                    shopify_id BIGINT UNIQUE NOT NULL,
-                    title VARCHAR NOT NULL,
-                    handle VARCHAR,
-                    product_type VARCHAR,
-                    tags TEXT,
-                    vendor VARCHAR,
-                    image_url TEXT,
-                    price NUMERIC(10,2),
-                    status VARCHAR NOT NULL DEFAULT 'active',
-                    synced_at TIMESTAMP NOT NULL DEFAULT NOW()
-                )
-            """))
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise RuntimeError("No se pudo recrear la tabla shopify_products con el esquema correcto.")
+        if row == 0:
+            logger.warning("shopify_products missing shopify_id column — rebuilding table")
+            conn.execute(text("DROP TABLE IF EXISTS shopify_products"))
+            conn.execute(text(_SHOPIFY_PRODUCTS_CREATE))
 
 
 @router.post("/sync-products")
@@ -377,9 +375,10 @@ def sync_shopify_products(
             params = {"limit": 250, "page_info": m.group(1)}
 
     try:
-        _ensure_shopify_products_table(session)
-    except RuntimeError as exc:
-        return {"ok": False, "error": str(exc)}
+        _ensure_shopify_products_table()
+    except Exception as exc:
+        logger.error("_ensure_shopify_products_table failed: %s", exc, exc_info=True)
+        return {"ok": False, "error": f"Error preparando tabla: {exc}"}
 
     now = datetime.utcnow()
     upserted = 0
@@ -440,7 +439,11 @@ def list_synced_products(
     current_user: User = Depends(require_admin),
 ):
     """Devuelve los productos sincronizados desde Shopify."""
-    _ensure_shopify_products_table(session)
+    try:
+        _ensure_shopify_products_table()
+    except Exception as exc:
+        logger.error("_ensure_shopify_products_table failed: %s", exc, exc_info=True)
+        return {"total": 0, "page": page, "per_page": per_page, "products": [], "product_types": [], "error": str(exc)}
     where_clauses = ["1=1"]
     params: dict = {}
     if search:
