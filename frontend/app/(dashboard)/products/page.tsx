@@ -22,7 +22,7 @@ export default function ProductsPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [page, setPage] = useState(1);
-  const [syncResult, setSyncResult] = useState<{ synced: number; total_fetched: number; errors: string[] } | null>(null);
+  const [syncResult, setSyncResult] = useState<{ ok?: boolean; synced?: number; total_fetched?: number; errors?: string[]; error?: string } | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["synced-products", search, typeFilter, page],
@@ -65,17 +65,25 @@ export default function ProductsPage() {
       </div>
 
       {syncResult && (
-        <div className={`mb-5 rounded-xl border px-4 py-3 text-sm ${syncResult.errors.length ? "bg-yellow-50 border-yellow-200" : "bg-green-50 border-green-200"}`}>
-          <p className={`font-semibold ${syncResult.errors.length ? "text-yellow-800" : "text-green-800"}`}>
-            {syncResult.synced} productos guardados de {syncResult.total_fetched} obtenidos
-          </p>
-          {syncResult.errors.length > 0 && (
+        <div className={`mb-5 rounded-xl border px-4 py-3 text-sm ${
+          syncResult.error || (syncResult.errors?.length ?? 0) > 0
+            ? "bg-yellow-50 border-yellow-200"
+            : "bg-green-50 border-green-200"
+        }`}>
+          {syncResult.error ? (
+            <p className="font-semibold text-red-700">{syncResult.error}</p>
+          ) : (
+            <p className={`font-semibold ${(syncResult.errors?.length ?? 0) > 0 ? "text-yellow-800" : "text-green-800"}`}>
+              {syncResult.synced ?? 0} productos guardados de {syncResult.total_fetched ?? 0} obtenidos
+            </p>
+          )}
+          {(syncResult.errors?.length ?? 0) > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer text-yellow-700 font-medium">
-                {syncResult.errors.length} error(es) — ver detalle
+                {syncResult.errors!.length} error(es) — ver detalle
               </summary>
               <ul className="mt-1 space-y-0.5">
-                {syncResult.errors.map((e, i) => (
+                {syncResult.errors!.map((e, i) => (
                   <li key={i} className="font-mono text-xs text-yellow-700">{e}</li>
                 ))}
               </ul>
