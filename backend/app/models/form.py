@@ -25,6 +25,16 @@ class SignupForm(SQLModel, table=True):
     html_override: Optional[str] = Field(default=None, sa_column=Column(Text))
     # Coupon code shown in success screen (null = no coupon)
     coupon_code: Optional[str] = Field(default=None)
+    # Visual design: {header_bg, header_bg2, header_text, body_bg, btn_bg, btn_text, border_radius, font}
+    design_config: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    # Multi-step: list of {step, title, description, fields, button_text}
+    steps_config: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    # Dynamic coupon: link to coupon_campaigns table
+    coupon_campaign_id: Optional[int] = Field(default=None)
+    # Automation to enroll on submission (for coupon email)
+    coupon_automation_id: Optional[int] = Field(default=None)
+    # A/B test variants: list of {id, title, description, button_text, weight}
+    ab_variants: Optional[Any] = Field(default=None, sa_column=Column("ab_variants", JSON))
     # active | paused
     status: str = Field(default="active")
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
@@ -42,6 +52,8 @@ class FormSubmission(SQLModel, table=True):
     phone: Optional[str] = None
     source_url: Optional[str] = None
     extra_data: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    coupon_code: Optional[str] = Field(default=None)
+    ab_variant: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -59,6 +71,11 @@ class SignupFormCreate(SQLModel):
     custom_form_fields: Optional[list] = None
     html_override: Optional[str] = None
     coupon_code: Optional[str] = None
+    design_config: Optional[dict] = None
+    steps_config: Optional[list] = None
+    coupon_campaign_id: Optional[int] = None
+    coupon_automation_id: Optional[int] = None
+    ab_variants: Optional[list] = None
 
 
 class SignupFormUpdate(SQLModel):
@@ -76,6 +93,11 @@ class SignupFormUpdate(SQLModel):
     html_override: Optional[str] = None
     coupon_code: Optional[str] = None
     status: Optional[str] = None
+    design_config: Optional[dict] = None
+    steps_config: Optional[list] = None
+    coupon_campaign_id: Optional[int] = None
+    coupon_automation_id: Optional[int] = None
+    ab_variants: Optional[list] = None
 
 
 class SignupFormRead(SQLModel):
@@ -93,6 +115,11 @@ class SignupFormRead(SQLModel):
     custom_form_fields: Optional[list]
     html_override: Optional[str]
     coupon_code: Optional[str]
+    design_config: Optional[dict]
+    steps_config: Optional[list]
+    coupon_campaign_id: Optional[int]
+    coupon_automation_id: Optional[int]
+    ab_variants: Optional[list]
     status: str
     created_by: Optional[int]
     created_at: datetime
@@ -105,3 +132,4 @@ class FormSubmitPayload(SQLModel):
     phone: Optional[str] = None
     source_url: Optional[str] = None
     extra_data: Optional[dict] = None
+    ab_variant: Optional[str] = None

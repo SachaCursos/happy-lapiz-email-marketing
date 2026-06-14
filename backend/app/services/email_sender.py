@@ -34,12 +34,39 @@ Recibiste este correo porque eres cliente de <strong style="color:#6b7280">Happy
 </div>"""
 
 
+def _unsub_link(email: str) -> str:
+    """Return a styled anchor tag for the unsubscribe link."""
+    url = unsub_url(email)
+    return (
+        f'<a href="{url}" style="color:#727272;text-decoration:underline;" target="_blank">'
+        "Cancelar suscripción"
+        "</a>"
+    )
+
+
+def replace_unsub_tag(html: str, email: str) -> str:
+    """Replace {% unsubscribe %} with a proper anchor link before Jinja2 rendering.
+    Must run before Jinja2 to avoid 'Unknown tag unsubscribe' syntax error."""
+    link = _unsub_link(email)
+    return html.replace("{% unsubscribe %}", link)
+
+
 def _inject_footer(html: str, email: str) -> str:
     url = unsub_url(email)
     if "##unsub##" in html:
         return html.replace("##unsub##", url)
-    footer = _FOOTER.format(url=url)
     lower = html.lower()
+    # Don't inject if the template already has an unsubscribe block.
+    # Check for the link text OR the /unsubscribe path in the URL.
+    if "cancelar suscripci" in lower or "/unsubscribe" in lower:
+        return html
+    footer = _FOOTER.format(url=url)
+    # Inject inside the email container div, not after </body>
+    # to avoid unconstrained content that triggers mobile zoom-out
+    insert_before = "</div>\n</td></tr>\n</table>"
+    idx = lower.rfind(insert_before)
+    if idx != -1:
+        return html[:idx] + footer + html[idx:]
     idx = lower.rfind("</body>")
     if idx != -1:
         return html[:idx] + footer + html[idx:]
@@ -55,6 +82,9 @@ def _unsub_headers(email: str) -> dict:
 
 
 def render_html(html_content: str, contact: Contact, coupon_code: str = "") -> str:
+    # Replace {% unsubscribe %} before Jinja2 parses the template — Jinja2 would
+    # throw "Unknown tag 'unsubscribe'" if left as-is.
+    html_content = replace_unsub_tag(html_content, contact.email)
     tpl = Jinja2Template(html_content)
     return tpl.render(
         nombre=_fmt_nombre(contact.name, contact.email),
@@ -108,7 +138,11 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
     resend.api_key = settings.RESEND_API_KEY
     coupon = _resolve_coupon(template.html_content, contact, campaign.id, session)
     html = _inject_footer(render_html(template.html_content, contact, coupon_code=coupon), contact.email)
-    subject = Jinja2Template(campaign.subject).render(nombre=_fmt_nombre(contact.name, contact.email))
+    subject = Jinja2Template(campaign.subject).render(
+        nombre=_fmt_nombre(contact.name, contact.email),
+        first_name=_fmt_nombre(contact.name, contact.email),
+        email=contact.email,
+    )
 
     send = session.exec(
         select(CampaignSend).where(

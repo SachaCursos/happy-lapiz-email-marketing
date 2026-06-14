@@ -1,82 +1,494 @@
 """
-Automation engine — runs every 15 minutes in a background thread.
-Implements 4 trigger types: abandoned_booking, welcome, post_visit, reactivation.
+Automation engine — runs every 60 seconds in a background thread.
+
+Two-phase processing:
+  Phase 1 (trigger detection): each handler detects qualifying events and creates
+  AutomationEnrollment records. No emails sent here.
+  Phase 2 (enrollment processing): _process_enrollments() sends emails for any
+  enrollment whose next_send_at has passed, then advances to the next step or
+  marks as completed/converted.
 """
+import json
 import logging
+import random
 import threading
 import time
 from datetime import datetime, timedelta
 
+import httpx
 import resend
-from jinja2 import Template as JTemplate
-from sqlalchemy import create_engine, text
+from jinja2 import Environment, ChainableUndefined
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.services.sync_shopify_orders import sync_contacts_from_shopify_orders
 from app.database import engine as db_engine
-from app.models.automation import Automation, AutomationRun
+from app.models.automation import Automation, AutomationEnrollment, AutomationRun
 from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
 from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre
+from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment
 
 logger = logging.getLogger(__name__)
 
 
-def _source_engine():
-    url = settings.HOTBOAT_DATABASE_URL or settings.DATABASE_URL
-    return create_engine(url)
+def _get_steps(auto: Automation) -> list:
+    """Return the steps list for an automation, handling legacy single-step automations."""
+    if auto.steps:
+        return auto.steps
+    # Backwards compat: convert legacy top-level template_id/subject to a single step
+    if auto.template_id and auto.subject:
+        config = auto.trigger_config or {}
+        delay = float(config.get("delay_hours", 0))
+        return [{"step": 1, "delay_hours": delay, "template_id": auto.template_id, "subject": auto.subject, "condition": None}]
+    return []
 
 
-def _already_sent(session: Session, automation_id: int, trigger_key: str) -> bool:
+def _already_sent_step(session: Session, automation_id: int, trigger_key: str, step_number: int) -> bool:
+    """Check if a specific step was already successfully sent for this trigger_key."""
     return session.exec(
         select(AutomationRun).where(
             AutomationRun.automation_id == automation_id,
             AutomationRun.trigger_key == trigger_key,
+            AutomationRun.step_number == step_number,
+            AutomationRun.status == "sent",
         )
     ).first() is not None
 
 
-def _send_email(
+def _enroll(
     session: Session,
-    automation: Automation,
+    auto: Automation,
+    contact_email: str,
+    trigger_key: str,
+    first_step_delay_hours: float,
+    extra_vars: dict | None = None,
+) -> bool:
+    """Create an enrollment for a contact. Returns False if already enrolled."""
+    existing = session.exec(
+        select(AutomationEnrollment).where(
+            AutomationEnrollment.automation_id == auto.id,
+            AutomationEnrollment.trigger_key == trigger_key,
+        )
+    ).first()
+    if existing:
+        return False
+
+    enrollment = AutomationEnrollment(
+        automation_id=auto.id,
+        contact_email=contact_email.lower(),
+        trigger_key=trigger_key,
+        enrolled_at=datetime.utcnow(),
+        next_send_at=datetime.utcnow() + timedelta(hours=first_step_delay_hours),
+        next_step=1,
+        status="active",
+        extra_vars_json=json.dumps(extra_vars or {}),
+    )
+    session.add(enrollment)
+    session.commit()
+    return True
+
+
+def _normalize_city(city: str) -> str:
+    """Lowercase + strip accents for fuzzy city matching."""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", city.lower().strip())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _resolve_location_delay(city: str, rules: list, default_delay: float) -> float:
+    """Return the delay_hours for a shipping city based on location_delay_rules.
+
+    Rules are evaluated in order. The first matching non-default rule wins.
+    If no rule matches, the rule marked is_default is used; if none, default_delay.
+    """
+    if not rules:
+        return default_delay
+    city_norm = _normalize_city(city) if city else ""
+    for rule in rules:
+        if rule.get("is_default"):
+            continue
+        cities_norm = [_normalize_city(c) for c in rule.get("cities", [])]
+        if city_norm and city_norm in cities_norm:
+            return float(rule.get("delay_hours", default_delay))
+    # Fall back to default rule
+    for rule in rules:
+        if rule.get("is_default"):
+            return float(rule.get("delay_hours", default_delay))
+    return default_delay
+
+
+def _passes_order_count_filter(filter_cfg: dict | None, orders_count: int) -> bool:
+    """Return True if the contact's order count passes the configured filter.
+
+    operators: eq, lt, lte, gt, gte
+    value: integer (Shopify orders_count includes the current order for placed_order events)
+    """
+    if not filter_cfg:
+        return True
+    op = filter_cfg.get("operator", "eq")
+    val = int(filter_cfg.get("value", 1))
+    if op == "eq":  return orders_count == val
+    if op == "lt":  return orders_count < val
+    if op == "lte": return orders_count <= val
+    if op == "gt":  return orders_count > val
+    if op == "gte": return orders_count >= val
+    return True
+
+
+def _passes_condition(condition: str | None, enrollment: AutomationEnrollment, session: Session) -> bool:
+    """Check enrollment condition before sending a step. Returns True if the step should be sent."""
+    if not condition or condition == "always":
+        return True
+
+    if condition == "not_purchased":
+        # Skip if the contact made a purchase after enrollment
+        result = session.execute(text("""
+            SELECT 1 FROM shopify_orders
+            WHERE LOWER(email) = LOWER(:email)
+              AND created_at >= :since
+            LIMIT 1
+        """), {"email": enrollment.contact_email, "since": enrollment.enrolled_at}).fetchone()
+        return result is None  # True = no purchase = still send
+
+    if condition == "not_recovered":
+        # For cart abandonment: skip if cart was recovered (purchased)
+        extra = json.loads(enrollment.extra_vars_json or "{}")
+        checkout_token = enrollment.trigger_key.replace("abandoned_cart:", "")
+        result = session.execute(text("""
+            SELECT 1 FROM carritos_abandonados
+            WHERE checkout_token = :token AND recovered = TRUE
+            LIMIT 1
+        """), {"token": checkout_token}).fetchone()
+        return result is None  # True = not recovered = still send
+
+    return True
+
+
+def _pick_variant(step: dict) -> tuple[dict, str | None]:
+    """If the step has A/B variants, randomly pick one by weight. Returns (effective_step, variant_label)."""
+    variants = step.get("variants")
+    if not variants or len(variants) < 2:
+        return step, None
+    total_weight = sum(float(v.get("weight", 1)) for v in variants)
+    rand = random.uniform(0, total_weight)
+    cumulative = 0.0
+    for v in variants:
+        cumulative += float(v.get("weight", 1))
+        if rand <= cumulative:
+            return {**step, "template_id": v["template_id"], "subject": v["subject"]}, str(v["variant"])
+    last = variants[-1]
+    return {**step, "template_id": last["template_id"], "subject": last["subject"]}, str(last["variant"])
+
+
+def _fetch_cross_sell_products(
+    collection_id: str | None,
+    product_ids: list[str],
+    exclude_ids: set[str],
+    max_products: int = 4,
+) -> list[dict]:
+    """Fetch recommended products from Shopify for cross-sell; excludes purchased products."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        return []
+    headers = {"X-Shopify-Access-Token": token}
+    raw: list[dict] = []
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            if collection_id:
+                r = client.get(
+                    f"https://{domain}/admin/api/2024-01/collections/{collection_id}/products.json",
+                    params={"limit": max_products + len(exclude_ids) + 5, "fields": "id,title,handle,images,variants,status"},
+                    headers=headers,
+                )
+                if r.status_code == 200:
+                    raw = r.json().get("products", [])
+            elif product_ids:
+                r = client.get(
+                    f"https://{domain}/admin/api/2024-01/products.json",
+                    params={"ids": ",".join(product_ids), "fields": "id,title,handle,images,variants,status"},
+                    headers=headers,
+                )
+                if r.status_code == 200:
+                    raw = r.json().get("products", [])
+    except Exception as exc:
+        logger.warning("cross_sell: product fetch failed: %s", exc)
+        return []
+
+    result = []
+    for p in raw:
+        if p.get("status", "active") != "active":
+            continue
+        if str(p.get("id", "")) in exclude_ids:
+            continue
+        variant = (p.get("variants") or [{}])[0]
+        try:
+            price_fmt = f"${int(float(variant.get('price', 0))):,}".replace(",", ".")
+        except Exception:
+            price_fmt = ""
+        result.append({
+            "title": p.get("title", ""),
+            "url": f"https://www.happylapiz.cl/products/{p.get('handle', '')}",
+            "image_url": (p.get("images") or [{}])[0].get("src", ""),
+            "price": price_fmt,
+        })
+        if len(result) >= max_products:
+            break
+    return result
+
+
+def _fetch_cross_sell_from_db(
+    session: Session,
+    customer_email: str,
+    purchased_product_ids: list[str],
+    max_products: int = 4,
+) -> list[dict]:
+    """DB-based cross-sell: match active products by shared tags/type, exclude customer's history."""
+    ids_int = [int(p) for p in purchased_product_ids if p.isdigit()]
+    if not ids_int:
+        return []
+
+    # Tags and product_type of the purchased products
+    tag_rows = session.execute(text("""
+        SELECT tags, product_type FROM shopify_products
+        WHERE shopify_id = ANY(:ids) AND status = 'active'
+    """), {"ids": ids_int}).fetchall()
+
+    if not tag_rows:
+        return []
+
+    all_tags: set[str] = set()
+    product_types: set[str] = set()
+    for row in tag_rows:
+        if row[0]:
+            for t in row[0].split(","):
+                s = t.strip().lower()
+                if s:
+                    all_tags.add(s)
+        if row[1]:
+            product_types.add(row[1].strip().lower())
+
+    # All product IDs ever purchased by this customer (from order webhook payloads)
+    history_rows = session.execute(text("""
+        SELECT payload FROM shopify_events
+        WHERE LOWER(email) = LOWER(:email)
+          AND event_type = 'placed_order'
+          AND payload IS NOT NULL
+    """), {"email": customer_email}).fetchall()
+
+    ever_bought: set[str] = set(str(p) for p in purchased_product_ids)
+    for row in history_rows:
+        try:
+            payload_data = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            for item in payload_data.get("line_items", []):
+                pid = str(item.get("product_id", ""))
+                if pid:
+                    ever_bought.add(pid)
+        except Exception:
+            pass
+
+    excl_ints = [int(p) for p in ever_bought if p.isdigit()]
+
+    if not all_tags and not product_types:
+        return []
+
+    params: dict = {"max_n": max_products}
+    match_parts: list[str] = []
+    for i, tag in enumerate(sorted(all_tags)):
+        match_parts.append(f"LOWER(tags) LIKE :t{i}")
+        params[f"t{i}"] = f"%{tag}%"
+    for i, pt in enumerate(sorted(product_types)):
+        match_parts.append(f"LOWER(product_type) = :pt{i}")
+        params[f"pt{i}"] = pt
+
+    match_clause = " OR ".join(match_parts)
+    excl_clause = "AND shopify_id != ALL(:excl)" if excl_ints else ""
+    if excl_ints:
+        params["excl"] = excl_ints
+
+    try:
+        rows = session.execute(text(f"""
+            SELECT shopify_id, title, handle, image_url, price
+            FROM shopify_products
+            WHERE status = 'active'
+              {excl_clause}
+              AND ({match_clause})
+            ORDER BY RANDOM()
+            LIMIT :max_n
+        """), params).fetchall()
+    except Exception as exc:
+        logger.warning("cross_sell_db: query failed: %s", exc)
+        return []
+
+    result = []
+    for row in rows:
+        _, title, handle, image_url, price = row
+        try:
+            price_fmt = f"${int(float(price or 0)):,}".replace(",", ".")
+        except Exception:
+            price_fmt = ""
+        result.append({
+            "title": title or "",
+            "url": f"https://www.happylapiz.cl/products/{handle or ''}",
+            "image_url": image_url or "",
+            "price": price_fmt,
+        })
+    return result
+
+
+def _build_cross_sell_html(products: list[dict]) -> str:
+    """Generate a 2-column responsive product grid for cross-sell emails."""
+    if not products:
+        return ""
+    rows_html = ""
+    for i in range(0, len(products), 2):
+        pair = products[i:i+2]
+        cells = ""
+        for p in pair:
+            safe_title = p["title"].replace("'", "&#39;").replace('"', '&quot;')
+            img = (
+                f'<img src="{p["image_url"]}" alt="{safe_title}" width="200" '
+                f'style="width:100%;max-width:200px;height:auto;border-radius:10px;'
+                f'display:block;margin:0 auto 12px;" />'
+            ) if p.get("image_url") else ""
+            cells += (
+                f'<td width="50%" style="width:50%;padding:12px 8px;vertical-align:top;text-align:center;">'
+                f'<a href="{p["url"]}" style="text-decoration:none;color:#1a1a1a;display:block;">'
+                f'{img}'
+                f'<p style="font-size:14px;font-weight:600;margin:0 0 5px;line-height:1.3;">{p["title"]}</p>'
+                f'<p style="font-size:15px;color:#e85d04;font-weight:700;margin:0 0 12px;">{p["price"]}</p>'
+                f'<span style="display:inline-block;background:#f97316;color:#fff;font-size:12px;'
+                f'font-weight:600;padding:7px 18px;border-radius:20px;text-decoration:none;">Ver producto &rarr;</span>'
+                f'</a></td>'
+            )
+        if len(pair) == 1:
+            cells += '<td width="50%" style="width:50%;"></td>'
+        rows_html += f"<tr>{cells}</tr>"
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;max-width:560px;margin:0 auto;">'
+        f"<tbody>{rows_html}</tbody></table>"
+    )
+
+
+def _send_email_step(
+    session: Session,
+    auto: Automation,
     contact: Contact,
     trigger_key: str,
+    step: dict,
+    step_number: int,
     extra_vars: dict | None = None,
+    variant: str | None = None,
 ) -> None:
-    tpl = session.get(Template, automation.template_id)
+    """Send the email for a specific step and record the run."""
+    tpl = session.get(Template, int(step["template_id"]))
     if not tpl:
-        logger.warning("Automation %d: template %d not found", automation.id, automation.template_id)
+        logger.warning("Automation %d step %d: template %d not found", auto.id, step_number, step["template_id"])
         return
 
-    vars_ = {
-        "nombre": _fmt_nombre(contact.name, contact.email),
-        "first_name": _fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
-        "email": contact.email,
-        "orders_count": contact.orders_count,
-        "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
-        "ticket_medio": contact.ticket_medio or 0,
-        "total_spent": contact.total_spent or 0,
-        "shipping_city": contact.shipping_city or "",
-        **(extra_vars or {}),
-    }
-    html = _inject_footer(JTemplate(tpl.html_content).render(**vars_), contact.email)
-    resend.api_key = settings.RESEND_API_KEY
-
     run = AutomationRun(
-        automation_id=automation.id,
+        automation_id=auto.id,
         contact_id=contact.id,
         contact_email=contact.email,
         trigger_key=trigger_key,
+        step_number=step_number,
         triggered_at=datetime.utcnow(),
+        status="failed",
+        variant_sent=variant,
     )
     try:
+        # Generate dynamic coupon if automation has one configured
+        coupon_code: str | None = None
+        if auto.coupon_campaign_id:
+            try:
+                from app.routers.forms import _generate_dynamic_coupon
+                coupon_code = _generate_dynamic_coupon(session, auto.coupon_campaign_id, contact.email)
+            except Exception as exc:
+                logger.warning("Coupon generation failed for %s: %s", contact.email, exc)
+
+        nombre = _fmt_nombre(contact.name, contact.email)
+        first_name = nombre.split()[0] if contact.name else ""
+        cf = contact.custom_fields or {}
+        if isinstance(cf, str):
+            try:
+                cf = json.loads(cf)
+            except Exception:
+                cf = {}
+        vars_ = {
+            "nombre": nombre,
+            "first_name": first_name,
+            "email": contact.email,
+            "orders_count": contact.orders_count or 0,
+            "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
+            "ticket_medio": contact.ticket_medio or 0,
+            "total_spent": contact.total_spent or 0,
+            "shipping_city": contact.shipping_city or "",
+            "shipping_province": contact.shipping_province or "",
+            "coupon_code": coupon_code or "",
+            "custom_fields": cf,
+            # Spread custom_fields at top level so {{ nombre_regalado }} works directly
+            **{k: v for k, v in cf.items() if isinstance(k, str)},
+            **(extra_vars or {}),
+        }
+        # If there's a coupon code and a checkout URL, inject checkout_url_with_coupon
+        # so templates can use {{ event.extra.checkout_url_with_coupon }} to get the
+        # checkout URL with the discount pre-applied (Shopify supports ?discount=CODE).
+        if coupon_code:
+            event_extra = vars_.get("event", {}).get("extra", {})
+            raw_url = event_extra.get("checkout_url", "")
+            if raw_url:
+                sep = "&" if "?" in raw_url else "?"
+                event_extra["checkout_url_with_coupon"] = f"{raw_url}{sep}discount={coupon_code}"
+        # Inject cross-sell product grid if configured
+        cross_sell_cfg = (auto.trigger_config or {}).get("cross_sell_config") if auto.trigger_config else None
+        if cross_sell_cfg:
+            purchased_ids = [str(p) for p in (vars_.get("purchased_product_ids") or [])]
+            max_p = int(cross_sell_cfg.get("max_products", 4))
+            mode = cross_sell_cfg.get("mode", "db")
+            has_explicit = bool(cross_sell_cfg.get("collection_id") or cross_sell_cfg.get("product_ids"))
+            if mode == "db" or not has_explicit:
+                # Use DB-based matching (tags + product_type + exclude purchase history)
+                rec = _fetch_cross_sell_from_db(
+                    session=session,
+                    customer_email=contact.email,
+                    purchased_product_ids=purchased_ids,
+                    max_products=max_p,
+                )
+            else:
+                rec = _fetch_cross_sell_products(
+                    collection_id=cross_sell_cfg.get("collection_id") or None,
+                    product_ids=[str(p) for p in (cross_sell_cfg.get("product_ids") or [])],
+                    exclude_ids=set(purchased_ids),
+                    max_products=max_p,
+                )
+            vars_["recommended_products"] = rec
+            vars_["recommended_products_html"] = _build_cross_sell_html(rec)
+
+        _env = Environment(undefined=ChainableUndefined)
+        raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
+        html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
+
+        preview_text = step.get("preview_text", "")
+        if preview_text:
+            preheader = (
+                f'<span style="display:none;max-height:0;overflow:hidden;'
+                f'font-size:1px;line-height:1px;color:#fff;opacity:0">{preview_text}</span>'
+            )
+            # Insert right after <body ...> tag so email clients pick it up as preheader
+            import re as _re
+            html = _re.sub(r"(<body[^>]*>)", r"\1" + preheader, html, count=1) if "<body" in html.lower() else preheader + html
+
+        resend.api_key = settings.RESEND_API_KEY
         result = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
             "to": [contact.email],
-            "subject": automation.subject,
+            "subject": _env.from_string(str(step.get("subject", ""))).render(**vars_),
             "html": html,
             "headers": _unsub_headers(contact.email),
         })
@@ -84,91 +496,102 @@ def _send_email(
         run.status = "sent"
         run.resend_id = resend_id
         run.executed_at = datetime.utcnow()
-        logger.info("Automation %d sent to %s (key=%s)", automation.id, contact.email, trigger_key)
+        logger.info("Automation %d step %d variant=%s sent to %s", auto.id, step_number, variant or "-", contact.email)
     except Exception as exc:
-        run.status = "failed"
         run.error = str(exc)[:500]
         run.executed_at = datetime.utcnow()
-        logger.error("Automation %d failed for %s: %s", automation.id, contact.email, exc)
+        logger.error("Automation %d step %d failed for %s: %s", auto.id, step_number, contact.email, exc)
 
     session.add(run)
     session.commit()
 
 
-# ── Trigger handlers ──────────────────────────────────────────────────────────
+# ── Enrollment processing ──────────────────────────────────────────────────────
 
-def _check_abandoned_booking(auto: Automation, session: Session) -> None:
-    """
-    Fire when a booking has status='pending_payment' and paid_at IS NULL,
-    created between delay_minutes and lookback_hours ago.
-    Passes full booking details to the template as variables.
-    """
-    config = auto.trigger_config or {}
-    delay_minutes = int(config.get("delay_minutes", 5))
-    lookback_hours = int(config.get("lookback_hours", 24))
-
+def _process_enrollments(session: Session) -> None:
+    """Phase 2: send emails for all ready enrollments and advance to next step."""
     now = datetime.utcnow()
-    cutoff_old = now - timedelta(minutes=delay_minutes)
-    cutoff_recent = now - timedelta(hours=lookback_hours)
 
-    try:
-        src = _source_engine()
-        with src.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT id, email, nombre_cliente, servicio, fecha, hora,
-                       num_adultos, num_ninos, ingreso_total, created_at
-                FROM all_appointments
-                WHERE status = 'pending_payment'
-                  AND (paid_at IS NULL OR payment_status != 'completed')
-                  AND created_at <= :cutoff_old
-                  AND created_at >= :cutoff_recent
-                  AND email IS NOT NULL AND email <> ''
-                ORDER BY created_at DESC
-                LIMIT 200
-            """), {"cutoff_old": cutoff_old, "cutoff_recent": cutoff_recent}).fetchall()
-    except Exception as exc:
-        logger.error("Automation %d: cannot read source DB: %s", auto.id, exc)
-        return
+    ready = session.exec(
+        select(AutomationEnrollment)
+        .where(AutomationEnrollment.status == "active")
+        .where(AutomationEnrollment.next_send_at <= now)
+    ).all()
 
-    for row in rows:
-        email = row.email.lower().strip()
-        # Dedup per booking row ID — one email per abandoned cart attempt
-        trigger_key = f"abandoned:{row.id}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
-        contact = session.exec(select(Contact).where(Contact.email == email)).first()
-        if not contact or not contact.opted_in:
+    for enrollment in ready:
+        auto = session.get(Automation, enrollment.automation_id)
+        if not auto or auto.status != "active":
+            enrollment.status = "cancelled"
+            session.add(enrollment)
+            session.commit()
             continue
 
-        # Format booking details for the template
-        fecha_str = str(row.fecha) if row.fecha else ""
-        hora_str = str(row.hora)[:5] if row.hora else ""
-        adultos = int(row.num_adultos or 0)
-        ninos = int(row.num_ninos or 0)
-        total = f"${int(row.ingreso_total):,}".replace(",", ".") if row.ingreso_total else ""
-        personas_str = f"{adultos} adulto{'s' if adultos != 1 else ''}"
-        if ninos:
-            personas_str += f" + {ninos} niño{'s' if ninos != 1 else ''}"
+        steps = _get_steps(auto)
+        step_idx = enrollment.next_step - 1  # 0-indexed
 
-        extra_vars = {
-            "servicio": row.servicio or "tu experiencia",
-            "fecha_reserva": fecha_str,
-            "hora_reserva": hora_str,
-            "personas": personas_str,
-            "num_adultos": adultos,
-            "num_ninos": ninos,
-            "ingreso_total": total,
-        }
-        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
+        if step_idx >= len(steps):
+            enrollment.status = "completed"
+            session.add(enrollment)
+            session.commit()
+            continue
 
+        step = steps[step_idx]
+
+        # Check condition — if it fails, the contact converted/shouldn't receive
+        if not _passes_condition(step.get("condition"), enrollment, session):
+            enrollment.status = "converted"
+            logger.info("Enrollment %d: condition '%s' failed, marking converted", enrollment.id, step.get("condition"))
+            session.add(enrollment)
+            session.commit()
+            continue
+
+        # Guard against double-send (e.g. if engine ran twice concurrently)
+        if _already_sent_step(session, auto.id, enrollment.trigger_key, enrollment.next_step):
+            logger.warning("Enrollment %d step %d already sent, advancing", enrollment.id, enrollment.next_step)
+        else:
+            contact = session.exec(
+                select(Contact).where(Contact.email == enrollment.contact_email.lower())
+            ).first()
+            if not contact:
+                extra = json.loads(enrollment.extra_vars_json or "{}")
+                contact = Contact(
+                    email=enrollment.contact_email,
+                    name=extra.get("nombre", enrollment.contact_email),
+                    opted_in=True,
+                    orders_count=0,
+                )
+
+            extra_vars = json.loads(enrollment.extra_vars_json or "{}")
+            effective_step, variant_label = _pick_variant(step)
+            _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
+
+        # Advance to next step
+        next_step_num = enrollment.next_step + 1
+        if next_step_num > len(steps):
+            enrollment.status = "completed"
+        else:
+            next_step = steps[next_step_num - 1]
+            delay = float(next_step.get("delay_hours", 24))
+            enrollment.next_step = next_step_num
+            enrollment.next_send_at = now + timedelta(hours=delay)
+
+        session.add(enrollment)
+        session.commit()
+
+
+# ── Trigger handlers (Phase 1 — enroll only, don't send) ─────────────────────
 
 _BATCH_ORIGINS = {"Formulario T&C", "Sincronización Shopify", "importación CSV", ""}
 
 
 def _check_welcome(auto: Automation, session: Session) -> None:
-    """Fire welcome email to contacts created organically (popup/form), not batch imports."""
     config = auto.trigger_config or {}
-    delay_hours = int(config.get("delay_hours", 0))
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 0))))
+
+    delay_hours = float(config.get("delay_hours", 0))
     window_end = datetime.utcnow() - timedelta(hours=delay_hours)
     window_start = window_end - timedelta(minutes=20)
 
@@ -180,21 +603,24 @@ def _check_welcome(auto: Automation, session: Session) -> None:
         )
     ).all()
 
+    order_count_filter = config.get("order_count_filter")
     for contact in contacts:
-        # Skip contacts imported in batch (TC form, sync, CSV) — only fire for
-        # organic signups via the popup/embed form (origin_utm is a URL or form name)
         origin = (contact.origin_utm or "").strip()
         if origin in _BATCH_ORIGINS or origin.startswith("Formulario #"):
             continue
-        trigger_key = f"welcome:{contact.id}"
-        if _already_sent(session, auto.id, trigger_key):
+        if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
             continue
-        _send_email(session, auto, contact, trigger_key)
+        trigger_key = f"welcome:{contact.id}"
+        extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
+        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
 def _check_post_visit(auto: Automation, session: Session) -> None:
-    """Fire N days after ultima_visita."""
     config = auto.trigger_config or {}
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", 0))
     delay_days = int(config.get("delay_days", 3))
     target_date = (datetime.utcnow() - timedelta(days=delay_days)).date()
 
@@ -205,19 +631,24 @@ def _check_post_visit(auto: Automation, session: Session) -> None:
         )
     ).all()
 
+    order_count_filter = config.get("order_count_filter")
     for contact in contacts:
-        trigger_key = f"postvisit:{contact.id}:{target_date}"
-        if _already_sent(session, auto.id, trigger_key):
+        if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
             continue
-        _send_email(session, auto, contact, trigger_key)
+        trigger_key = f"postvisit:{contact.id}:{target_date}"
+        extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
+        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
 def _check_reactivation(auto: Automation, session: Session) -> None:
-    """Fire when contact hasn't visited in N days, respecting a cooldown period."""
     config = auto.trigger_config or {}
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", 0))
+
     inactivity_days = int(config.get("inactivity_days", 90))
     cooldown_days = int(config.get("cooldown_days", 180))
-
     cutoff_date = (datetime.utcnow() - timedelta(days=inactivity_days)).date()
     cooldown_start = datetime.utcnow() - timedelta(days=cooldown_days)
 
@@ -229,6 +660,7 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
         )
     ).all()
 
+    order_count_filter = config.get("order_count_filter")
     for contact in contacts:
         recent_run = session.exec(
             select(AutomationRun).where(
@@ -240,67 +672,97 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
         ).first()
         if recent_run:
             continue
-        # Weekly dedup to avoid burst on startup
+        if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
+            continue
         week = datetime.utcnow().strftime("%Y-W%W")
         trigger_key = f"reactivation:{contact.id}:{week}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
-        _send_email(session, auto, contact, trigger_key)
+        extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
+        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
 def _check_abandoned_cart(auto: Automation, session: Session) -> None:
-    """Carrito abandonado: checkout creado hace más de delay_hours sin orden asociada."""
     config = auto.trigger_config or {}
-    delay_hours = int(config.get("delay_hours", 1))
-    lookback_hours = int(config.get("lookback_hours", 24))
+    lookback_hours = float(config.get("lookback_hours", 24))
     now = datetime.utcnow()
-    cutoff_old = now - timedelta(hours=delay_hours)
     cutoff_recent = now - timedelta(hours=lookback_hours)
 
-    rows = session.exec(text("""
-        SELECT id, checkout_token, email, cart_total, line_items
-        FROM shopify_checkouts
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 1))))
+
+    rows = session.execute(text("""
+        SELECT id, checkout_token, email, first_name, last_name,
+               subtotal_price, line_items, checkout_url
+        FROM carritos_abandonados
         WHERE recovered = FALSE
           AND abandoned_email_sent = FALSE
-          AND email IS NOT NULL
-          AND created_at <= :old
+          AND email IS NOT NULL AND email <> ''
           AND created_at >= :recent
-    """), {"old": cutoff_old, "recent": cutoff_recent}).fetchall()
+        ORDER BY created_at ASC
+        LIMIT 200
+    """), {"recent": cutoff_recent}).fetchall()
 
     for row in rows:
         email = (row[2] or "").lower().strip()
         if not email:
             continue
-        trigger_key = f"abandoned_cart:{row[1]}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
+
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
-        if not contact or not contact.opted_in:
+        if contact and contact.opted_in is False:
             continue
-        items = row[4] or []
-        first_item = items[0].get("title", "") if items else ""
-        extra_vars = {
-            "cart_total": f"${int(row[3] or 0):,}".replace(",", "."),
-            "first_product": first_item,
-            "cart_url": "https://happylapiz.cl/cart",
-        }
-        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
-        session.exec(text("UPDATE shopify_checkouts SET abandoned_email_sent = TRUE WHERE id = :id"), {"id": row[0]})
+
+        # Apply order count filter (uses completed orders so far; for abandoned_cart
+        # value 0 = nunca ha comprado, 1 = ya compró una vez antes, etc.)
+        order_count_filter = config.get("order_count_filter")
+        if order_count_filter and contact:
+            if not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
+                continue
+
+        # Atomically claim the cart to prevent concurrent duplicate enrollments
+        claimed = session.execute(text("""
+            UPDATE carritos_abandonados
+            SET abandoned_email_sent = TRUE
+            WHERE id = :id AND abandoned_email_sent = FALSE
+        """), {"id": row[0]})
         session.commit()
+        if claimed.rowcount == 0:
+            continue
+
+        trigger_key = f"abandoned_cart:{row[1]}"
+        first_name = (row[3] or "").strip()
+        last_name  = (row[4] or "").strip()
+        full_name  = f"{first_name} {last_name}".strip() or email
+        items = row[6] or []
+        first_item = items[0].get("title", "") if items else ""
+        subtotal = float(row[5] or 0)
+        checkout_url = row[7] or "https://happylapiz.cl/cart"
+
+        extra_vars = {
+            "nombre":        full_name,
+            "first_name":    first_name or full_name.split()[0],
+            "cart_total":    f"${int(subtotal):,}".replace(",", "."),
+            "first_product": first_item,
+            "cart_url":      checkout_url,
+            "event":         {"extra": {"checkout_url": checkout_url}},
+        }
+        _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
 
 
 def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) -> None:
-    """Dispara email cuando hay un evento de Shopify no procesado del tipo indicado."""
     config = auto.trigger_config or {}
-    delay_hours = int(config.get("delay_hours", 0))
-    lookback_hours = int(config.get("lookback_hours", 48))
+    lookback_hours = float(config.get("lookback_hours", 48))
     now = datetime.utcnow()
-    cutoff_old = now - timedelta(hours=delay_hours)
     cutoff_recent = now - timedelta(hours=lookback_hours)
 
-    # Map trigger_type back to shopify topic
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 0))))
+
     topic_map = {
         "placed_order":    "orders/create",
+        "ordered_product": "orders/create",
         "fulfilled_order": "orders/fulfilled",
         "cancelled_order": "orders/cancelled",
     }
@@ -308,43 +770,163 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
     if not topic:
         return
 
-    rows = session.exec(text("""
-        SELECT id, email, payload FROM shopify_events
-        WHERE topic = :topic
-          AND processed = FALSE
-          AND email IS NOT NULL
-          AND created_at <= :old
-          AND created_at >= :recent
-        ORDER BY created_at ASC LIMIT 200
-    """), {"topic": topic, "old": cutoff_old, "recent": cutoff_recent}).fetchall()
+    # For event-based triggers, only enroll events that haven't been enrolled yet
+    rows = session.execute(text("""
+        SELECT se.id, se.email, se.payload
+        FROM shopify_events se
+        WHERE se.topic = :topic
+          AND se.processed = FALSE
+          AND se.email IS NOT NULL
+          AND se.created_at >= :recent
+        ORDER BY se.created_at ASC LIMIT 200
+    """), {"topic": topic, "recent": cutoff_recent}).fetchall()
+
+    order_count_filter = config.get("order_count_filter")
+    location_delay_rules = config.get("location_delay_rules", [])
 
     for row in rows:
         email = (row[1] or "").lower().strip()
         if not email:
             continue
-        trigger_key = f"{trigger_type}:{row[0]}"
-        if _already_sent(session, auto.id, trigger_key):
-            continue
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
         if not contact or not contact.opted_in:
             continue
+        trigger_key = f"{trigger_type}:{row[0]}"
         payload = row[2] or {}
+
+        # Apply order count filter before enrolling.
+        # For Shopify order events the payload includes customer.orders_count which
+        # already reflects the current order (e.g. 1 for a first-time buyer).
+        if order_count_filter:
+            cust_count = payload.get("customer", {}).get("orders_count")
+            count_to_check = int(cust_count) if cust_count is not None else (contact.orders_count or 0)
+            if not _passes_order_count_filter(order_count_filter, count_to_check):
+                # Mark processed so the engine won't keep re-evaluating this event
+                session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+                session.commit()
+                continue
+
         items = payload.get("line_items", [])
+
+        # Apply product filter for ordered_product trigger
+        product_filter_ids = config.get("product_filter_ids", [])
+        if product_filter_ids and trigger_type == "ordered_product":
+            item_product_ids = {str(item.get("product_id", "")) for item in items}
+            filter_ids = {str(p) for p in product_filter_ids}
+            if not item_product_ids.intersection(filter_ids):
+                session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+                session.commit()
+                continue
+
+        # Resolve delay based on shipping city (overrides the step default when rules exist)
+        shipping_city = payload.get("shipping_address", {}).get("city", "")
+        effective_delay = _resolve_location_delay(shipping_city, location_delay_rules, first_delay)
         first_item = items[0].get("title", "") if items else ""
         tracking = ""
         if trigger_type == "fulfilled_order":
-            for fulfillment in payload.get("fulfillments", []):
-                tracking = fulfillment.get("tracking_number", "") or ""
+            for f in payload.get("fulfillments", []):
+                tracking = f.get("tracking_number", "") or ""
                 break
         extra_vars = {
+            "nombre": contact.name or email,
+            "first_name": (contact.name or email).split()[0],
             "order_number": str(payload.get("order_number", "")),
             "order_total": f"${int(float(payload.get('total_price', 0))):,}".replace(",", "."),
             "first_product": first_item,
             "tracking_number": tracking,
+            "shipping_city": shipping_city,
+            "shipping_province": payload.get("shipping_address", {}).get("province", ""),
+            "purchased_product_ids": [str(item.get("product_id", "")) for item in items],
         }
-        _send_email(session, auto, contact, trigger_key, extra_vars=extra_vars)
-        session.exec(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
-        session.commit()
+        enrolled = _enroll(session, auto, email, trigger_key, effective_delay, extra_vars)
+        if enrolled:
+            session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+            session.commit()
+
+
+def _check_birthday_reminder(auto: Automation, session: Session) -> None:
+    """
+    Triggers for contacts whose custom_fields contains a child birthday (fecha_nacimiento)
+    that falls exactly `days_before` days from today (checked daily).
+    Each contact+year combination fires once. custom_fields keys configured via trigger_config:
+      days_before: int            — how many days before birthday to send (default 30)
+      birthday_field: str         — key inside custom_fields for the date (default "fecha_nacimiento")
+      name_field: str             — key inside custom_fields for the child's name (default "nombre_regalado")
+      relation_field: str         — key inside custom_fields for relationship (default "relacion")
+    """
+    config = auto.trigger_config or {}
+    days_before = int(config.get("days_before", 30))
+    birthday_field = config.get("birthday_field", "fecha_nacimiento")
+    name_field = config.get("name_field", "nombre_regalado")
+    relation_field = config.get("relation_field", "relacion")
+
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", 0))
+
+    today = datetime.utcnow().date()
+    target = today + timedelta(days=days_before)  # the birthday date we're looking for
+    target_mmdd = f"{target.month:02d}-{target.day:02d}"  # MM-DD, ignoring year
+
+    # Query contacts that have custom_fields with the birthday field set
+    rows = session.execute(text("""
+        SELECT id, email, name, custom_fields
+        FROM contacts
+        WHERE opted_in = TRUE
+          AND custom_fields IS NOT NULL
+          AND custom_fields::text LIKE :pattern
+    """), {"pattern": f"%{birthday_field}%"}).fetchall()
+
+    for row in rows:
+        cf = row[3] or {}
+        if isinstance(cf, str):
+            try:
+                cf = json.loads(cf)
+            except Exception:
+                continue
+
+        raw_date = cf.get(birthday_field, "")
+        if not raw_date:
+            continue
+
+        # Accept YYYY-MM-DD or DD-MM-YYYY or DD/MM/YYYY
+        try:
+            if len(raw_date) == 10 and raw_date[4] in ("-", "/"):
+                # YYYY-MM-DD
+                bday = datetime.strptime(raw_date, "%Y-%m-%d").date()
+                bday_mmdd = f"{bday.month:02d}-{bday.day:02d}"
+            else:
+                for fmt in ("%d-%m-%Y", "%d/%m/%Y"):
+                    try:
+                        bday = datetime.strptime(raw_date, fmt).date()
+                        bday_mmdd = f"{bday.month:02d}-{bday.day:02d}"
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    continue
+        except Exception:
+            continue
+
+        if bday_mmdd != target_mmdd:
+            continue
+
+        child_name = cf.get(name_field, "")
+        relation = cf.get(relation_field, "")
+        contact_name = row[2] or row[1]
+        first = contact_name.split()[0]
+
+        trigger_key = f"birthday:{row[0]}:{target.year}:{days_before}"
+        extra_vars = {
+            "nombre": contact_name,
+            "first_name": first,
+            "nombre_regalado": child_name,
+            "relacion": relation,
+            "dias_para_cumpleanos": days_before,
+            "fecha_cumpleanos": str(target),
+        }
+        _enroll(session, auto, row[1], trigger_key, first_delay, extra_vars)
 
 
 def _make_shopify_handler(trigger_type: str):
@@ -354,7 +936,6 @@ def _make_shopify_handler(trigger_type: str):
 
 
 HANDLERS = {
-    # Shopify order lifecycle
     "checkout_started":         _make_shopify_handler("checkout_started"),
     "abandoned_cart":           _check_abandoned_cart,
     "placed_order":             _make_shopify_handler("placed_order"),
@@ -367,23 +948,19 @@ HANDLERS = {
     "cancelled_order":          _make_shopify_handler("cancelled_order"),
     "refunded_order":           _make_shopify_handler("refunded_order"),
     "added_to_cart":            _make_shopify_handler("added_to_cart"),
-    # Klaviyo-style internal
     "coupon_assigned":          _make_shopify_handler("coupon_assigned"),
     "coupon_used":              _make_shopify_handler("coupon_used"),
     "subscribed_to_back_in_stock": _make_shopify_handler("subscribed_to_back_in_stock"),
-    # Web tracking
     "viewed_product":           _make_shopify_handler("viewed_product"),
     "active_on_site":           _make_shopify_handler("active_on_site"),
-    # Internal
     "welcome":                  _check_welcome,
     "post_visit":               _check_post_visit,
     "reactivation":             _check_reactivation,
-    "abandoned_booking":        _check_abandoned_booking,
+    "birthday_reminder":        _check_birthday_reminder,
 }
 
 
 def run_scheduled_campaigns() -> None:
-    """Fire campaigns whose scheduled_at has passed and are still in 'scheduled' status."""
     with Session(db_engine) as session:
         now = datetime.utcnow()
         due = session.exec(
@@ -396,11 +973,16 @@ def run_scheduled_campaigns() -> None:
             try:
                 seg = session.get(Segment, campaign.segment_id)
                 if not seg:
-                    logger.warning("Scheduled campaign %d: segment %d not found", campaign.id, campaign.segment_id)
                     continue
                 contacts = evaluate_segment(seg.conditions, session)
+                if campaign.exclude_segment_ids:
+                    excluded_ids: set = set()
+                    for excl_id in campaign.exclude_segment_ids:
+                        excl_seg = session.get(Segment, excl_id)
+                        if excl_seg:
+                            excluded_ids.update(ct.id for ct in evaluate_segment(excl_seg.conditions, session))
+                    contacts = [ct for ct in contacts if ct.id not in excluded_ids]
                 if not contacts:
-                    logger.warning("Scheduled campaign %d: no opted-in contacts", campaign.id)
                     continue
                 already_sent = set(session.exec(
                     select(CampaignSend.contact_id).where(
@@ -419,7 +1001,6 @@ def run_scheduled_campaigns() -> None:
                 session.commit()
                 contact_ids = [c.id for c in to_send]
                 send_campaign_sync(campaign.id, contact_ids, len(contacts))
-                logger.info("Scheduled campaign %d fired to %d contacts", campaign.id, len(contact_ids))
             except Exception as exc:
                 logger.exception("Scheduled campaign %d error: %s", campaign.id, exc)
 
@@ -429,26 +1010,32 @@ def run_automations() -> None:
         automations = session.exec(
             select(Automation).where(Automation.status == "active")
         ).all()
+        # Phase 1: detect triggers → enroll
         for auto in automations:
             handler = HANDLERS.get(auto.trigger_type)
             if handler:
                 try:
                     handler(auto, session)
                 except Exception as exc:
-                    logger.exception("Automation %d (%s) error: %s", auto.id, auto.trigger_type, exc)
+                    logger.exception("Automation %d (%s) trigger error: %s", auto.id, auto.trigger_type, exc)
+        # Phase 2: process ready enrollments → send emails
+        try:
+            _process_enrollments(session)
+        except Exception as exc:
+            logger.exception("Enrollment processing error: %s", exc)
 
 
 def start_scheduler() -> None:
     def loop():
-        # Small delay to let the app fully start
         time.sleep(10)
         while True:
             try:
                 run_automations()
                 run_scheduled_campaigns()
+                sync_contacts_from_shopify_orders()
             except Exception as exc:
                 logger.exception("Automation scheduler error: %s", exc)
-            time.sleep(60)  # 1 minute
+            time.sleep(60)
 
     t = threading.Thread(target=loop, daemon=True, name="automation-scheduler")
     t.start()

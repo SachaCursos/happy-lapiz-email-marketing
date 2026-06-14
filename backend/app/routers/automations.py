@@ -1,13 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, func
+from sqlalchemy import text
 from app.database import get_session
 from app.core.deps import get_current_user, require_editor
 from app.models.user import User
 from app.models.automation import (
     Automation, AutomationCreate, AutomationRead, AutomationUpdate,
-    AutomationRun, AutomationRunRead,
+    AutomationEnrollment, AutomationRun, AutomationRunRead,
 )
 
 router = APIRouter()
@@ -24,9 +25,6 @@ def create_automation(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
 ):
-    VALID = {"abandoned_booking", "welcome", "post_visit", "reactivation"}
-    if payload.trigger_type not in VALID:
-        raise HTTPException(status_code=400, detail=f"trigger_type debe ser uno de: {', '.join(VALID)}")
     auto = Automation(**payload.model_dump(), created_by=current_user.id)
     session.add(auto)
     session.commit()
@@ -111,11 +109,180 @@ def automation_stats(
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    runs = session.exec(
-        select(AutomationRun).where(AutomationRun.automation_id == auto_id)
+    from sqlalchemy import text
+    result = session.execute(text("""
+        SELECT
+            COUNT(*)                                            AS total,
+            COUNT(CASE WHEN status = 'sent' THEN 1 END)        AS sent,
+            COUNT(CASE WHEN status = 'failed' THEN 1 END)      AS failed,
+            COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END)   AS opened,
+            COUNT(CASE WHEN clicked_at IS NOT NULL THEN 1 END)  AS clicked,
+            MAX(triggered_at)                                   AS last_run
+        FROM automation_runs
+        WHERE automation_id = :aid
+    """), {"aid": auto_id}).fetchone()
+
+    total, sent, failed, opened, clicked, last_run = result
+    sent = sent or 0
+    open_rate  = round(opened / sent * 100, 1) if sent else 0.0
+    click_rate = round(clicked / sent * 100, 1) if sent else 0.0
+
+    # Conversions: orders from the same email within 7 days of the automation send
+    conv = session.execute(text("""
+        SELECT
+            COUNT(DISTINCT so.id)                   AS orders,
+            COALESCE(SUM(so.total_price::numeric), 0) AS revenue
+        FROM automation_runs ar
+        JOIN shopify_orders so
+          ON LOWER(so.email) = LOWER(ar.contact_email)
+         AND so.created_at BETWEEN ar.executed_at
+                               AND ar.executed_at + INTERVAL '7 days'
+        WHERE ar.automation_id = :aid
+          AND ar.status = 'sent'
+          AND ar.executed_at IS NOT NULL
+    """), {"aid": auto_id}).fetchone()
+
+    orders, revenue = conv
+
+    variant_rows = session.execute(text("""
+        SELECT
+            variant_sent,
+            COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
+            COUNT(*) FILTER (WHERE opened_at IS NOT NULL)     AS opened,
+            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
+        FROM automation_runs
+        WHERE automation_id = :aid AND variant_sent IS NOT NULL
+        GROUP BY variant_sent
+        ORDER BY variant_sent
+    """), {"aid": auto_id}).fetchall()
+
+    variants_stats = [
+        {
+            "variant":    row[0],
+            "sent":       int(row[1] or 0),
+            "opened":     int(row[2] or 0),
+            "clicked":    int(row[3] or 0),
+            "open_rate":  round(int(row[2] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+            "click_rate": round(int(row[3] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+        }
+        for row in variant_rows
+    ]
+
+    return {
+        "total":      int(total or 0),
+        "sent":       int(sent),
+        "failed":     int(failed or 0),
+        "opened":     int(opened or 0),
+        "clicked":    int(clicked or 0),
+        "open_rate":  open_rate,
+        "click_rate": click_rate,
+        "orders":     int(orders or 0),
+        "revenue":    float(revenue or 0),
+        "last_run":   last_run,
+        "variants":   variants_stats,
+    }
+
+
+@router.get("/{auto_id}/step-stats")
+def automation_step_stats(
+    auto_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    """Per-step metrics breakdown, with A/B variant stats per step."""
+    step_rows = session.execute(text("""
+        SELECT
+            step_number,
+            COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
+            COUNT(*) FILTER (WHERE opened_at IS NOT NULL)     AS opened,
+            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
+        FROM automation_runs
+        WHERE automation_id = :aid
+        GROUP BY step_number
+        ORDER BY step_number
+    """), {"aid": auto_id}).fetchall()
+
+    variant_rows = session.execute(text("""
+        SELECT
+            step_number,
+            variant_sent,
+            COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
+            COUNT(*) FILTER (WHERE opened_at IS NOT NULL)     AS opened,
+            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
+        FROM automation_runs
+        WHERE automation_id = :aid AND variant_sent IS NOT NULL
+        GROUP BY step_number, variant_sent
+        ORDER BY step_number, variant_sent
+    """), {"aid": auto_id}).fetchall()
+
+    # Group variant rows by step (r[0]=step_number, r[1]=variant_sent, r[2-4]=counts)
+    from collections import defaultdict
+    variants_by_step: dict = defaultdict(list)
+    for r in variant_rows:
+        variants_by_step[int(r[0])].append({
+            "variant":    r[1],
+            "sent":       int(r[2] or 0),
+            "opened":     int(r[3] or 0),
+            "clicked":    int(r[4] or 0),
+            "open_rate":  round(int(r[3] or 0) / int(r[2]) * 100, 1) if r[2] else 0.0,
+            "click_rate": round(int(r[4] or 0) / int(r[2]) * 100, 1) if r[2] else 0.0,
+        })
+
+    return [
+        {
+            "step":       int(row[0]),
+            "sent":       int(row[1] or 0),
+            "opened":     int(row[2] or 0),
+            "clicked":    int(row[3] or 0),
+            "open_rate":  round(int(row[2] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+            "click_rate": round(int(row[3] or 0) / int(row[1]) * 100, 1) if row[1] else 0.0,
+            "variants":   variants_by_step.get(int(row[0]), []),
+        }
+        for row in step_rows
+    ]
+
+
+@router.get("/{auto_id}/pending")
+def automation_pending(
+    auto_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    """Return active enrollments for this automation (contacts awaiting a send)."""
+    auto = session.get(Automation, auto_id)
+    if not auto:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
+
+    now = datetime.now(timezone.utc)
+
+    def _is_ready(dt: datetime) -> bool:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt <= now
+
+    enrollments = session.exec(
+        select(AutomationEnrollment)
+        .where(AutomationEnrollment.automation_id == auto_id)
+        .where(AutomationEnrollment.status == "active")
+        .order_by(AutomationEnrollment.next_send_at.asc())
+        .limit(50)
     ).all()
-    total = len(runs)
-    sent = sum(1 for r in runs if r.status == "sent")
-    failed = sum(1 for r in runs if r.status == "failed")
-    last_run = max((r.triggered_at for r in runs), default=None)
-    return {"total": total, "sent": sent, "failed": failed, "last_run": last_run}
+
+    contacts = []
+    for e in enrollments:
+        import json as _json
+        extra = _json.loads(e.extra_vars_json or "{}")
+        name = extra.get("nombre") or extra.get("first_name") or e.contact_email
+        detail = extra.get("cart_total") or extra.get("order_number") or ""
+        if extra.get("first_product"):
+            detail = f"{extra['first_product']} · {detail}" if detail else extra["first_product"]
+        contacts.append({
+            "email":     e.contact_email,
+            "name":      name,
+            "detail":    detail,
+            "send_at":   e.next_send_at.isoformat(),
+            "ready":     _is_ready(e.next_send_at),
+            "step":      e.next_step,
+        })
+
+    return {"count": len(contacts), "contacts": contacts}

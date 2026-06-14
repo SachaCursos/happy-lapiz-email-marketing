@@ -5,8 +5,133 @@ import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { templatesApi } from "@/lib/api";
 import { Template } from "@/lib/types";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
+import {
+  TemplateBlockEditor,
+  TemplateEditorSaveData,
+  parseEditorState,
+  Block,
+} from "@/components/TemplateBlockEditor";
+
+const VAR_GROUPS = [
+  {
+    label: "Contacto",
+    color: "violet",
+    vars: [
+      { v: "{{ nombre }}", d: "Nombre completo del contacto" },
+      { v: "{{ first_name }}", d: "Primer nombre" },
+      { v: "{{ email }}", d: "Correo electrónico" },
+      { v: "{{ orders_count }}", d: "Total de pedidos históricos" },
+      { v: "{{ total_spent }}", d: "Total gastado (número, ej. 45000)" },
+      { v: "{{ ticket_medio }}", d: "Ticket promedio por pedido" },
+      { v: "{{ ultima_visita }}", d: "Fecha de última compra" },
+      { v: "{{ shipping_city }}", d: "Ciudad de envío del contacto" },
+    ],
+  },
+  {
+    label: "Pedidos Shopify",
+    color: "blue",
+    vars: [
+      { v: "{{ order_number }}", d: "Número de orden (ej. 1042)" },
+      { v: "{{ order_total }}", d: "Total de la orden (ej. $12.990)" },
+      { v: "{{ first_product }}", d: "Nombre del primer producto comprado" },
+      { v: "{{ shipping_city }}", d: "Ciudad de envío de la orden" },
+      { v: "{{ shipping_province }}", d: "Provincia/región de envío" },
+      { v: "{{ tracking_number }}", d: "Número de seguimiento (solo pedidos despachados)" },
+    ],
+  },
+  {
+    label: "Carrito abandonado",
+    color: "orange",
+    vars: [
+      { v: "{{ cart_total }}", d: "Total del carrito (ej. $8.990)" },
+      { v: "{{ first_product }}", d: "Primer producto en el carrito" },
+      { v: "{{ cart_url }}", d: "URL directa al carrito" },
+      { v: "{{ event.extra.checkout_url }}", d: "URL del checkout abandonado" },
+      { v: "{{ event.extra.checkout_url_with_coupon }}", d: "Checkout con cupón pre-aplicado (?discount=CODIGO)" },
+    ],
+  },
+  {
+    label: "Cupones",
+    color: "green",
+    vars: [
+      { v: "{{ coupon_code }}", d: "Código de cupón generado para este contacto" },
+      { v: "{{ event.extra.checkout_url_with_coupon }}", d: "URL carrito + cupón pre-aplicado (ej. ?discount=HL-XXXX)" },
+    ],
+  },
+  {
+    label: "Cross-sell",
+    color: "pink",
+    vars: [
+      { v: "{{ recommended_products_html }}", d: "Grid HTML 2 columnas con productos recomendados (incluir tal cual en el template)" },
+      { v: "{{ recommended_products }}", d: "Lista de dicts: [{title, url, image_url, price}] (para render manual)" },
+    ],
+  },
+  {
+    label: "Jinja2",
+    color: "gray",
+    vars: [
+      { v: "{{ variable or 'fallback' }}", d: "Valor por defecto si la variable está vacía" },
+      { v: "{% if variable %}...{% endif %}", d: "Bloque condicional" },
+      { v: "{% if x %}...{% else %}...{% endif %}", d: "Condicional con alternativa" },
+      { v: "{{ variable | upper }}", d: "Convertir a mayúsculas" },
+      { v: "{{ variable | lower }}", d: "Convertir a minúsculas" },
+      { v: "{{ variable | title }}", d: "Primera letra de cada palabra en mayúscula" },
+      { v: "{% unsubscribe %}", d: "URL de baja (se inyecta automáticamente)" },
+    ],
+  },
+];
+
+const COLOR_MAP: Record<string, { badge: string; header: string }> = {
+  violet: { badge: "bg-violet-50 text-violet-700 border-violet-200", header: "text-violet-700" },
+  blue:   { badge: "bg-blue-50 text-blue-700 border-blue-200",       header: "text-blue-700" },
+  orange: { badge: "bg-orange-50 text-orange-700 border-orange-200", header: "text-orange-700" },
+  green:  { badge: "bg-green-50 text-green-700 border-green-200",    header: "text-green-700" },
+  pink:   { badge: "bg-pink-50 text-pink-700 border-pink-200",       header: "text-pink-700" },
+  gray:   { badge: "bg-gray-100 text-gray-600 border-gray-200",      header: "text-gray-600" },
+};
+
+function VariablesPanel() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-gray-200 bg-gray-50">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 w-full px-6 py-2 text-xs font-semibold text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+      >
+        {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        Variables disponibles en plantillas
+      </button>
+      {open && (
+        <div className="px-6 pb-4">
+          <div className="grid grid-cols-3 gap-x-6 gap-y-0 pt-1">
+            {VAR_GROUPS.map((group) => {
+              const c = COLOR_MAP[group.color];
+              return (
+                <div key={group.label} className="mb-3">
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 ${c.header}`}>
+                    {group.label}
+                  </p>
+                  <div className="space-y-1">
+                    {group.vars.map((item) => (
+                      <div key={item.v} className="flex items-start gap-2">
+                        <code className={`text-[10px] border rounded px-1.5 py-0.5 shrink-0 font-mono whitespace-nowrap ${c.badge}`}>
+                          {item.v}
+                        </code>
+                        <span className="text-[10px] text-gray-400 leading-tight mt-0.5">{item.d}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function EditTemplatePage() {
   const { id } = useParams<{ id: string }>();
@@ -20,29 +145,36 @@ export default function EditTemplatePage() {
     staleTime: 0,
   });
 
-  const [name, setName] = useState("");
-  const [subject, setSubject] = useState("");
-  const [previewText, setPreviewText] = useState("");
-  const [html, setHtml] = useState("");
-  const [tab, setTab] = useState<"editor" | "preview">("editor");
+  const [initialBlocks, setInitialBlocks] = useState<Block[]>([]);
+  const [initialPlainText, setInitialPlainText] = useState("");
+  const [initialMode, setInitialMode] = useState<"blocks" | "plain">("blocks");
+  const [initialHtmlOverride, setInitialHtmlOverride] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (tpl) {
-      setName(tpl.name);
-      setSubject(tpl.subject_default);
-      setPreviewText(tpl.preview_text ?? "");
-      setHtml(tpl.html_content);
+      const state = parseEditorState(tpl.json_blocks);
+      setInitialBlocks(state.blocks);
+      setInitialPlainText(state.plainText);
+      setInitialMode(state.mode);
+
+      // If there are no saved blocks and no plain-text state, the template was created
+      // without the block editor. Load html_content as the HTML override so the content
+      // is visible and editable in the "HTML" tab without corruption on save.
+      const hasNoBlockData = !state.blocks.length && !state.plainText;
+      setInitialHtmlOverride(hasNoBlockData && tpl.html_content ? tpl.html_content : null);
+
+      setReady(true);
     }
   }, [tpl]);
 
   const mutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (data: TemplateEditorSaveData) =>
       templatesApi.update(tplId, {
-        name,
-        subject_default: subject,
-        preview_text: previewText || null,
-        html_content: html,
+        name: data.name,
+        html_content: data.html,
+        json_blocks: data.blocks,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["templates"] });
@@ -51,6 +183,7 @@ export default function EditTemplatePage() {
       setTimeout(() => setSaved(false), 2500);
     },
   });
+
 
   if (isLoading) {
     return (
@@ -75,105 +208,34 @@ export default function EditTemplatePage() {
   }
 
   return (
-    <div className="p-8 h-full flex flex-col">
-      <div className="flex items-center gap-4 mb-6">
-        <Link href="/templates" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900">
-          <ArrowLeft size={15} /> Volver
+    <div className="h-full flex flex-col">
+      <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 bg-white shrink-0">
+        <Link href="/templates" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors">
+          <ArrowLeft size={14} /> Volver
         </Link>
-        <h1 className="text-xl font-bold text-gray-900 flex-1 truncate">{tpl.name}</h1>
-        {saved && (
-          <span className="text-sm text-green-600 font-medium flex items-center gap-1">
-            <Save size={13} /> Guardado
-          </span>
-        )}
-        <button
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending || !name || !subject}
-          className="px-5 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-60 transition-colors"
-        >
-          {mutation.isPending ? "Guardando..." : "Guardar cambios"}
-        </button>
+        <h1 className="text-sm font-semibold text-gray-900 truncate">{tpl.name}</h1>
       </div>
-
+      <VariablesPanel />
       {mutation.isError && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+        <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-red-700 text-sm">
           Error al guardar. Intenta de nuevo.
         </div>
       )}
-
-      <div className="grid grid-cols-5 gap-6 flex-1">
-        <div className="col-span-2 space-y-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre interno *</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Asunto por defecto *</label>
-              <input
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Preview text</label>
-              <input
-                value={previewText}
-                onChange={(e) => setPreviewText(e.target.value)}
-                placeholder="Texto que aparece en el cliente de correo"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-          </div>
-
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
-            <p className="font-semibold mb-2">Variables disponibles:</p>
-            <ul className="space-y-0.5 font-mono">
-              <li>{"{{nombre}}"} — nombre del contacto</li>
-              <li>{"{{email}}"} — email</li>
-              <li>{"{{ultima_visita}}"} — última visita</li>
-              <li>{"{{veces_hotboat}}"} — nº experiencias</li>
-              <li>{"{{ticket_medio}}"} — gasto promedio</li>
-            </ul>
-          </div>
+      {ready && (
+        <div className="flex-1 overflow-hidden">
+          <TemplateBlockEditor
+            initialBlocks={initialBlocks}
+            initialPlainText={initialPlainText}
+            initialMode={initialMode}
+            initialHtmlOverride={initialHtmlOverride}
+            initialName={tpl.name}
+            templateId={tplId}
+            onSave={(data) => mutation.mutate(data)}
+            saving={mutation.isPending}
+            saved={saved}
+          />
         </div>
-
-        <div className="col-span-3 flex flex-col bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="flex border-b border-gray-100">
-            {(["editor", "preview"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  tab === t ? "border-brand-600 text-brand-700" : "border-transparent text-gray-500 hover:text-gray-800"
-                }`}
-              >
-                {t === "editor" ? "Editor HTML" : "Preview"}
-              </button>
-            ))}
-          </div>
-          {tab === "editor" ? (
-            <textarea
-              value={html}
-              onChange={(e) => setHtml(e.target.value)}
-              className="flex-1 p-4 font-mono text-xs text-gray-800 resize-none focus:outline-none"
-              style={{ minHeight: 500 }}
-            />
-          ) : (
-            <iframe
-              srcDoc={html}
-              className="flex-1 w-full border-0"
-              style={{ minHeight: 500 }}
-              title="Preview"
-            />
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

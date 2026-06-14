@@ -14,7 +14,7 @@ def run_sync(
     session: Session = Depends(get_session),
     _: User = Depends(require_admin),
 ):
-    """Sincroniza contactos desde HotBoat de forma síncrona y devuelve el resultado."""
+    """Sincroniza contactos de forma síncrona y devuelve el resultado."""
     try:
         result = sync_contacts(session)
         return {"status": "done", **result}

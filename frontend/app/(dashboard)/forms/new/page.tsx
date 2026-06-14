@@ -11,9 +11,9 @@ import Link from "next/link";
 export default function NewFormPage() {
   const router = useRouter();
 
-  const [name, setName] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState("Popup principal");
+  const [title, setTitle] = useState("¡Únete y recibe ofertas exclusivas!");
+  const [description, setDescription] = useState("Suscríbete para ser el primero en enterarte de novedades y descuentos.");
   const [buttonText, setButtonText] = useState("Suscribirme");
   const [successMessage, setSuccessMessage] = useState("¡Gracias! Pronto recibirás noticias nuestras.");
   const [collectName, setCollectName] = useState(true);
@@ -46,7 +46,11 @@ export default function NewFormPage() {
       <Link href="/forms" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 mb-6">
         <ArrowLeft size={15} /> Volver
       </Link>
-      <h1 className="text-2xl font-bold text-gray-900 mb-8">Nuevo formulario de suscripción</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-3">Nuevo formulario de suscripción</h1>
+      <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-8 text-sm text-blue-800">
+        <p className="font-semibold mb-1">Paso 1 de 2 — Configuración básica</p>
+        <p>Completa el nombre y texto del popup. Una vez creado, entrarás al editor completo donde podrás: <strong>personalizar colores y diseño</strong>, <strong>agregar campos personalizados</strong> (para quién es el regalo, edad, etc.) y configurar <strong>formulario de múltiples pasos</strong>.</p>
+      </div>
 
       {mutation.isError && (
         <div className="mb-6 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
@@ -196,9 +200,9 @@ export default function NewFormPage() {
         <button
           onClick={() => mutation.mutate()}
           disabled={mutation.isPending || !isValid}
-          className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-60 transition-colors"
+          className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-semibold hover:bg-brand-700 disabled:opacity-60 transition-colors"
         >
-          {mutation.isPending ? "Creando..." : "Crear formulario"}
+          {mutation.isPending ? "Creando..." : "Crear formulario → ir al editor de diseño"}
         </button>
       </div>
     </div>

@@ -217,6 +217,14 @@ function DetailsTab({ contact, onSave, saving }: {
                 <span className="text-gray-700">{value}</span>
               </div>
             ) : null)}
+            <div className="flex gap-3 text-sm">
+              <span className="w-36 text-gray-400 shrink-0">accepts_marketing</span>
+              {contact.accepts_marketing === true
+                ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">true</span>
+                : contact.accepts_marketing === false
+                  ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500">false</span>
+                  : <span className="text-gray-300 text-xs">—</span>}
+            </div>
           </div>
         </div>
 

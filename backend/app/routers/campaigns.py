@@ -107,6 +107,17 @@ def send_campaign_now(
     if not contacts:
         raise HTTPException(status_code=400, detail="El segmento no tiene contactos con opt-in")
 
+    # Excluir contactos pertenecientes a segmentos de exclusión
+    if c.exclude_segment_ids:
+        excluded_ids: set[int] = set()
+        for excl_id in c.exclude_segment_ids:
+            excl_seg = session.get(Segment, excl_id)
+            if excl_seg:
+                excluded_ids.update(ct.id for ct in evaluate_segment(excl_seg.conditions, session))
+        contacts = [ct for ct in contacts if ct.id not in excluded_ids]
+    if not contacts:
+        raise HTTPException(status_code=400, detail="Todos los contactos del segmento están excluidos")
+
     # Excluir contactos que ya recibieron esta campaña; los "failed" sí pueden reintentarse
     already_sent = set(
         session.exec(
@@ -221,9 +232,9 @@ def campaign_conversions(
     _: User = Depends(get_current_user),
 ):
     """
-    Atribución de reservas: contactos que recibieron esta campaña y
-    tuvieron una visita confirmada en HotBoat dentro de `days` días
-    posteriores al envío. Cruce por email con all_appointments.
+    Atribución de compras: contactos que recibieron esta campaña y
+    realizaron una compra en Shopify dentro de `days` días
+    posteriores al envío.
     """
     campaign = session.get(Campaign, campaign_id)
     if not campaign:

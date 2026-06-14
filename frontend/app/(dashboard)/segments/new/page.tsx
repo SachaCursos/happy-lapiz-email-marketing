@@ -9,14 +9,18 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 const FIELDS = [
-  { value: "email",          label: "Email",                 type: "string" },
-  { value: "veces_hotboat",  label: "Nº pedidos",            type: "number" },
-  { value: "ha_alojamiento", label: "Con alojamiento",       type: "boolean" },
-  { value: "ticket_medio",   label: "Ticket medio ($)",      type: "number" },
-  { value: "language",       label: "Idioma",                type: "string" },
-  { value: "origin_utm",     label: "Origen UTM",            type: "string" },
-  { value: "opted_in",       label: "Opt-in activo",         type: "boolean" },
-  { value: "ultima_visita",  label: "Última visita",         type: "date" },
+  { value: "email",                label: "Email",                  type: "string" },
+  { value: "orders_count",         label: "Nº pedidos",             type: "number" },
+  { value: "total_spent",          label: "Total gastado ($)",       type: "number" },
+  { value: "ticket_medio",         label: "Ticket medio ($)",       type: "number" },
+  { value: "last_purchase",        label: "Última compra",          type: "date" },
+  { value: "shipping_city",        label: "Ciudad de envío",        type: "string" },
+  { value: "shipping_province",    label: "Región de envío",        type: "string" },
+  { value: "language",             label: "Idioma",                 type: "string" },
+  { value: "origin_utm",           label: "Origen UTM",             type: "string" },
+  { value: "opted_in",             label: "Opt-in activo",          type: "boolean" },
+  { value: "ultima_visita",        label: "Última visita web",      type: "date" },
+  { value: "smile_points",         label: "Puntos de fidelidad",    type: "number" },
 ];
 
 const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
@@ -42,7 +46,7 @@ const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
 };
 
 function emptyRule(): SegmentRule {
-  return { field: "veces_hotboat", op: "gte", value: 1 };
+  return { field: "orders_count", op: "gte", value: 1 };
 }
 
 interface ContactOption { id: number; name: string; email: string; }

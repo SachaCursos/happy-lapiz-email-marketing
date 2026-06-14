@@ -3,38 +3,142 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { templatesApi } from "@/lib/api";
-import { ArrowLeft, Eye } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { TemplateBlockEditor, TemplateEditorSaveData } from "@/components/TemplateBlockEditor";
 
-const STARTER_HTML = `<div style="font-family: Inter, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 32px 24px; color: #111;">
-  <img src="https://via.placeholder.com/600x120?text=HotBoat" alt="HotBoat" style="width:100%; border-radius:12px; margin-bottom:24px;" />
-  <h1 style="font-size: 24px; font-weight: 700; margin: 0 0 8px;">Hola, {{nombre}} 👋</h1>
-  <p style="font-size: 15px; line-height: 1.6; color: #444;">
-    Queremos contarte algo especial para ti.
-  </p>
-  <a href="#" style="display:inline-block; margin-top:24px; background:#e51e0e; color:#fff; font-weight:600; padding:12px 28px; border-radius:8px; text-decoration:none; font-size:14px;">
-    Ver más
-  </a>
-  <hr style="margin: 32px 0; border: none; border-top: 1px solid #eee;" />
-  <p style="font-size: 12px; color: #999;">
-    HotBoat · Santiago, Chile<br/>
-    <a href="#" style="color:#999;">Cancelar suscripción</a>
-  </p>
-</div>`;
+const VAR_GROUPS = [
+  {
+    label: "Contacto",
+    color: "violet",
+    vars: [
+      { v: "{{ nombre }}", d: "Nombre completo del contacto" },
+      { v: "{{ first_name }}", d: "Primer nombre" },
+      { v: "{{ email }}", d: "Correo electrónico" },
+      { v: "{{ orders_count }}", d: "Total de pedidos históricos" },
+      { v: "{{ total_spent }}", d: "Total gastado (número, ej. 45000)" },
+      { v: "{{ ticket_medio }}", d: "Ticket promedio por pedido" },
+      { v: "{{ ultima_visita }}", d: "Fecha de última compra" },
+      { v: "{{ shipping_city }}", d: "Ciudad de envío del contacto" },
+    ],
+  },
+  {
+    label: "Pedidos Shopify",
+    color: "blue",
+    vars: [
+      { v: "{{ order_number }}", d: "Número de orden (ej. 1042)" },
+      { v: "{{ order_total }}", d: "Total de la orden (ej. $12.990)" },
+      { v: "{{ first_product }}", d: "Nombre del primer producto comprado" },
+      { v: "{{ shipping_city }}", d: "Ciudad de envío de la orden" },
+      { v: "{{ shipping_province }}", d: "Provincia/región de envío" },
+      { v: "{{ tracking_number }}", d: "Número de seguimiento (solo pedidos despachados)" },
+    ],
+  },
+  {
+    label: "Carrito abandonado",
+    color: "orange",
+    vars: [
+      { v: "{{ cart_total }}", d: "Total del carrito (ej. $8.990)" },
+      { v: "{{ first_product }}", d: "Primer producto en el carrito" },
+      { v: "{{ cart_url }}", d: "URL directa al carrito" },
+      { v: "{{ event.extra.checkout_url }}", d: "URL del checkout abandonado" },
+      { v: "{{ event.extra.checkout_url_with_coupon }}", d: "Checkout con cupón pre-aplicado (?discount=CODIGO)" },
+    ],
+  },
+  {
+    label: "Cupones",
+    color: "green",
+    vars: [
+      { v: "{{ coupon_code }}", d: "Código de cupón generado para este contacto" },
+      { v: "{{ event.extra.checkout_url_with_coupon }}", d: "URL carrito + cupón pre-aplicado (ej. ?discount=HL-XXXX)" },
+    ],
+  },
+  {
+    label: "Cross-sell",
+    color: "pink",
+    vars: [
+      { v: "{{ recommended_products_html }}", d: "Grid HTML 2 columnas con productos recomendados" },
+      { v: "{{ recommended_products }}", d: "Lista de dicts: [{title, url, image_url, price}]" },
+    ],
+  },
+  {
+    label: "Jinja2",
+    color: "gray",
+    vars: [
+      { v: "{{ variable or 'fallback' }}", d: "Valor por defecto si la variable está vacía" },
+      { v: "{% if variable %}...{% endif %}", d: "Bloque condicional" },
+      { v: "{% if x %}...{% else %}...{% endif %}", d: "Condicional con alternativa" },
+      { v: "{{ variable | upper }}", d: "Convertir a mayúsculas" },
+      { v: "{{ variable | lower }}", d: "Convertir a minúsculas" },
+      { v: "{{ variable | title }}", d: "Primera letra de cada palabra en mayúscula" },
+      { v: "{% unsubscribe %}", d: "URL de baja (se inyecta automáticamente)" },
+    ],
+  },
+];
+
+const COLOR_MAP: Record<string, { badge: string; header: string }> = {
+  violet: { badge: "bg-violet-50 text-violet-700 border-violet-200", header: "text-violet-700" },
+  blue:   { badge: "bg-blue-50 text-blue-700 border-blue-200",       header: "text-blue-700" },
+  orange: { badge: "bg-orange-50 text-orange-700 border-orange-200", header: "text-orange-700" },
+  green:  { badge: "bg-green-50 text-green-700 border-green-200",    header: "text-green-700" },
+  pink:   { badge: "bg-pink-50 text-pink-700 border-pink-200",       header: "text-pink-700" },
+  gray:   { badge: "bg-gray-100 text-gray-600 border-gray-200",      header: "text-gray-600" },
+};
+
+function VariablesPanel() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-gray-200 bg-gray-50">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 w-full px-6 py-2 text-xs font-semibold text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+      >
+        {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        Variables disponibles en plantillas
+      </button>
+      {open && (
+        <div className="px-6 pb-4">
+          <div className="grid grid-cols-3 gap-x-6 gap-y-0 pt-1">
+            {VAR_GROUPS.map((group) => {
+              const c = COLOR_MAP[group.color];
+              return (
+                <div key={group.label} className="mb-3">
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 ${c.header}`}>
+                    {group.label}
+                  </p>
+                  <div className="space-y-1">
+                    {group.vars.map((item) => (
+                      <div key={item.v} className="flex items-start gap-2">
+                        <code className={`text-[10px] border rounded px-1.5 py-0.5 shrink-0 font-mono whitespace-nowrap ${c.badge}`}>
+                          {item.v}
+                        </code>
+                        <span className="text-[10px] text-gray-400 leading-tight mt-0.5">{item.d}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function NewTemplatePage() {
   const router = useRouter();
   const qc = useQueryClient();
-  const [name, setName] = useState("");
-  const [subject, setSubject] = useState("");
-  const [previewText, setPreviewText] = useState("");
-  const [html, setHtml] = useState(STARTER_HTML);
-  const [tab, setTab] = useState<"editor" | "preview">("editor");
+  const [saved, setSaved] = useState(false);
 
   const mutation = useMutation({
-    mutationFn: () =>
-      templatesApi.create({ name, subject_default: subject, preview_text: previewText || undefined, html_content: html }),
+    mutationFn: (data: TemplateEditorSaveData) =>
+      templatesApi.create({
+        name: data.name,
+        html_content: data.html,
+        json_blocks: data.blocks,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["templates"] });
       router.push("/templates");
@@ -42,78 +146,25 @@ export default function NewTemplatePage() {
   });
 
   return (
-    <div className="p-8 h-full flex flex-col">
-      <div className="flex items-center gap-4 mb-6">
-        <Link href="/templates" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900">
-          <ArrowLeft size={15} /> Volver
+    <div className="h-full flex flex-col">
+      <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 bg-white shrink-0">
+        <Link href="/templates" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors">
+          <ArrowLeft size={14} /> Volver
         </Link>
-        <h1 className="text-xl font-bold text-gray-900 flex-1">Nueva plantilla</h1>
-        <button
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending || !name || !subject}
-          className="px-5 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-60 transition-colors"
-        >
-          {mutation.isPending ? "Guardando..." : "Guardar plantilla"}
-        </button>
+        <h1 className="text-sm font-semibold text-gray-900">Nueva plantilla</h1>
       </div>
-
-      <div className="grid grid-cols-5 gap-6 flex-1">
-        <div className="col-span-2 space-y-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre interno *</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Ej: Bienvenida nueva reserva" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Asunto por defecto *</label>
-              <input value={subject} onChange={(e) => setSubject(e.target.value)} required placeholder="Ej: Hola {{nombre}}, ¡gracias por reservar!" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Preview text</label>
-              <input value={previewText} onChange={(e) => setPreviewText(e.target.value)} placeholder="Texto que aparece en el cliente de correo" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            </div>
-          </div>
-
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
-            <p className="font-semibold mb-2">Variables disponibles:</p>
-            <ul className="space-y-0.5 font-mono">
-              <li>{"{{nombre}}"} — nombre del contacto</li>
-              <li>{"{{email}}"} — email</li>
-              <li>{"{{ultima_visita}}"} — última visita</li>
-              <li>{"{{veces_hotboat}}"} — nº experiencias</li>
-              <li>{"{{ticket_medio}}"} — gasto promedio</li>
-            </ul>
-          </div>
+      <VariablesPanel />
+      {mutation.isError && (
+        <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-red-700 text-sm">
+          Error al guardar. Intenta de nuevo.
         </div>
-
-        <div className="col-span-3 flex flex-col bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="flex border-b border-gray-100">
-            {(["editor", "preview"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${tab === t ? "border-brand-600 text-brand-700" : "border-transparent text-gray-500 hover:text-gray-800"}`}
-              >
-                {t === "editor" ? "Editor HTML" : "Preview"}
-              </button>
-            ))}
-          </div>
-          {tab === "editor" ? (
-            <textarea
-              value={html}
-              onChange={(e) => setHtml(e.target.value)}
-              className="flex-1 p-4 font-mono text-xs text-gray-800 resize-none focus:outline-none"
-              style={{ minHeight: 500 }}
-            />
-          ) : (
-            <iframe
-              srcDoc={html}
-              className="flex-1 w-full border-0"
-              style={{ minHeight: 500 }}
-              title="Preview"
-            />
-          )}
-        </div>
+      )}
+      <div className="flex-1 overflow-hidden">
+        <TemplateBlockEditor
+          onSave={(data) => mutation.mutate(data)}
+          saving={mutation.isPending}
+          saved={saved}
+        />
       </div>
     </div>
   );

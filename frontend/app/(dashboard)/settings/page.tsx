@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { authApi, syncApi, api } from "@/lib/api";
+import { authApi, syncApi, api, adminApi } from "@/lib/api";
 import { User } from "@/lib/types";
-import { RefreshCw, PackagePlus, ImageOff } from "lucide-react";
+import { RefreshCw, PackagePlus, ImageOff, Package } from "lucide-react";
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -28,6 +28,21 @@ export default function SettingsPage() {
   const [seeding, setSeeding]       = useState(false);
   const [logoResult, setLogoResult] = useState<{ ok: boolean; fixed: string[] } | null>(null);
   const [fixingLogo, setFixingLogo] = useState(false);
+  const [syncProductsResult, setSyncProductsResult] = useState<{ ok?: boolean; synced?: number; total_fetched?: number; error?: string; errors?: string[] } | null>(null);
+  const [syncingProducts, setSyncingProducts] = useState(false);
+
+  async function syncProducts() {
+    setSyncingProducts(true);
+    setSyncProductsResult(null);
+    try {
+      const r = await adminApi.syncProducts();
+      setSyncProductsResult(r.data);
+    } catch {
+      setSyncProductsResult({ ok: false, error: "Error al sincronizar" });
+    } finally {
+      setSyncingProducts(false);
+    }
+  }
 
   async function fixLogo() {
     setFixingLogo(true);
@@ -99,6 +114,37 @@ export default function SettingsPage() {
               {syncResult.status === "done"
                 ? `✓ Sync completado — ${syncResult.created} nuevos · ${syncResult.updated} actualizados · ${syncResult.skipped} omitidos`
                 : `Error: ${syncResult.detail}`}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-6">
+          <h2 className="font-semibold text-gray-900 mb-1">Sincronización de productos Shopify</h2>
+          <p className="text-gray-500 text-sm mb-4">
+            Importa el catálogo de productos (título, tags, tipo, imagen, precio) a la base de datos local.
+            Necesario para el motor de recomendaciones cross-sell dinámico.
+          </p>
+          <button
+            onClick={syncProducts}
+            disabled={syncingProducts}
+            className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-medium hover:bg-violet-700 disabled:opacity-60 transition-colors"
+          >
+            <Package size={14} className={syncingProducts ? "animate-pulse" : ""} />
+            {syncingProducts ? "Sincronizando..." : "Sincronizar catálogo"}
+          </button>
+          {syncProductsResult && (
+            <div className={`mt-3 px-4 py-3 rounded-lg text-sm ${syncProductsResult.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+              {syncProductsResult.ok
+                ? `✓ ${syncProductsResult.synced} productos guardados (de ${syncProductsResult.total_fetched} obtenidos)`
+                : `Error: ${syncProductsResult.error}`}
+              {syncProductsResult.errors && syncProductsResult.errors.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs opacity-70">{syncProductsResult.errors.length} errores de inserción</summary>
+                  <ul className="mt-1 text-xs space-y-0.5 opacity-70">
+                    {syncProductsResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
         </div>

@@ -1,8 +1,13 @@
 import axios from "axios";
 
-// Always use relative /api — the Next.js proxy route at app/api/[...path]/route.ts
-// forwards to BACKEND_URL at runtime. No build-time env vars needed in the browser.
-export const api = axios.create({ baseURL: "/api" });
+// In production, NEXT_PUBLIC_BACKEND_URL is baked in at build time so the browser
+// calls the backend directly (bypasses the Next.js proxy and Railway's CDN).
+// In dev, falls back to the local proxy (/api → localhost:8001).
+const BASE = process.env.NEXT_PUBLIC_BACKEND_URL
+  ? `${process.env.NEXT_PUBLIC_BACKEND_URL}/api`
+  : "/api";
+
+export const api = axios.create({ baseURL: BASE });
 
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
@@ -42,8 +47,9 @@ export const authApi = {
 
 // Contacts
 export const contactsApi = {
-  list: (params?: { skip?: number; limit?: number; search?: string; opted_in?: boolean }) =>
+  list: (params?: { skip?: number; limit?: number; search?: string; opted_in?: boolean; sort_by?: string; sort_dir?: string }) =>
     api.get("/contacts", { params }),
+  stats: () => api.get("/contacts/stats"),
   get: (id: number) => api.get(`/contacts/${id}`),
   create: (data: unknown) => api.post("/contacts", data),
   update: (id: number, data: unknown) => api.patch(`/contacts/${id}`, data),
@@ -98,6 +104,12 @@ export const campaignsApi = {
 export const analyticsApi = {
   overview: () => api.get("/analytics/overview"),
   recentCampaigns: () => api.get("/analytics/campaigns/recent"),
+  revenue: (dateFrom?: string, dateTo?: string) => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    return api.get(`/analytics/revenue?${params.toString()}`);
+  },
 };
 
 // Signup Forms
@@ -120,6 +132,8 @@ export const automationsApi = {
   toggle: (id: number) => api.post(`/automations/${id}/toggle`),
   runs: (id: number) => api.get(`/automations/${id}/runs`),
   stats: (id: number) => api.get(`/automations/${id}/stats`),
+  stepStats: (id: number) => api.get(`/automations/${id}/step-stats`),
+  pending: (id: number) => api.get(`/automations/${id}/pending`),
 };
 
 // Sync
@@ -132,3 +146,48 @@ export const syncApi = {
     return api.post("/sync/tc-import", form);
   },
 };
+
+// Admin
+export const adminApi = {
+  syncProducts: () => api.post("/admin/sync-products"),
+  seedTemplates: () => api.post("/admin/seed-templates"),
+  getProducts: (params?: { search?: string; product_type?: string; page?: number }) =>
+    api.get<{ total: number; page: number; per_page: number; products: SyncedProduct[]; product_types: string[] }>(
+      "/admin/products",
+      { params }
+    ),
+};
+
+// Shopify
+export const shopifyApi = {
+  products: () => api.get<ShopifyProduct[]>("/shopify/products"),
+  collections: () => api.get<ShopifyCollection[]>("/shopify/collections"),
+};
+
+export interface ShopifyCollection {
+  id: string;
+  title: string;
+}
+
+export interface ShopifyProduct {
+  id: string;
+  title: string;
+  handle: string;
+  url: string;
+  image_url: string;
+  price: string;
+  compare_at_price: string;
+}
+
+export interface SyncedProduct {
+  shopify_id: number;
+  title: string;
+  handle: string;
+  product_type: string;
+  tags: string;
+  vendor: string;
+  image_url: string;
+  price: number;
+  status: string;
+  synced_at: string | null;
+}

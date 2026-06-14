@@ -5,10 +5,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { contactsApi, syncApi } from "@/lib/api";
 import { Contact } from "@/lib/types";
 import { formatDateTime, formatDate } from "@/lib/utils";
-import { Plus, Upload, Search, Users, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Upload, Search, Users, RefreshCw, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import Link from "next/link";
 
 const PAGE_SIZE = 50;
+
+type SortKey = "name" | "email" | "orders_count" | "total_spent" | "last_purchase" | "created_at" | "accepts_marketing";
 
 function SkeletonRow() {
   return (
@@ -25,14 +27,42 @@ function SkeletonRow() {
   );
 }
 
+function SortIcon({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
+  if (!active) return <span className="text-gray-300 ml-1"><ChevronUp size={10} /></span>;
+  return dir === "asc"
+    ? <ChevronUp size={11} className="ml-1 text-brand-600" />
+    : <ChevronDown size={11} className="ml-1 text-brand-600" />;
+}
+
+function SortableTh({
+  label, sortKey, current, dir, onSort, align = "left",
+}: {
+  label: string; sortKey: SortKey; current: SortKey; dir: "asc" | "desc";
+  onSort: (k: SortKey) => void; align?: "left" | "center" | "right";
+}) {
+  const active = current === sortKey;
+  return (
+    <th
+      onClick={() => onSort(sortKey)}
+      className={`px-5 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:bg-gray-100 transition-colors text-${align} ${active ? "text-brand-700" : "text-gray-500"}`}
+    >
+      <span className="inline-flex items-center gap-0.5">
+        {label}
+        <SortIcon active={active} dir={dir} />
+      </span>
+    </th>
+  );
+}
+
 export default function ContactsPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [sortBy, setSortBy] = useState<SortKey>("created_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [syncResult, setSyncResult] = useState<{ created: number; updated: number; skipped: number } | null>(null);
 
-  // Simple debounce on search
   function handleSearch(val: string) {
     setSearch(val);
     setPage(0);
@@ -43,26 +73,43 @@ export default function ContactsPage() {
     );
   }
 
+  function handleSort(key: SortKey) {
+    if (sortBy === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(key);
+      setSortDir("desc");
+    }
+    setPage(0);
+  }
+
   const { data: contacts = [], isLoading, isError, refetch } = useQuery<Contact[]>({
-    queryKey: ["contacts", debouncedSearch, page],
+    queryKey: ["contacts", debouncedSearch, page, sortBy, sortDir],
     queryFn: () =>
       contactsApi
-        .list({ search: debouncedSearch || undefined, skip: page * PAGE_SIZE, limit: PAGE_SIZE })
+        .list({ search: debouncedSearch || undefined, skip: page * PAGE_SIZE, limit: PAGE_SIZE, sort_by: sortBy, sort_dir: sortDir })
         .then((r) => r.data),
     staleTime: 2 * 60_000,
     retry: 1,
   });
 
-  const importMutation = useMutation({
-    mutationFn: (file: File) => contactsApi.importCsv(file),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["contacts"] }),
+  const { data: stats } = useQuery<{ total: number; active: number; unsubscribed: number; opted_in: number }>({
+    queryKey: ["contacts-stats"],
+    queryFn: () => contactsApi.stats().then((r) => r.data),
+    staleTime: 5 * 60_000,
   });
 
-const syncMutation = useMutation({
+  const importMutation = useMutation({
+    mutationFn: (file: File) => contactsApi.importCsv(file),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contacts"] }); qc.invalidateQueries({ queryKey: ["contacts-stats"] }); },
+  });
+
+  const syncMutation = useMutation({
     mutationFn: () => syncApi.run(),
     onSuccess: (res) => {
       setSyncResult(res.data);
       qc.invalidateQueries({ queryKey: ["contacts"] });
+      qc.invalidateQueries({ queryKey: ["contacts-stats"] });
     },
   });
 
@@ -72,7 +119,7 @@ const syncMutation = useMutation({
     e.target.value = "";
   }
 
-const hasNextPage = contacts.length === PAGE_SIZE;
+  const hasNextPage = contacts.length === PAGE_SIZE;
   const hasPrevPage = page > 0;
 
   return (
@@ -101,6 +148,37 @@ const hasNextPage = contacts.length === PAGE_SIZE;
             <Plus size={14} />
             Nuevo cliente
           </Link>
+        </div>
+      </div>
+
+      {/* Stats bar */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="bg-white border border-gray-200 rounded-xl p-5 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+            <Users size={18} className="text-blue-500" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-gray-900">{stats ? stats.total.toLocaleString() : "—"}</p>
+            <p className="text-xs text-gray-500 mt-0.5">Total de contactos</p>
+          </div>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center">
+            <TrendingUp size={18} className="text-green-500" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-gray-900">{stats ? stats.active.toLocaleString() : "—"}</p>
+            <p className="text-xs text-gray-500 mt-0.5">Activos (accept marketing)</p>
+          </div>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
+            <TrendingDown size={18} className="text-red-400" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-gray-900">{stats ? stats.unsubscribed.toLocaleString() : "—"}</p>
+            <p className="text-xs text-gray-500 mt-0.5">Dados de baja</p>
+          </div>
         </div>
       </div>
 
@@ -152,101 +230,79 @@ const hasNextPage = contacts.length === PAGE_SIZE;
         </div>
 
         <div className="overflow-x-auto">
-        <table className="text-sm" style={{ minWidth: "900px", width: "100%" }}>
-          <thead>
-            <tr className="border-b border-gray-100 bg-gray-50">
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Perfil</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Email</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Teléfono</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Pedidos</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Total gastado</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Última compra</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Ciudad</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Región</th>
-              <th className="px-5 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Suscripción</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              [...Array(8)].map((_, i) => <SkeletonRow key={i} />)
-            ) : contacts.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-5 py-16 text-center">
-                  <Users size={36} className="mx-auto text-gray-300 mb-3" />
-                  <p className="text-gray-500 font-medium">
-                    {debouncedSearch ? "Sin resultados" : "No hay clientes"}
-                  </p>
-                  <p className="text-gray-400 text-xs mt-1">
-                    {debouncedSearch ? "Prueba con otro nombre o email" : "Importa un CSV o agrega clientes manualmente"}
-                  </p>
-                </td>
+          <table className="text-sm" style={{ minWidth: "900px", width: "100%" }}>
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <SortableTh label="Perfil" sortKey="name" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Email" sortKey="email" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Teléfono</th>
+                <SortableTh label="Pedidos" sortKey="orders_count" current={sortBy} dir={sortDir} onSort={handleSort} align="center" />
+                <SortableTh label="Total gastado" sortKey="total_spent" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Última compra" sortKey="last_purchase" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Ciudad</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Región</th>
+                <SortableTh label="Marketing" sortKey="accepts_marketing" current={sortBy} dir={sortDir} onSort={handleSort} align="center" />
               </tr>
-            ) : (
-              contacts.map((c) => (
-                <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors group">
-                  {/* Profile */}
-                  <td className="px-5 py-3">
-                    <Link
-                      href={`/contacts/${c.id}`}
-                      className="font-medium text-brand-600 hover:underline"
-                    >
-                      {c.name || c.email}
-                    </Link>
-                    {!c.opted_in && (
-                      <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-500 font-medium">
-                        baja
-                      </span>
-                    )}
-                  </td>
-
-                  {/* Email */}
-                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {c.email}
-                  </td>
-
-                  {/* Phone */}
-                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {c.phone || <span className="text-gray-300">—</span>}
-                  </td>
-
-                  {/* Pedidos */}
-                  <td className="px-5 py-3 text-gray-700 text-xs whitespace-nowrap text-center">
-                    {c.orders_count > 0 ? c.orders_count : <span className="text-gray-300">0</span>}
-                  </td>
-
-                  {/* Total gastado */}
-                  <td className="px-5 py-3 text-xs whitespace-nowrap">
-                    {c.total_spent
-                      ? <span className="font-medium text-gray-800">${Math.round(c.total_spent).toLocaleString("es-CL")}</span>
-                      : <span className="text-gray-300">—</span>}
-                  </td>
-
-                  {/* Última compra */}
-                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {c.last_purchase ? formatDate(c.last_purchase) : <span className="text-gray-300">—</span>}
-                  </td>
-
-                  {/* Ciudad */}
-                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {c.shipping_city || <span className="text-gray-300">—</span>}
-                  </td>
-
-                  {/* Región */}
-                  <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {c.shipping_province || <span className="text-gray-300">—</span>}
-                  </td>
-
-                  {/* Suscripción */}
-                  <td className="px-5 py-3 text-center whitespace-nowrap">
-                    {c.opted_in
-                      ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">Activo</span>
-                      : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500">Baja</span>}
+            </thead>
+            <tbody>
+              {isLoading ? (
+                [...Array(8)].map((_, i) => <SkeletonRow key={i} />)
+              ) : contacts.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-5 py-16 text-center">
+                    <Users size={36} className="mx-auto text-gray-300 mb-3" />
+                    <p className="text-gray-500 font-medium">
+                      {debouncedSearch ? "Sin resultados" : "No hay clientes"}
+                    </p>
+                    <p className="text-gray-400 text-xs mt-1">
+                      {debouncedSearch ? "Prueba con otro nombre o email" : "Importa un CSV o agrega clientes manualmente"}
+                    </p>
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                contacts.map((c) => (
+                  <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors group">
+                    <td className="px-5 py-3">
+                      <Link href={`/contacts/${c.id}`} className="font-medium text-brand-600 hover:underline">
+                        {c.name || c.email}
+                      </Link>
+                      {c.accepts_marketing === false && (
+                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-500 font-medium">baja</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">{c.email}</td>
+                    <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      {c.phone || <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-gray-700 text-xs whitespace-nowrap text-center">
+                      {c.orders_count > 0 ? c.orders_count : <span className="text-gray-300">0</span>}
+                    </td>
+                    <td className="px-5 py-3 text-xs whitespace-nowrap">
+                      {c.total_spent
+                        ? <span className="font-medium text-gray-800">${Math.round(c.total_spent).toLocaleString("es-CL")}</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      {c.last_purchase ? formatDate(c.last_purchase) : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      {c.shipping_city || <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      {c.shipping_province || <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-center whitespace-nowrap">
+                      {c.accepts_marketing === true
+                        ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">Activo</span>
+                        : c.accepts_marketing === false
+                          ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500">Baja</span>
+                          : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-400">—</span>}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
 
         {/* Pagination */}

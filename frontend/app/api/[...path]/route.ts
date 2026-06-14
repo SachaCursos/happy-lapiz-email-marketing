@@ -43,17 +43,21 @@ async function proxy(req: NextRequest): Promise<NextResponse> {
     }
 
     const resHeaders = new Headers();
+    // Strip hop-by-hop and encoding headers — let Next.js recompute them correctly
+    const STRIP = ["transfer-encoding", "connection", "content-encoding", "content-length"];
     for (const [k, v] of upstream.headers.entries()) {
-      if (!["transfer-encoding", "connection"].includes(k.toLowerCase())) {
+      if (!STRIP.includes(k.toLowerCase())) {
         resHeaders.set(k, v);
       }
     }
 
     // Buffer the response body — streaming through Railway's CDN can drop bytes
-    const resBody = await upstream.arrayBuffer();
-    return new NextResponse(resBody, { status: upstream.status, headers: resHeaders });
-  } catch {
-    return NextResponse.json({ detail: "Backend no disponible" }, { status: 503 });
+    const resText = await upstream.text();
+    resHeaders.set("x-proxy-version", "v3");
+    resHeaders.set("x-proxy-body-len", String(resText.length));
+    return new NextResponse(resText, { status: upstream.status, headers: resHeaders });
+  } catch (err) {
+    return NextResponse.json({ detail: "Backend no disponible", error: String(err) }, { status: 503 });
   }
 }
 

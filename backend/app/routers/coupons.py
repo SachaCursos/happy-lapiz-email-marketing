@@ -35,6 +35,8 @@ class CouponCampaignCreate(BaseModel):
     prefix: str = "HL"
     expires_at: Optional[str] = None
     applies_to: str = "all"
+    coupon_mode: str = "dynamic"   # "dynamic" | "static"
+    static_code: Optional[str] = None  # only for static mode
 
 
 class GenerateCouponRequest(BaseModel):
@@ -68,10 +70,13 @@ def create_coupon_campaign(
         userErrors { field message }
       }
     }"""
+    # For static coupons use the user-specified code; for dynamic use a random seed code
+    initial_code = body.static_code.strip().upper() if body.coupon_mode == "static" and body.static_code else _random_code(body.prefix, 6)
+
     variables = {
         "basicCodeDiscount": {
             "title": body.name,
-            "code": _random_code(body.prefix, 6),
+            "code": initial_code,
             "startsAt": datetime.now(timezone.utc).isoformat(),
             "endsAt": expires_iso,
             "customerSelection": {"all": True},
@@ -92,34 +97,65 @@ def create_coupon_campaign(
             node = data.get("data", {}).get("discountCodeBasicCreate", {}).get("codeDiscountNode")
             if node:
                 shopify_id = node["id"]
-        except Exception as e:
+        except Exception:
             pass  # Save locally even if Shopify fails
 
-    result = session.exec(text("""
+    # Ensure new columns exist (idempotent — safe to run on every create)
+    for col_sql in [
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
+    ]:
+        try:
+            session.execute(text(col_sql))
+            session.commit()
+        except Exception:
+            session.rollback()
+
+    result = session.execute(text("""
         INSERT INTO coupon_campaigns (name, shopify_discount_id, discount_type, discount_value,
-            min_purchase, prefix, expires_at, applies_to, created_by)
-        VALUES (:name, :sid, :dtype, :dval, :minp, :prefix, :exp, :applies, :uid)
-        RETURNING id, name, discount_type, discount_value, prefix
+            min_purchase, prefix, expires_at, applies_to, coupon_mode, static_code, created_by)
+        VALUES (:name, :sid, :dtype, :dval, :minp, :prefix, :exp, :applies, :mode, :scode, :uid)
+        RETURNING id, name, discount_type, discount_value, prefix, coupon_mode, static_code
     """), {
         "name": body.name, "sid": shopify_id, "dtype": body.discount_type,
         "dval": body.discount_value, "minp": body.min_purchase, "prefix": body.prefix,
-        "exp": body.expires_at, "applies": body.applies_to, "uid": current_user.id,
+        "exp": expires_iso, "applies": body.applies_to, "uid": current_user.id,
+        "mode": body.coupon_mode,
+        "scode": initial_code if body.coupon_mode == "static" else None,
     }).fetchone()
     session.commit()
-    return {"id": result[0], "name": result[1], "discount_type": result[2],
-            "discount_value": result[3], "prefix": result[4], "shopify_id": shopify_id}
+    return {
+        "id": result[0], "name": result[1], "discount_type": result[2],
+        "discount_value": result[3], "prefix": result[4],
+        "coupon_mode": result[5], "static_code": result[6],
+        "shopify_id": shopify_id,
+    }
 
 
 @router.get("/campaigns")
 def list_coupon_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    rows = session.exec(text("""
-        SELECT id, name, discount_type, discount_value, prefix, expires_at, status, created_at,
-               (SELECT COUNT(*) FROM coupon_sends WHERE coupon_campaign_id = cc.id) as codes_sent
-        FROM coupon_campaigns cc ORDER BY created_at DESC
-    """)).all()
+    # Try full query with new columns; fall back to basic query if columns don't exist yet
+    try:
+        rows = session.execute(text("""
+            SELECT id, name, discount_type, discount_value, prefix, expires_at, status, created_at,
+                   (SELECT COUNT(*) FROM coupon_sends WHERE coupon_campaign_id = cc.id) as codes_sent,
+                   COALESCE(coupon_mode, 'dynamic') as coupon_mode,
+                   static_code
+            FROM coupon_campaigns cc ORDER BY created_at DESC
+        """)).fetchall()
+    except Exception:
+        session.rollback()
+        rows = session.execute(text("""
+            SELECT id, name, discount_type, discount_value, prefix, expires_at, status, created_at,
+                   (SELECT COUNT(*) FROM coupon_sends WHERE coupon_campaign_id = cc.id) as codes_sent
+            FROM coupon_campaigns cc ORDER BY created_at DESC
+        """)).fetchall()
+        return [{"id": r[0], "name": r[1], "discount_type": r[2], "discount_value": float(r[3]),
+                 "prefix": r[4], "expires_at": r[5], "status": r[6], "created_at": r[7],
+                 "codes_sent": r[8], "coupon_mode": "dynamic", "static_code": None} for r in rows]
     return [{"id": r[0], "name": r[1], "discount_type": r[2], "discount_value": float(r[3]),
              "prefix": r[4], "expires_at": r[5], "status": r[6], "created_at": r[7],
-             "codes_sent": r[8]} for r in rows]
+             "codes_sent": r[8], "coupon_mode": r[9], "static_code": r[10]} for r in rows]
 
 
 @router.post("/generate")

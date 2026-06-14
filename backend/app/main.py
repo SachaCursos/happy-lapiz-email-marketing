@@ -4,12 +4,13 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
 from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks
+from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
 
 app = FastAPI(title="Happy Lápiz Email Marketing API", version="1.0.0", redirect_slashes=False)
 
 app.add_middleware(
     CORSMiddleware,
-    # "*" needed so embed.js can submit forms from any website (e.g. hotboat.cl).
+    # "*" needed so embed.js can submit forms from any website (e.g. happylapiz.cl).
     # Auth-protected routes still require a Bearer token, so this is safe.
     allow_origins=["*"],
     allow_credentials=False,

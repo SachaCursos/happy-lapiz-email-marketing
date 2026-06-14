@@ -94,7 +94,7 @@ export interface Template {
   subject_default: string;
   preview_text: string | null;
   html_content: string;
-  json_blocks: Record<string, unknown> | null;
+  json_blocks: unknown[] | Record<string, unknown> | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
@@ -109,6 +109,7 @@ export interface Campaign {
   preview_text: string | null;
   template_id: number;
   segment_id: number;
+  exclude_segment_ids: number[] | null;
   status: CampaignStatus;
   scheduled_at: string | null;
   sent_at: string | null;
@@ -149,6 +150,45 @@ export interface FormField {
   options?: string[];
 }
 
+export interface FormDesign {
+  header_bg: string;
+  header_bg2: string;
+  header_text: string;
+  body_bg: string;
+  btn_bg: string;
+  btn_bg2: string;
+  btn_text: string;
+  input_border: string;
+  border_radius: number;
+  font: string;
+}
+
+export interface FormStep {
+  step: number;
+  title: string;
+  description: string;
+  fields: string[];
+  button_text: string;
+}
+
+export interface AbFormVariant {
+  id: string;          // "A", "B", "C"
+  title: string;
+  description: string;
+  button_text: string;
+  weight: number;
+}
+
+export interface AbFormVariantStat {
+  variant_id: string;
+  submissions: number;
+}
+
+export interface AbFormStats {
+  total: number;
+  variants: AbFormVariantStat[];
+}
+
 export interface SignupForm {
   id: number;
   name: string;
@@ -164,6 +204,11 @@ export interface SignupForm {
   custom_form_fields: FormField[] | null;
   html_override: string | null;
   coupon_code: string | null;
+  design_config: FormDesign | null;
+  steps_config: FormStep[] | null;
+  coupon_campaign_id: number | null;
+  coupon_automation_id: number | null;
+  ab_variants: AbFormVariant[] | null;
   status: "active" | "paused";
   created_by: number | null;
   created_at: string;
@@ -178,6 +223,7 @@ export interface FormSubmission {
   phone: string | null;
   source_url: string | null;
   extra_data: Record<string, string> | null;
+  coupon_code: string | null;
   created_at: string;
 }
 
@@ -194,17 +240,38 @@ export type AutomationTrigger =
   // Web tracking
   | "viewed_product" | "active_on_site" | "subscribed_to_back_in_stock"
   // Internos
-  | "welcome" | "post_visit" | "reactivation" | "abandoned_booking";
+  | "welcome" | "post_visit" | "reactivation"
+  | "birthday_reminder"
+  | "form_submitted";
 export type AutomationStatus = "active" | "paused";
+
+export interface AutomationVariant {
+  variant: string;      // "A", "B", "C", "D"
+  subject: string;
+  template_id: number;
+  weight: number;
+}
+
+export interface AutomationStep {
+  step: number;
+  delay_hours: number;
+  template_id: number;
+  subject: string;
+  preview_text?: string;
+  condition: "not_purchased" | "not_recovered" | "always" | null;
+  variants?: AutomationVariant[];
+}
 
 export interface Automation {
   id: number;
   name: string;
-  trigger_type: AutomationTrigger;
+  trigger_type: string;
   trigger_config: Record<string, number> | null;
-  template_id: number;
-  subject: string;
-  status: AutomationStatus;
+  steps: AutomationStep[] | null;
+  template_id: number | null;
+  subject: string | null;
+  status: string;
+  coupon_campaign_id: number | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
@@ -216,18 +283,62 @@ export interface AutomationRun {
   contact_id: number | null;
   contact_email: string;
   trigger_key: string;
+  step_number: number;
+  variant_sent: string | null;
   status: "sent" | "failed" | "skipped";
   triggered_at: string;
   executed_at: string | null;
+  opened_at: string | null;
+  clicked_at: string | null;
   resend_id: string | null;
   error: string | null;
+}
+
+export interface AutomationPendingContact {
+  email: string;
+  name: string;
+  detail: string;
+  send_at: string;
+  ready: boolean;
+  step?: number;
+}
+
+export interface AutomationPending {
+  count: number;
+  contacts: AutomationPendingContact[];
+}
+
+export interface AutomationVariantStat {
+  variant: string;
+  sent: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
+}
+
+export interface AutomationStepStat {
+  step: number;
+  sent: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
+  variants: AutomationVariantStat[];
 }
 
 export interface AutomationStats {
   total: number;
   sent: number;
   failed: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
+  orders: number;
+  revenue: number;
   last_run: string | null;
+  variants: AutomationVariantStat[];
 }
 
 export interface OverviewStats {

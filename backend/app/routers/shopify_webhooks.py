@@ -32,15 +32,81 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException, Request
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.deps import get_current_user
 from app.models.contact import Contact
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ── Shopify Products (for template editor product picker) ─────────────────────
+@router.get("/products")
+async def list_shopify_products(_: User = Depends(get_current_user)):
+    """Devuelve los productos activos de Shopify para el editor de plantillas."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=400, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"https://{domain}/admin/api/2024-01/products.json",
+            params={"status": "active", "limit": 250, "fields": "id,title,handle,images,variants"},
+            headers={"X-Shopify-Access-Token": token},
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Shopify API error: {resp.status_code}")
+
+    products = resp.json().get("products", [])
+    result = []
+    for p in products:
+        variant = p["variants"][0] if p.get("variants") else {}
+        result.append({
+            "id": str(p["id"]),
+            "title": p["title"],
+            "handle": p.get("handle", ""),
+            "url": f"https://www.happylapiz.cl/products/{p.get('handle', '')}",
+            "image_url": p["images"][0]["src"] if p.get("images") else "",
+            "price": variant.get("price", ""),
+            "compare_at_price": variant.get("compare_at_price") or "",
+        })
+    return result
+
+
+@router.get("/collections")
+async def list_shopify_collections(_: User = Depends(get_current_user)):
+    """Devuelve todas las colecciones de Shopify para el configurador de cross-sell."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=400, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+    headers = {"X-Shopify-Access-Token": token}
+    smart, custom = [], []
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r1 = await client.get(
+            f"https://{domain}/admin/api/2024-01/smart_collections.json",
+            params={"limit": 250, "fields": "id,title,handle"}, headers=headers,
+        )
+        if r1.status_code == 200:
+            smart = r1.json().get("smart_collections", [])
+        r2 = await client.get(
+            f"https://{domain}/admin/api/2024-01/custom_collections.json",
+            params={"limit": 250, "fields": "id,title,handle"}, headers=headers,
+        )
+        if r2.status_code == 200:
+            custom = r2.json().get("custom_collections", [])
+    return sorted(
+        [{"id": str(c["id"]), "title": c["title"]} for c in smart + custom],
+        key=lambda c: c["title"],
+    )
 
 
 def _verify_shopify(body: bytes, hmac_header: str) -> bool:
@@ -100,6 +166,7 @@ async def shopify_webhook(
         items = payload.get("line_items", [])
         completed = bool(payload.get("completed_at") or payload.get("order_id"))
 
+        # Legacy table (used by automation engine)
         cur.execute("""
             INSERT INTO shopify_checkouts (checkout_token, email, cart_total, line_items, recovered, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -110,6 +177,91 @@ async def shopify_webhook(
                 updated_at = EXCLUDED.updated_at
         """, (token, email or None, total, json.dumps(items), completed, now, completed))
 
+        # Full abandoned cart table
+        customer   = payload.get("customer") or {}
+        ship_addr  = payload.get("shipping_address") or {}
+        bill_addr  = payload.get("billing_address") or {}
+        first_name = (customer.get("first_name") or bill_addr.get("first_name") or
+                      ship_addr.get("first_name") or "")
+        last_name  = (customer.get("last_name") or bill_addr.get("last_name") or
+                      ship_addr.get("last_name") or "")
+        phone      = (customer.get("phone") or bill_addr.get("phone") or
+                      ship_addr.get("phone") or payload.get("phone") or "")
+
+        line_items_clean = [
+            {
+                "product_id":    str(i.get("product_id", "")),
+                "variant_id":    str(i.get("variant_id", "")),
+                "title":         i.get("title", ""),
+                "variant_title": i.get("variant_title", ""),
+                "quantity":      i.get("quantity", 1),
+                "price":         i.get("price", "0"),
+                "sku":           i.get("sku", ""),
+                "vendor":        i.get("vendor", ""),
+            }
+            for i in items
+        ]
+
+        shopify_created = payload.get("created_at")
+        shopify_updated = payload.get("updated_at")
+
+        cur.execute("""
+            INSERT INTO carritos_abandonados (
+                checkout_token, email, first_name, last_name, phone,
+                subtotal_price, total_price, total_discounts, currency,
+                line_items,
+                shipping_city, shipping_province, shipping_country,
+                checkout_url, recovered,
+                source_name, landing_site,
+                shopify_created_at, shopify_updated_at,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s,
+                %s, %s, %s,
+                %s, %s,
+                %s, %s,
+                %s, %s,
+                NOW(), NOW()
+            )
+            ON CONFLICT (checkout_token) DO UPDATE SET
+                email              = COALESCE(EXCLUDED.email, carritos_abandonados.email),
+                first_name         = COALESCE(NULLIF(EXCLUDED.first_name,''), carritos_abandonados.first_name),
+                last_name          = COALESCE(NULLIF(EXCLUDED.last_name,''),  carritos_abandonados.last_name),
+                phone              = COALESCE(NULLIF(EXCLUDED.phone,''),      carritos_abandonados.phone),
+                subtotal_price     = EXCLUDED.subtotal_price,
+                total_price        = EXCLUDED.total_price,
+                total_discounts    = EXCLUDED.total_discounts,
+                currency           = COALESCE(EXCLUDED.currency, carritos_abandonados.currency),
+                line_items         = EXCLUDED.line_items,
+                shipping_city      = COALESCE(NULLIF(EXCLUDED.shipping_city,''),     carritos_abandonados.shipping_city),
+                shipping_province  = COALESCE(NULLIF(EXCLUDED.shipping_province,''), carritos_abandonados.shipping_province),
+                shipping_country   = COALESCE(NULLIF(EXCLUDED.shipping_country,''),  carritos_abandonados.shipping_country),
+                checkout_url       = COALESCE(EXCLUDED.checkout_url, carritos_abandonados.checkout_url),
+                recovered          = carritos_abandonados.recovered OR EXCLUDED.recovered,
+                source_name        = COALESCE(EXCLUDED.source_name, carritos_abandonados.source_name),
+                landing_site       = COALESCE(EXCLUDED.landing_site, carritos_abandonados.landing_site),
+                shopify_updated_at = EXCLUDED.shopify_updated_at,
+                updated_at         = NOW()
+        """, (
+            token, email or None, first_name, last_name, phone,
+            float(payload.get("subtotal_price") or 0),
+            total,
+            float(payload.get("total_discounts") or 0),
+            payload.get("currency", "CLP"),
+            json.dumps(line_items_clean),
+            ship_addr.get("city"),
+            ship_addr.get("province"),
+            ship_addr.get("country"),
+            payload.get("abandoned_checkout_url"),
+            completed,
+            payload.get("source_name"),
+            payload.get("landing_site"),
+            shopify_created,
+            shopify_updated,
+        ))
+
         _log_event(cur, topic, token, email, payload, now, "checkout_started")
 
     # ── Order created → Placed Order + Ordered Product + Coupon Used ─────────
@@ -119,12 +271,17 @@ async def shopify_webhook(
         items = payload.get("line_items", [])
         discount_codes = payload.get("discount_codes", [])
 
-        # Mark checkout as recovered
+        # Mark checkout as recovered in both tables
         if email:
             cur.execute("""
                 UPDATE shopify_checkouts SET recovered = TRUE, updated_at = %s
                 WHERE email = %s AND recovered = FALSE
             """, (now, email))
+            cur.execute("""
+                UPDATE carritos_abandonados
+                SET recovered = TRUE, recovered_at = %s, updated_at = %s
+                WHERE email = %s AND recovered = FALSE
+            """, (now, now, email))
 
         # Update contact stats
         if email:

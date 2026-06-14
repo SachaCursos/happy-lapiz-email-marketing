@@ -7,8 +7,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 # {
 #   "operator": "AND",
 #   "rules": [
-#     {"field": "veces_hotboat", "op": "gte", "value": 2},
-#     {"field": "ha_alojamiento", "op": "eq",  "value": true}
+#     {"field": "orders_count", "op": "gte", "value": 2},
+#     {"field": "total_spent",  "op": "gte", "value": 50000}
 #   ]
 # }
 
