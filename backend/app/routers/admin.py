@@ -338,6 +338,37 @@ def sync_shopify_products(
                 break
             params = {"limit": 250, "page_info": m.group(1)}
 
+    # Ensure the table has the correct schema before inserting.
+    # If shopify_id column is missing (stale schema from a prior deploy),
+    # drop and recreate the table so the sync can proceed without waiting for a restart.
+    try:
+        has_col = session.execute(text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'"
+        )).scalar()
+        session.commit()
+        if has_col == 0:
+            session.execute(text("DROP TABLE IF EXISTS shopify_products"))
+            session.execute(text("""
+                CREATE TABLE shopify_products (
+                    id SERIAL PRIMARY KEY,
+                    shopify_id BIGINT UNIQUE NOT NULL,
+                    title VARCHAR NOT NULL,
+                    handle VARCHAR,
+                    product_type VARCHAR,
+                    tags TEXT,
+                    vendor VARCHAR,
+                    image_url TEXT,
+                    price NUMERIC(10,2),
+                    status VARCHAR NOT NULL DEFAULT 'active',
+                    synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """))
+            session.commit()
+    except Exception as exc:
+        session.rollback()
+        return {"ok": False, "error": f"No se pudo preparar la tabla shopify_products: {exc}"}
+
     now = datetime.utcnow()
     upserted = 0
     errors: list[str] = []
