@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi, api } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
-import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart } from "lucide-react";
+import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart, MapPin } from "lucide-react";
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
@@ -47,6 +47,13 @@ const EVENT_TRIGGERS = new Set<AutomationTrigger>([
   "confirmed_shipment", "delivered_shipment", "marked_out_for_delivery",
   "cancelled_order", "refunded_order", "coupon_assigned", "coupon_used",
   "viewed_product", "active_on_site", "subscribed_to_back_in_stock", "welcome",
+]);
+
+// Triggers where location-based delay makes sense (have shipping address in payload)
+const LOCATION_DELAY_TRIGGERS = new Set<AutomationTrigger>([
+  "placed_order", "ordered_product", "fulfilled_order", "fulfilled_partial_order",
+  "confirmed_shipment", "delivered_shipment", "marked_out_for_delivery",
+  "cancelled_order", "refunded_order",
 ]);
 
 // Triggers where filtering by order count makes sense
@@ -148,6 +155,15 @@ interface VariantState {
   subject: string;
   templateId: number | "";
   weight: number;
+}
+
+interface LocationDelayRule {
+  id: string;
+  label: string;
+  cities: string;   // comma-separated, empty = default/fallback
+  delay: number;
+  unit: TimeUnit;
+  is_default: boolean;
 }
 
 interface StepState {
@@ -443,6 +459,13 @@ export default function NewAutomationPage() {
   const [orderCountPreset, setOrderCountPreset] = useState("none");
   const [orderCountCustom, setOrderCountCustom] = useState(1);
 
+  // Location-based delay
+  const [locationDelayEnabled, setLocationDelayEnabled] = useState(false);
+  const [locationDelayRules, setLocationDelayRules] = useState<LocationDelayRule[]>([
+    { id: "1", label: "Región Metropolitana", cities: "", delay: 2, unit: "dias", is_default: false },
+    { id: "2", label: "Regiones",             cities: "", delay: 7, unit: "dias", is_default: true },
+  ]);
+
   function buildOrderCountFilter(): Record<string, unknown> | undefined {
     const presets: Record<string, { operator: string; value: number }> = {
       eq_1: { operator: "eq", value: 1 },
@@ -524,6 +547,16 @@ export default function NewAutomationPage() {
       const orderFilter = buildOrderCountFilter();
       if (orderFilter && ORDER_COUNT_FILTERABLE.has(triggerType)) {
         triggerConfig.order_count_filter = orderFilter;
+      }
+
+      // Attach location delay rules if configured
+      if (locationDelayEnabled && LOCATION_DELAY_TRIGGERS.has(triggerType) && locationDelayRules.length > 0) {
+        triggerConfig.location_delay_rules = locationDelayRules.map((r) => ({
+          label: r.label,
+          cities: r.is_default ? [] : r.cities.split(",").map((c) => c.trim()).filter(Boolean),
+          delay_hours: toHours(r.delay, r.unit),
+          is_default: r.is_default,
+        }));
       }
 
       const stepsPayload: AutomationStep[] = steps.map((s, i) => {
@@ -692,6 +725,112 @@ export default function NewAutomationPage() {
                   className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
                 <span className="text-sm text-gray-500">horas hacia atrás</span>
               </div>
+            </div>
+          )}
+
+          {/* Location-based delay — shown for Shopify triggers with shipping address */}
+          {LOCATION_DELAY_TRIGGERS.has(triggerType) && (
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={locationDelayEnabled}
+                  onChange={(e) => setLocationDelayEnabled(e.target.checked)}
+                  className="accent-brand-600 w-4 h-4"
+                />
+                <span className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <MapPin size={13} className="text-gray-400" />
+                  Retraso según zona de envío (comuna)
+                </span>
+              </label>
+
+              {locationDelayEnabled && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-gray-500">
+                    El delay del primer paso se reemplaza según la comuna de envío. La regla «Por defecto» se aplica cuando ninguna otra coincide.
+                  </p>
+
+                  {locationDelayRules.map((rule, idx) => (
+                    <div key={rule.id} className="border border-gray-200 rounded-lg p-3 bg-white space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <input
+                          value={rule.label}
+                          onChange={(e) => setLocationDelayRules((prev) =>
+                            prev.map((r, i) => i === idx ? { ...r, label: e.target.value } : r)
+                          )}
+                          placeholder="ej. Región Metropolitana"
+                          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <label className="flex items-center gap-1 text-xs text-gray-500 shrink-0 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="location_default"
+                            checked={rule.is_default}
+                            onChange={() => setLocationDelayRules((prev) =>
+                              prev.map((r, i) => ({ ...r, is_default: i === idx }))
+                            )}
+                            className="accent-brand-600"
+                          />
+                          Por defecto
+                        </label>
+                        {locationDelayRules.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => setLocationDelayRules((prev) => prev.filter((_, i) => i !== idx))}
+                            className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
+
+                      {!rule.is_default && (
+                        <input
+                          value={rule.cities}
+                          onChange={(e) => setLocationDelayRules((prev) =>
+                            prev.map((r, i) => i === idx ? { ...r, cities: e.target.value } : r)
+                          )}
+                          placeholder="ej. Santiago, Providencia, Las Condes, Vitacura"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      )}
+                      {rule.is_default && (
+                        <p className="text-xs text-gray-400 italic">Esta regla aplica cuando ninguna otra zona coincide.</p>
+                      )}
+
+                      <div className="flex gap-2">
+                        <input
+                          type="number" min={0} value={rule.delay}
+                          onChange={(e) => setLocationDelayRules((prev) =>
+                            prev.map((r, i) => i === idx ? { ...r, delay: Math.max(0, Number(e.target.value)) } : r)
+                          )}
+                          className="w-24 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <select
+                          value={rule.unit}
+                          onChange={(e) => setLocationDelayRules((prev) =>
+                            prev.map((r, i) => i === idx ? { ...r, unit: e.target.value as TimeUnit } : r)
+                          )}
+                          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          {TIME_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => setLocationDelayRules((prev) => [
+                      ...prev,
+                      { id: String(Date.now()), label: "", cities: "", delay: 3, unit: "dias", is_default: false },
+                    ])}
+                    className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1 font-medium mt-1"
+                  >
+                    <Plus size={12} /> Agregar zona
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

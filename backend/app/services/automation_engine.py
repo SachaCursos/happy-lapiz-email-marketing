@@ -97,6 +97,35 @@ def _enroll(
     return True
 
 
+def _normalize_city(city: str) -> str:
+    """Lowercase + strip accents for fuzzy city matching."""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", city.lower().strip())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _resolve_location_delay(city: str, rules: list, default_delay: float) -> float:
+    """Return the delay_hours for a shipping city based on location_delay_rules.
+
+    Rules are evaluated in order. The first matching non-default rule wins.
+    If no rule matches, the rule marked is_default is used; if none, default_delay.
+    """
+    if not rules:
+        return default_delay
+    city_norm = _normalize_city(city) if city else ""
+    for rule in rules:
+        if rule.get("is_default"):
+            continue
+        cities_norm = [_normalize_city(c) for c in rule.get("cities", [])]
+        if city_norm and city_norm in cities_norm:
+            return float(rule.get("delay_hours", default_delay))
+    # Fall back to default rule
+    for rule in rules:
+        if rule.get("is_default"):
+            return float(rule.get("delay_hours", default_delay))
+    return default_delay
+
+
 def _passes_order_count_filter(filter_cfg: dict | None, orders_count: int) -> bool:
     """Return True if the contact's order count passes the configured filter.
 
@@ -592,6 +621,7 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
     """), {"topic": topic, "recent": cutoff_recent}).fetchall()
 
     order_count_filter = config.get("order_count_filter")
+    location_delay_rules = config.get("location_delay_rules", [])
 
     for row in rows:
         email = (row[1] or "").lower().strip()
@@ -615,6 +645,10 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
                 session.commit()
                 continue
 
+        # Resolve delay based on shipping city (overrides the step default when rules exist)
+        shipping_city = payload.get("shipping_address", {}).get("city", "")
+        effective_delay = _resolve_location_delay(shipping_city, location_delay_rules, first_delay)
+
         items = payload.get("line_items", [])
         first_item = items[0].get("title", "") if items else ""
         tracking = ""
@@ -629,8 +663,10 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             "order_total": f"${int(float(payload.get('total_price', 0))):,}".replace(",", "."),
             "first_product": first_item,
             "tracking_number": tracking,
+            "shipping_city": shipping_city,
+            "shipping_province": payload.get("shipping_address", {}).get("province", ""),
         }
-        enrolled = _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
+        enrolled = _enroll(session, auto, email, trigger_key, effective_delay, extra_vars)
         if enrolled:
             session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
             session.commit()
