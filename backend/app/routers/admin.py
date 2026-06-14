@@ -380,6 +380,7 @@ def sync_shopify_products(
     url = f"https://{domain}/admin/api/2024-01/products.json"
     params: dict = {
         "limit": 250,
+        "status": "active",
         "fields": "id,title,handle,product_type,tags,vendor,images,variants,status",
     }
 
@@ -393,7 +394,6 @@ def sync_shopify_products(
             link_header = r.headers.get("Link", "")
             if 'rel="next"' not in link_header:
                 break
-            # Extract next page_info from Link header
             next_part = [p for p in link_header.split(",") if 'rel="next"' in p]
             m = _re.search(r'page_info=([^&>]+)', next_part[0]) if next_part else None
             if not m:
@@ -402,27 +402,29 @@ def sync_shopify_products(
 
     now = datetime.utcnow()
     upserted = 0
+    errors: list[str] = []
+    sql = text("""
+        INSERT INTO shopify_products
+            (shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at)
+        VALUES
+            (:sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now)
+        ON CONFLICT (shopify_id) DO UPDATE SET
+            title        = EXCLUDED.title,
+            handle       = EXCLUDED.handle,
+            product_type = EXCLUDED.product_type,
+            tags         = EXCLUDED.tags,
+            vendor       = EXCLUDED.vendor,
+            image_url    = EXCLUDED.image_url,
+            price        = EXCLUDED.price,
+            status       = EXCLUDED.status,
+            synced_at    = EXCLUDED.synced_at
+    """)
     for p in all_products:
         try:
             variant = (p.get("variants") or [{}])[0]
             price = float(variant.get("price") or 0)
             image_url = (p.get("images") or [{}])[0].get("src", "")
-            session.execute(text("""
-                INSERT INTO shopify_products
-                    (shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at)
-                VALUES
-                    (:sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now)
-                ON CONFLICT (shopify_id) DO UPDATE SET
-                    title        = EXCLUDED.title,
-                    handle       = EXCLUDED.handle,
-                    product_type = EXCLUDED.product_type,
-                    tags         = EXCLUDED.tags,
-                    vendor       = EXCLUDED.vendor,
-                    image_url    = EXCLUDED.image_url,
-                    price        = EXCLUDED.price,
-                    status       = EXCLUDED.status,
-                    synced_at    = EXCLUDED.synced_at
-            """), {
+            session.execute(sql, {
                 "sid":    int(p["id"]),
                 "title":  p.get("title", ""),
                 "handle": p.get("handle", ""),
@@ -431,15 +433,20 @@ def sync_shopify_products(
                 "vendor": p.get("vendor", ""),
                 "img":    image_url,
                 "price":  price,
-                "status": p.get("status", "active"),
+                "status": "active",
                 "now":    now,
             })
+            session.commit()  # commit each product individually so one failure doesn't abort the rest
             upserted += 1
-        except Exception:
-            pass
-
-    session.commit()
-    return {"ok": True, "synced": upserted, "total_fetched": len(all_products)}
+        except Exception as exc:
+            session.rollback()  # reset transaction state so next insert can proceed
+            errors.append(f"{p.get('id')}: {str(exc)[:120]}")
+    return {
+        "ok": upserted > 0 or len(all_products) == 0,
+        "synced": upserted,
+        "total_fetched": len(all_products),
+        "errors": errors[:10],  # first 10 errors for diagnosis
+    }
 
 
 @router.post("/register-shopify-webhooks")

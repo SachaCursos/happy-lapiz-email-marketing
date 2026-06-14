@@ -38,7 +38,6 @@ const TRIGGERS: {
   { value: "welcome",                  badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Bienvenida (nuevo suscriptor)",    description: "Nuevo contacto con opt-in activo." },
   { value: "reactivation",             badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Reactivación (cliente inactivo)",  description: "Sin compra en N días." },
   { value: "post_visit",               badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Seguimiento post-compra",          description: "N días después de la última compra." },
-  { value: "abandoned_booking",        badge: "HotBoat",  badgeColor: "bg-orange-100 text-orange-700", label: "Reserva abandonada (HotBoat)",     description: "Reserva con pago pendiente sin completar." },
 ];
 
 const EVENT_TRIGGERS = new Set<AutomationTrigger>([
@@ -659,7 +658,6 @@ export default function NewAutomationPage() {
   const [inactivityDays, setInactivityDays] = useState(90);
   const [cooldownDays, setCooldownDays] = useState(180);
   const [postVisitDays, setPostVisitDays] = useState(3);
-  const [bookingDelayMinutes, setBookingDelayMinutes] = useState(5);
 
   // Order count filter
   const [orderCountPreset, setOrderCountPreset] = useState("none");
@@ -765,8 +763,6 @@ export default function NewAutomationPage() {
         triggerConfig = { inactivity_days: inactivityDays, cooldown_days: cooldownDays };
       } else if (triggerType === "post_visit") {
         triggerConfig = { delay_days: postVisitDays };
-      } else if (triggerType === "abandoned_booking") {
-        triggerConfig = { delay_minutes: bookingDelayMinutes, lookback_hours: 24 };
       } else if (EVENT_TRIGGERS.has(triggerType)) {
         triggerConfig = {
           lookback_hours: toHours(lookbackValue, lookbackUnit as TimeUnit),
@@ -960,18 +956,6 @@ export default function NewAutomationPage() {
               </div>
             </div>
           )}
-          {triggerType === "abandoned_booking" && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Ventana máxima (horas)</label>
-              <div className="flex items-center gap-2">
-                <input type="number" min={1} value={bookingDelayMinutes}
-                  onChange={(e) => setBookingDelayMinutes(Math.max(1, Number(e.target.value)))}
-                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                <span className="text-sm text-gray-500">horas hacia atrás</span>
-              </div>
-            </div>
-          )}
-
           {/* Product filter — only for ordered_product trigger */}
           {PRODUCT_FILTER_TRIGGERS.has(triggerType) && (
             <div>

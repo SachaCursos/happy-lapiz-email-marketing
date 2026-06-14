@@ -28,7 +28,7 @@ export default function SettingsPage() {
   const [seeding, setSeeding]       = useState(false);
   const [logoResult, setLogoResult] = useState<{ ok: boolean; fixed: string[] } | null>(null);
   const [fixingLogo, setFixingLogo] = useState(false);
-  const [syncProductsResult, setSyncProductsResult] = useState<{ ok?: boolean; synced?: number; total_fetched?: number; error?: string } | null>(null);
+  const [syncProductsResult, setSyncProductsResult] = useState<{ ok?: boolean; synced?: number; total_fetched?: number; error?: string; errors?: string[] } | null>(null);
   const [syncingProducts, setSyncingProducts] = useState(false);
 
   async function syncProducts() {
@@ -137,6 +137,14 @@ export default function SettingsPage() {
               {syncProductsResult.ok
                 ? `✓ ${syncProductsResult.synced} productos guardados (de ${syncProductsResult.total_fetched} obtenidos)`
                 : `Error: ${syncProductsResult.error}`}
+              {syncProductsResult.errors && syncProductsResult.errors.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs opacity-70">{syncProductsResult.errors.length} errores de inserción</summary>
+                  <ul className="mt-1 text-xs space-y-0.5 opacity-70">
+                    {syncProductsResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
         </div>

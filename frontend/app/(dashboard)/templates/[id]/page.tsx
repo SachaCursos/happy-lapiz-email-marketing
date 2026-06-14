@@ -104,8 +104,8 @@ function VariablesPanel() {
         Variables disponibles en plantillas
       </button>
       {open && (
-        <div className="px-6 pb-4 max-h-72 overflow-y-auto">
-          <div className="grid grid-cols-2 gap-x-8 gap-y-0 pt-1">
+        <div className="px-6 pb-4">
+          <div className="grid grid-cols-3 gap-x-6 gap-y-0 pt-1">
             {VAR_GROUPS.map((group) => {
               const c = COLOR_MAP[group.color];
               return (
