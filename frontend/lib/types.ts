@@ -240,7 +240,7 @@ export type AutomationTrigger =
   // Web tracking
   | "viewed_product" | "active_on_site" | "subscribed_to_back_in_stock"
   // Internos
-  | "welcome" | "post_visit" | "reactivation" | "abandoned_booking"
+  | "welcome" | "post_visit" | "reactivation"
   | "form_submitted";
 export type AutomationStatus = "active" | "paused";
 

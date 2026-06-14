@@ -220,7 +220,7 @@ def contact_bookings(
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    """Historial de reservas desde la DB fuente de HotBoat."""
+    """Historial de compras del contacto."""
     contact = session.get(Contact, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")

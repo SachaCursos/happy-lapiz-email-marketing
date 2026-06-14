@@ -13,127 +13,66 @@ from app.models.segment import Segment
 
 router = APIRouter()
 
+HL_LOGO = "https://cdn.shopify.com/s/files/1/0556/5343/3495/files/LOGO_HappyLapiz.png?v=1621889822"
+
 FOOTER = """
-<div style="border-top:1px solid #eee;margin-top:40px;padding-top:24px;text-align:center;">
-  <p style="font-size:13px;font-weight:700;color:#111;margin:0 0 4px;">HotBoat</p>
-  <p style="font-size:12px;color:#999;margin:4px 0;">Experiencias en el agua &middot; Chile</p>
-  <p style="font-size:12px;color:#bbb;margin:8px 0;">
-    <a href="##unsub##" style="color:#bbb;">Cancelar suscripci&oacute;n</a>
+<div style="border-top:1px solid #f3f4f6;margin-top:40px;padding-top:24px;text-align:center;">
+  <img src="__HL_LOGO__" alt="Happy L&#225;piz" width="120" style="height:auto;display:inline-block;margin-bottom:12px;opacity:0.6;" />
+  <p style="font-size:12px;color:#9ca3af;margin:4px 0;">Juguetes educativos &middot; Chile</p>
+  <p style="font-size:12px;color:#d1d5db;margin:8px 0;">
+    <a href="##unsub##" style="color:#d1d5db;">Cancelar suscripci&oacute;n</a>
   </p>
 </div>"""
 
 SEED_TEMPLATES = [
     {
-        "name":    "Bienvenida — Lista HotBoat",
-        "subject": "{{nombre}}, bienvenido/a a HotBoat 🌊",
-        "preview": "Nos alegra tenerte aquí. Descubre lo que tenemos preparado para ti.",
+        "name":    "Bienvenida — Happy Lápiz",
+        "subject": "{{nombre or 'amigo/a'}}, bienvenido/a a Happy Lápiz 🎨",
+        "preview": "Nos alegra tenerte aquí. Descubre nuestro catálogo de juguetes educativos.",
         "segment": "Todos los suscriptores",
-        "html": """<div style="font-family:Inter,Arial,sans-serif;max-width:600px;margin:0 auto;padding:40px 32px;">
-  <div style="background:#f9fafb;border-radius:16px;padding:44px 40px;text-align:center;margin-bottom:32px;border:1px solid #e5e7eb;">
-    <img src="__LOGO_PNG__" alt="HotBoat" style="height:80px;width:auto;margin-bottom:20px;display:block;margin-left:auto;margin-right:auto;" />
-    <h1 style="color:#111;font-size:20px;font-weight:700;margin:0 0 10px;line-height:1.3;">Bienvenido/a a HotBoat, {{nombre or 'cliente'}}</h1>
-    <p style="color:#555;font-size:16px;margin:0;">Nos alegra tenerte en nuestra comunidad</p>
+        "html": """<div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+  <div style="padding:28px 32px 0;text-align:center;">
+    <a href="https://www.happylapiz.cl"><img src="__LOGO_PNG__" alt="Happy L&#225;piz" width="160" style="height:auto;display:inline-block;" /></a>
   </div>
-  <p style="font-size:16px;color:#333;line-height:1.75;margin-bottom:24px;">
-    Hola {{nombre}}, acabas de unirte a la lista de HotBoat.
-    Desde aquí te haremos llegar las mejores experiencias en el agua,
-    fechas exclusivas y ofertas especiales pensadas para ti.
-  </p>
-  <div style="background:#f9fafb;border-radius:14px;padding:28px;margin-bottom:28px;">
-    <p style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#999;margin:0 0 16px;">Qué recibirás</p>
-    <div style="display:flex;flex-direction:column;gap:12px;">
-      <div style="display:flex;align-items:flex-start;gap:14px;">
-        <span style="font-size:22px;line-height:1;flex-shrink:0;">📅</span>
-        <div>
-          <p style="font-weight:700;color:#111;font-size:15px;margin:0 0 2px;">Nuevas fechas antes que nadie</p>
-          <p style="color:#666;font-size:14px;margin:0;">Acceso anticipado cuando abramos nuevos cupos.</p>
+  <div style="background:linear-gradient(135deg,#5b21b6 0%,#682ae7 100%);margin:20px 0 0;padding:36px 32px;text-align:center;">
+    <h1 style="color:#fff;font-size:22px;font-weight:800;margin:0 0 10px;line-height:1.3;">
+      &#161;Bienvenido/a, {{nombre or 'amigo/a'}}! &#127775;
+    </h1>
+    <p style="color:#ddd6fe;font-size:15px;margin:0;line-height:1.6;">Nos alegra tenerte en la familia Happy L&#225;piz</p>
+  </div>
+  <div style="padding:28px 32px;">
+    <p style="font-size:15px;color:#374151;line-height:1.75;margin:0 0 20px;">
+      Hola {{first_name or nombre or 'amigo/a'}}, ahora eres parte de nuestra comunidad.
+      Desde aqu&#237; te haremos llegar novedades del cat&#225;logo, ofertas exclusivas
+      y contenido educativo pensado para el desarrollo de los peque&#241;os.
+    </p>
+    <div style="background:#f5f3ff;border-radius:14px;padding:24px;margin-bottom:24px;">
+      <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#7c3aed;margin:0 0 14px;">&#191;Qu&#233; encontrar&#225;s?</p>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;align-items:flex-start;gap:12px;">
+          <span style="font-size:20px;line-height:1;flex-shrink:0;">&#127981;</span>
+          <div><p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Juguetes educativos de calidad</p><p style="color:#6b7280;font-size:13px;margin:0;">Curados para cada etapa del desarrollo.</p></div>
         </div>
-      </div>
-      <div style="display:flex;align-items:flex-start;gap:14px;">
-        <span style="font-size:22px;line-height:1;flex-shrink:0;">🎁</span>
-        <div>
-          <p style="font-weight:700;color:#111;font-size:15px;margin:0 0 2px;">Ofertas y beneficios exclusivos</p>
-          <p style="color:#666;font-size:14px;margin:0;">Descuentos y experiencias solo para nuestra lista.</p>
+        <div style="display:flex;align-items:flex-start;gap:12px;">
+          <span style="font-size:20px;line-height:1;flex-shrink:0;">&#127873;</span>
+          <div><p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Ofertas y novedades primero</p><p style="color:#6b7280;font-size:13px;margin:0;">Acceso anticipado a lanzamientos y descuentos.</p></div>
         </div>
-      </div>
-      <div style="display:flex;align-items:flex-start;gap:14px;">
-        <span style="font-size:22px;line-height:1;flex-shrink:0;">🌊</span>
-        <div>
-          <p style="font-weight:700;color:#111;font-size:15px;margin:0 0 2px;">Contenido del lago y el agua</p>
-          <p style="color:#666;font-size:14px;margin:0;">Tips, historias y momentos de la comunidad HotBoat.</p>
+        <div style="display:flex;align-items:flex-start;gap:12px;">
+          <span style="font-size:20px;line-height:1;flex-shrink:0;">&#128218;</span>
+          <div><p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Contenido sobre crianza y aprendizaje</p><p style="color:#6b7280;font-size:13px;margin:0;">Tips e ideas para estimular a tus hijos.</p></div>
         </div>
       </div>
     </div>
-  </div>
-  <div style="text-align:center;margin:32px 0;">
-    <a href="https://hotboat.cl" style="background:#2563eb;color:#fff;font-weight:700;padding:15px 44px;border-radius:11px;text-decoration:none;font-size:16px;display:inline-block;">Ver experiencias disponibles</a>
-  </div>
-  <p style="font-size:13px;color:#aaa;text-align:center;line-height:1.6;margin-top:32px;">
-    Si no quieres recibir nuestros correos, puedes darte de baja en cualquier momento desde el enlace al pie de este mensaje.
-  </p>""" + FOOTER + "</div>",
-    },
-    {
-        "name":    "Día de la Madre — Bienvenida Mamás",
-        "subject": "{{nombre}}, te damos la bienvenida a HotBoat 🌊",
-        "preview": "Nos alegra tenerte aquí. Descubre lo que tenemos preparado para ti.",
-        "segment": "Mamás",
-        "html": """<div style="font-family:Inter,Arial,sans-serif;max-width:600px;margin:0 auto;padding:40px 32px;">
-  <div style="background:#f9fafb;border-radius:16px;padding:40px;text-align:center;margin-bottom:32px;border:1px solid #e5e7eb;">
-    <img src="__LOGO_PNG__" alt="HotBoat" style="height:80px;width:auto;margin-bottom:20px;display:block;margin-left:auto;margin-right:auto;" />
-    <h1 style="color:#111;font-size:20px;font-weight:700;margin:0 0 8px;">¡Hola, {{nombre or 'cliente'}}! 🌸</h1>
-    <p style="color:#555;font-size:16px;margin:0;">Nos alegra tenerte en la familia HotBoat</p>
-  </div>
-  <p style="font-size:16px;color:#333;line-height:1.7;">En HotBoat creamos experiencias únicas en el agua para que disfrutes momentos inolvidables junto a las personas que más quieres.</p>
-  <div style="background:#f9fafb;border-radius:12px;padding:24px;margin:24px 0;">
-    <h3 style="font-size:14px;font-weight:700;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.5px;">¿Qué encontrarás en HotBoat?</h3>
-    <ul style="margin:0;padding:0 0 0 20px;color:#444;font-size:15px;line-height:2.2;">
-      <li>Paseos en bote guiados por expertos</li>
-      <li>Experiencias a medida para cada ocasión</li>
-      <li>Fotos y recuerdos para llevar siempre</li>
-      <li>El lago más hermoso de Chile</li>
-    </ul>
-  </div>
-  <div style="text-align:center;margin:32px 0;">
-    <a href="https://hotboat.cl" style="background:#2563eb;color:#fff;font-weight:700;padding:14px 36px;border-radius:10px;text-decoration:none;font-size:15px;">Conocer HotBoat</a>
-  </div>
-  <p style="font-size:14px;color:#666;text-align:center;">Pronto recibirás algo muy especial por el Día de la Madre. ¡Estáte atenta! 🌸</p>""" + FOOTER + "</div>",
-    },
-    {
-        "name":    "Día de la Madre — Oferta especial",
-        "subject": "{{nombre}}, tu regalo de Día de la Madre está aquí 🌸",
-        "preview": "Video profesional gratis + jugo natural 1L. Solo para ti, con el cupón MAMÁ.",
-        "segment": "Mamás",
-        "html": """<div style="font-family:Inter,Arial,sans-serif;max-width:600px;margin:0 auto;padding:40px 32px;">
-  <div style="background:#fdf2f8;border-radius:16px;padding:40px;text-align:center;margin-bottom:32px;border:1px solid #f9c6e0;">
-    <img src="__LOGO_PNG__" alt="HotBoat" style="height:80px;width:auto;margin-bottom:20px;display:block;margin-left:auto;margin-right:auto;" />
-    <h1 style="color:#111;font-size:20px;font-weight:700;margin:0 0 8px;">Feliz Día de la Madre 🌸</h1>
-    <p style="color:#555;font-size:16px;margin:0;">{{nombre or 'cliente'}}, este día es tuyo. Te lo merecés todo.</p>
-  </div>
-  <p style="font-size:16px;color:#333;line-height:1.7;text-align:center;">Para celebrarte, preparamos un regalo especial cuando reserves tu experiencia HotBoat:</p>
-  <div style="display:flex;gap:16px;margin:28px 0;flex-wrap:wrap;">
-    <div style="flex:1;min-width:220px;background:#fff8f0;border:1px solid #ffd6a0;border-radius:12px;padding:20px;text-align:center;">
-      <div style="font-size:40px;margin-bottom:8px;">🎬</div>
-      <p style="font-weight:700;color:#111;font-size:15px;margin:0 0 4px;">Video profesional</p>
-      <p style="color:#888;font-size:13px;margin:0;">Tu experiencia filmada en HD — <strong style="color:#2563eb;">¡GRATIS!</strong></p>
-    </div>
-    <div style="flex:1;min-width:220px;background:#f0fff4;border:1px solid #a0f0b8;border-radius:12px;padding:20px;text-align:center;">
-      <div style="font-size:40px;margin-bottom:8px;">🥤</div>
-      <p style="font-weight:700;color:#111;font-size:15px;margin:0 0 4px;">Jugo natural 1 litro</p>
-      <p style="color:#888;font-size:13px;margin:0;">Fresco y recién hecho — <strong style="color:#16a34a;">¡GRATIS!</strong></p>
+    <div style="text-align:center;margin:28px 0;">
+      <a href="https://www.happylapiz.cl" style="background:#682ae7;color:#fff;font-weight:700;padding:14px 40px;border-radius:30px;text-decoration:none;font-size:15px;display:inline-block;">Ver cat&#225;logo &#8594;</a>
     </div>
   </div>
-  <div style="background:#f9fafb;border-radius:16px;padding:28px;text-align:center;margin:28px 0;">
-    <p style="font-size:14px;color:#555;margin:0 0 12px;">Ingresa este cupón al reservar:</p>
-    <div style="display:inline-block;background:#2563eb;color:#fff;border-radius:12px;padding:16px 40px;">
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:2px;opacity:0.85;margin-bottom:4px;">Código de reserva</div>
-      <div style="font-size:42px;font-weight:900;letter-spacing:4px;line-height:1.1;">MAMÁ</div>
-    </div>
-    <p style="font-size:12px;color:#999;margin-top:12px;">Válido hasta el 11 de mayo de 2026</p>
+  <div style="border-top:1px solid #f3f4f6;padding:20px 32px;text-align:center;">
+    <img src="__LOGO_PNG__" alt="Happy L&#225;piz" width="100" style="height:auto;display:inline-block;opacity:0.5;margin-bottom:10px;" />
+    <p style="font-size:12px;color:#d1d5db;margin:4px 0;">Juguetes educativos &middot; Chile</p>
+    <p style="font-size:12px;color:#d1d5db;margin:6px 0;"><a href="##unsub##" style="color:#d1d5db;">Cancelar suscripci&#243;n</a></p>
   </div>
-  <div style="text-align:center;margin:32px 0 16px;">
-    <a href="https://whatsapp.hotboat.cl/booking" style="background:#2563eb;color:#fff;font-weight:800;padding:16px 44px;border-radius:12px;text-decoration:none;font-size:16px;display:inline-block;">Reservar ahora 🌊</a>
-  </div>
-  <p style="text-align:center;font-size:14px;color:#888;margin:0;">¿Quieres saber más? <a href="https://hotboat.cl" style="color:#2563eb;font-weight:600;text-decoration:none;">Ver toda la experiencia</a></p>""" + FOOTER + "</div>",
+</div>""",
     },
     {
         "name":    "Cross-sell — Recomendados por compra",
@@ -244,7 +183,7 @@ def seed_templates(
     created = {"segments": [], "templates": [], "campaigns": []}
     updated = {"templates": []}
 
-    logo_url = "https://hotboatchile.com/logo_hotboat_blanco.png"
+    logo_url = HL_LOGO
 
     # Segmentos
     seg_map: dict[str, int] = {}
@@ -264,7 +203,7 @@ def seed_templates(
     # Plantillas y campañas
     for t in SEED_TEMPLATES:
         existing_tpl = session.exec(select(Template).where(Template.name == t["name"])).first()
-        html = t["html"].replace("__LOGO_PNG__", logo_url).replace("__CROSS_SELL__", CROSS_SELL_TEMPLATE_HTML)
+        html = t["html"].replace("__LOGO_PNG__", logo_url).replace("__HL_LOGO__", logo_url).replace("__CROSS_SELL__", CROSS_SELL_TEMPLATE_HTML)
         if existing_tpl:
             existing_tpl.html_content    = html
             existing_tpl.subject_default = t["subject"]
@@ -345,21 +284,20 @@ def fix_logo(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
 ):
-    """Replace SVG hotboatchile.com logo with hosted PNG in all templates."""
-    logo_url = "https://hotboatchile.com/logo_hotboat_blanco.png"
-    old_pattern = re.compile(r'https?://hotboatchile\.com/LOGO_HOTBOAT\.svg')
+    """Replace old placeholder logos with the Happy Lápiz logo in all templates."""
+    old_pattern = re.compile(r'(__LOGO_PNG__|__HL_LOGO__|https?://hotboatchile\.com/[^\s"\']+)')
     now = datetime.utcnow()
     all_templates = session.exec(select(Template)).all()
     fixed = []
     for tpl in all_templates:
-        new_html = old_pattern.sub(logo_url, tpl.html_content or "")
+        new_html = old_pattern.sub(HL_LOGO, tpl.html_content or "")
         if new_html != tpl.html_content:
             tpl.html_content = new_html
             tpl.updated_at = now
             session.add(tpl)
             fixed.append(tpl.name)
     session.commit()
-    return {"ok": True, "fixed": fixed, "logo_url": logo_url}
+    return {"ok": True, "fixed": fixed, "logo_url": HL_LOGO}
 
 
 @router.post("/sync-products")

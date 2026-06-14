@@ -39,7 +39,7 @@ const GROUPS: VarGroup[] = [
     vars: [
       { tag: "{{ first_name }}",              description: "Nombre del comprador",                example: "Juan" },
       { tag: "{{ cart_total }}",              description: "Total del carrito formateado",         example: "$32.990" },
-      { tag: "{{ first_product }}",           description: "Nombre del primer producto",          example: "Kayak doble" },
+      { tag: "{{ first_product }}",           description: "Nombre del primer producto",          example: "Pack Mi Primer Taladro" },
       { tag: "{{ cart_url }}",                description: "Enlace directo al carrito",           example: "https://happylapiz.cl/cart/abc" },
       { tag: "{{ event.extra.checkout_url }}", description: "URL de checkout (compatible Klaviyo)", example: "https://happylapiz.cl/checkout/xyz" },
     ],
@@ -51,24 +51,9 @@ const GROUPS: VarGroup[] = [
     vars: [
       { tag: "{{ order_number }}",    description: "Número de pedido",               example: "#1042" },
       { tag: "{{ order_total }}",     description: "Total del pedido formateado",    example: "$58.000" },
-      { tag: "{{ first_product }}",   description: "Primer producto del pedido",     example: "Kayak individual" },
+      { tag: "{{ first_product }}",   description: "Primer producto del pedido",     example: "Pack Científico Explorador" },
       { tag: "{{ tracking_number }}", description: "Número de seguimiento del envío", example: "CL123456789" },
       { tag: "{{ first_name }}",      description: "Nombre del comprador",           example: "Sofía" },
-    ],
-  },
-  {
-    title: "Reserva abandonada",
-    color: "bg-orange-50 border-orange-200",
-    description: "Variables para la automatización \"Reserva abandonada\" (reservas pendientes de pago).",
-    vars: [
-      { tag: "{{ servicio }}",       description: "Nombre del servicio reservado",   example: "Kayak doble + snorkel" },
-      { tag: "{{ fecha_reserva }}",  description: "Fecha de la reserva",             example: "2024-12-20" },
-      { tag: "{{ hora_reserva }}",   description: "Hora de inicio",                  example: "10:30" },
-      { tag: "{{ personas }}",       description: "Resumen de participantes",        example: "2 adultos + 1 niño" },
-      { tag: "{{ num_adultos }}",    description: "Cantidad de adultos",             example: "2" },
-      { tag: "{{ num_ninos }}",      description: "Cantidad de niños",               example: "1" },
-      { tag: "{{ ingreso_total }}",  description: "Total de la reserva formateado",  example: "$74.000" },
-      { tag: "{{ first_name }}",     description: "Nombre del cliente",              example: "Carlos" },
     ],
   },
   {
@@ -76,7 +61,7 @@ const GROUPS: VarGroup[] = [
     color: "bg-gray-50 border-gray-200",
     description: "Tag especial para el enlace de desuscripción. Es reemplazado automáticamente por la URL personalizada del contacto.",
     vars: [
-      { tag: "{% unsubscribe %}",    description: "Enlace de desuscripción personalizado por contacto", example: "https://hotboat.app/unsub/TOKEN" },
+      { tag: "{% unsubscribe %}",    description: "Enlace de desuscripción personalizado por contacto", example: "https://happylapiz.cl/unsub/TOKEN" },
     ],
   },
 ];

@@ -31,7 +31,7 @@ function UnsubscribeContent() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 max-w-md w-full text-center">
         <img
           src="/logo.png"
-          alt="HotBoat"
+          alt="Happy Lápiz"
           className="h-8 mx-auto mb-8 opacity-60"
           onError={(e) => (e.currentTarget.style.display = "none")}
         />

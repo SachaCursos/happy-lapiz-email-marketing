@@ -10,7 +10,7 @@ app = FastAPI(title="Happy Lápiz Email Marketing API", version="1.0.0", redirec
 
 app.add_middleware(
     CORSMiddleware,
-    # "*" needed so embed.js can submit forms from any website (e.g. hotboat.cl).
+    # "*" needed so embed.js can submit forms from any website (e.g. happylapiz.cl).
     # Auth-protected routes still require a Bearer token, so this is safe.
     allow_origins=["*"],
     allow_credentials=False,

@@ -232,9 +232,9 @@ def campaign_conversions(
     _: User = Depends(get_current_user),
 ):
     """
-    Atribución de reservas: contactos que recibieron esta campaña y
-    tuvieron una visita confirmada en HotBoat dentro de `days` días
-    posteriores al envío. Cruce por email con all_appointments.
+    Atribución de compras: contactos que recibieron esta campaña y
+    realizaron una compra en Shopify dentro de `days` días
+    posteriores al envío.
     """
     campaign = session.get(Campaign, campaign_id)
     if not campaign:

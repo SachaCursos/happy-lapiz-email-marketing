@@ -35,15 +35,11 @@ const TRIGGER_LABELS: Record<string, { label: string; description: string; color
   welcome:                  { label: "Bienvenida",                      description: "Nuevo contacto con opt-in activo.",                      color: "bg-gray-100 text-gray-700" },
   reactivation:             { label: "Reactivación",                    description: "Clientes sin compra en N días.",                         color: "bg-gray-100 text-gray-700" },
   post_visit:               { label: "Post-compra",                     description: "N días después de la última compra.",                    color: "bg-gray-100 text-gray-700" },
-  // HotBoat
-  abandoned_booking:        { label: "Reserva abandonada",              description: "Reserva con pago pendiente sin completar.",              color: "bg-orange-100 text-orange-700" },
 };
 
 function configSummary(auto: Automation): string {
   const c = auto.trigger_config ?? {};
   switch (auto.trigger_type) {
-    case "abandoned_booking":
-      return `${c.delay_minutes ?? 5} min después de la reserva pendiente`;
     case "welcome":
       return c.delay_hours ? `${c.delay_hours}h después de registrarse` : "Inmediatamente al registrarse";
     case "post_visit":
@@ -148,24 +144,6 @@ function EditPanel({
           <p className="text-xs text-purple-600 mt-1">Usa <code className="bg-purple-50 px-1 rounded">{"{{ coupon_code }}"}</code> o <code className="bg-purple-50 px-1 rounded">{"{{ event.extra.checkout_url_with_coupon }}"}</code> en la plantilla.</p>
         )}
       </div>
-
-      {/* Trigger config */}
-      {auto.trigger_type === "abandoned_booking" && (
-        <div className="grid grid-cols-2 gap-3 max-w-sm">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Delay (min)</label>
-            <input type="number" min={1} value={cfg.delay_minutes ?? 5}
-              onChange={(e) => setCfg((c) => ({ ...c, delay_minutes: Number(e.target.value) }))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Ventana (horas)</label>
-            <input type="number" min={1} value={cfg.lookback_hours ?? 24}
-              onChange={(e) => setCfg((c) => ({ ...c, lookback_hours: Number(e.target.value) }))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-          </div>
-        </div>
-      )}
 
       {/* Steps */}
       <div className="space-y-3">

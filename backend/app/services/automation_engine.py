@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 import httpx
 import resend
 from jinja2 import Environment, ChainableUndefined
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -34,11 +34,6 @@ from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment
 
 logger = logging.getLogger(__name__)
-
-
-def _source_engine():
-    url = settings.HOTBOAT_DATABASE_URL or settings.DATABASE_URL
-    return create_engine(url)
 
 
 def _get_steps(auto: Automation) -> list:
@@ -576,68 +571,6 @@ def _process_enrollments(session: Session) -> None:
 
 # ── Trigger handlers (Phase 1 — enroll only, don't send) ─────────────────────
 
-def _check_abandoned_booking(auto: Automation, session: Session) -> None:
-    config = auto.trigger_config or {}
-    delay_minutes = int(config.get("delay_minutes", 5))
-    lookback_hours = int(config.get("lookback_hours", 24))
-    now = datetime.utcnow()
-    cutoff_old = now - timedelta(minutes=delay_minutes)
-    cutoff_recent = now - timedelta(hours=lookback_hours)
-
-    try:
-        src = _source_engine()
-        with src.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT id, email, nombre_cliente, servicio, fecha, hora,
-                       num_adultos, num_ninos, ingreso_total, created_at
-                FROM all_appointments
-                WHERE status = 'pending_payment'
-                  AND (paid_at IS NULL OR payment_status != 'completed')
-                  AND created_at <= :cutoff_old
-                  AND created_at >= :cutoff_recent
-                  AND email IS NOT NULL AND email <> ''
-                ORDER BY created_at DESC
-                LIMIT 200
-            """), {"cutoff_old": cutoff_old, "cutoff_recent": cutoff_recent}).fetchall()
-    except Exception as exc:
-        logger.error("Automation %d: cannot read source DB: %s", auto.id, exc)
-        return
-
-    steps = _get_steps(auto)
-    if not steps:
-        return
-    first_delay = float(steps[0].get("delay_hours", delay_minutes / 60))
-
-    for row in rows:
-        email = row.email.lower().strip()
-        trigger_key = f"abandoned_booking:{row.id}"
-        contact = session.exec(select(Contact).where(Contact.email == email)).first()
-        if not contact or not contact.opted_in:
-            continue
-
-        fecha_str = str(row.fecha) if row.fecha else ""
-        hora_str = str(row.hora)[:5] if row.hora else ""
-        adultos = int(row.num_adultos or 0)
-        ninos = int(row.num_ninos or 0)
-        total = f"${int(row.ingreso_total):,}".replace(",", ".") if row.ingreso_total else ""
-        personas_str = f"{adultos} adulto{'s' if adultos != 1 else ''}"
-        if ninos:
-            personas_str += f" + {ninos} niño{'s' if ninos != 1 else ''}"
-
-        extra_vars = {
-            "nombre": contact.name or email,
-            "first_name": (contact.name or email).split()[0],
-            "servicio": row.servicio or "tu experiencia",
-            "fecha_reserva": fecha_str,
-            "hora_reserva": hora_str,
-            "personas": personas_str,
-            "num_adultos": adultos,
-            "num_ninos": ninos,
-            "ingreso_total": total,
-        }
-        _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
-
-
 _BATCH_ORIGINS = {"Formulario T&C", "Sincronización Shopify", "importación CSV", ""}
 
 
@@ -928,7 +861,6 @@ HANDLERS = {
     "welcome":                  _check_welcome,
     "post_visit":               _check_post_visit,
     "reactivation":             _check_reactivation,
-    "abandoned_booking":        _check_abandoned_booking,
 }
 
 
