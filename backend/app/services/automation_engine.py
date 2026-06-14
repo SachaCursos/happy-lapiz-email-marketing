@@ -602,6 +602,7 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
 
     topic_map = {
         "placed_order":    "orders/create",
+        "ordered_product": "orders/create",
         "fulfilled_order": "orders/fulfilled",
         "cancelled_order": "orders/cancelled",
     }
@@ -645,11 +646,21 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
                 session.commit()
                 continue
 
+        items = payload.get("line_items", [])
+
+        # Apply product filter for ordered_product trigger
+        product_filter_ids = config.get("product_filter_ids", [])
+        if product_filter_ids and trigger_type == "ordered_product":
+            item_product_ids = {str(item.get("product_id", "")) for item in items}
+            filter_ids = {str(p) for p in product_filter_ids}
+            if not item_product_ids.intersection(filter_ids):
+                session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+                session.commit()
+                continue
+
         # Resolve delay based on shipping city (overrides the step default when rules exist)
         shipping_city = payload.get("shipping_address", {}).get("city", "")
         effective_delay = _resolve_location_delay(shipping_city, location_delay_rules, first_delay)
-
-        items = payload.get("line_items", [])
         first_item = items[0].get("title", "") if items else ""
         tracking = ""
         if trigger_type == "fulfilled_order":

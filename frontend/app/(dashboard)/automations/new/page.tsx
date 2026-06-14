@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { automationsApi, templatesApi, api } from "@/lib/api";
+import { automationsApi, templatesApi, api, shopifyApi, ShopifyProduct } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
 import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart, MapPin } from "lucide-react";
 
@@ -49,12 +49,37 @@ const EVENT_TRIGGERS = new Set<AutomationTrigger>([
   "viewed_product", "active_on_site", "subscribed_to_back_in_stock", "welcome",
 ]);
 
+// ── Chilean communes ─────────────────────────────────────────────────────────
+const COMMUNES_BY_REGION: Record<string, string[]> = {
+  "Región Metropolitana": ["Alhué","Buin","Calera de Tango","Cerrillos","Cerro Navia","Colina","Conchalí","Curacaví","El Bosque","El Monte","Estación Central","Huechuraba","Independencia","Isla de Maipo","La Cisterna","La Florida","La Granja","La Pintana","La Reina","Lampa","Las Condes","Lo Barnechea","Lo Espejo","Lo Prado","Macul","Maipú","María Pinto","Melipilla","Ñuñoa","Padre Hurtado","Paine","Pedro Aguirre Cerda","Peñaflor","Peñalolén","Pirque","Providencia","Pudahuel","Puente Alto","Quilicura","Quinta Normal","Recoleta","Renca","San Bernardo","San José de Maipo","San Miguel","San Ramón","Santiago","Talagante","Tiltil","Vitacura"],
+  "Valparaíso (V)": ["Algarrobo","Cabildo","Calera","Calle Larga","Cartagena","Casablanca","Catemu","Concón","El Quisco","El Tabo","Hijuelas","Isla de Pascua","Juan Fernández","La Cruz","La Ligua","Limache","Llay-Llay","Los Andes","Nogales","Olmué","Panquehue","Papudo","Petorca","Puchuncaví","Putaendo","Quillota","Quilpué","Quintero","Rinconada","San Antonio","San Esteban","San Felipe","Santa María","Santo Domingo","Valparaíso","Villa Alemana","Viña del Mar","Zapallar"],
+  "O'Higgins (VI)": ["Chépica","Chimbarongo","Codegua","Coinco","Coltauco","Doñihue","Graneros","La Estrella","Las Cabras","Litueche","Lolol","Machalí","Malloa","Marchihue","Mostazal","Nancagua","Navidad","Olivar","Palmilla","Paredones","Peralillo","Peumo","Pichidegua","Pichilemu","Placilla","Pumanque","Quinta de Tilcoco","Rancagua","Rengo","Requínoa","San Fernando","San Vicente de Tagua Tagua","Santa Cruz"],
+  "Maule (VII)": ["Cauquenes","Chanco","Colbún","Constitución","Curepto","Curicó","Empedrado","Hualañé","Licantén","Linares","Longaví","Maule","Molina","Parral","Pelarco","Pelluhue","Pencahue","Rauco","Retiro","Río Claro","Romeral","Sagrada Familia","San Clemente","San Javier","San Rafael","Talca","Teno","Vichuquén","Villa Alegre","Yerbas Buenas"],
+  "Ñuble (XVI)": ["Bulnes","Chillán","Chillán Viejo","Cobquecura","Coelemu","Coihueco","El Carmen","Ninhue","Ñiquén","Pemuco","Pinto","Portezuelo","Quirihue","Ranquil","San Carlos","San Fabián","San Ignacio","San Nicolás","Treguaco","Yungay"],
+  "Biobío (VIII)": ["Alto Biobío","Antuco","Arauco","Cabrero","Cañete","Chiguayante","Concepción","Contulmo","Coronel","Curanilahue","Florida","Hualqui","Hualpén","Laja","Lebu","Los Álamos","Los Ángeles","Lota","Mulchén","Nacimiento","Negrete","Penco","Quilaco","Quilleco","San Pedro de La Paz","San Rosendo","Santa Bárbara","Santa Juana","Talcahuano","Tirúa","Tomé","Tucapel","Yumbel"],
+  "Araucanía (IX)": ["Angol","Carahue","Cholchol","Collipulli","Cunco","Curacautín","Curarrehue","Ercilla","Freire","Galvarino","Gorbea","Lautaro","Loncoche","Lonquimay","Los Sauces","Lumaco","Melipeuco","Nueva Imperial","Padre Las Casas","Perquenco","Pitrufquén","Pucón","Purén","Renaico","Saavedra","Temuco","Teodoro Schmidt","Toltén","Traiguén","Victoria","Vilcún","Villarrica"],
+  "Los Ríos (XIV)": ["Corral","Futrono","La Unión","Lago Ranco","Lanco","Los Lagos","Máfil","Mariquina","Paillaco","Panguipulli","Río Bueno","Valdivia"],
+  "Los Lagos (X)": ["Ancud","Calbuco","Castro","Chaitén","Chonchi","Cochamó","Curaco de Vélez","Dalcahue","Fresia","Frutillar","Futaleufú","Hualaihué","Llanquihue","Los Muermos","Maullín","Osorno","Palena","Puerto Montt","Puerto Octay","Puerto Varas","Puqueldón","Purranque","Puyehue","Queilén","Quellón","Quemchi","Quinchao","Río Negro","San Juan de la Costa","San Pablo"],
+  "Coquimbo (IV)": ["Andacollo","Canela","Combarbalá","Coquimbo","Illapel","La Higuera","La Serena","Los Vilos","Monte Patria","Ovalle","Paiguano","Punitaqui","Río Hurtado","Salamanca","Vicuña"],
+  "Atacama (III)": ["Alto del Carmen","Caldera","Chañaral","Copiapó","Diego de Almagro","Freirina","Huasco","Tierra Amarilla","Vallenar"],
+  "Antofagasta (II)": ["Antofagasta","Calama","María Elena","Mejillones","Ollagüe","San Pedro de Atacama","Sierra Gorda","Taltal","Tocopilla"],
+  "Tarapacá (I)": ["Alto Hospicio","Camiña","Colchane","Huara","Iquique","Pica","Pozo Almonte"],
+  "Arica y Parinacota (XV)": ["Arica","Camarones","General Lagos","Putre"],
+  "Aysén (XI)": ["Aysén","Chile Chico","Cisnes","Cochrane","Coyhaique","Guaitecas","Lago Verde","O'Higgins","Río Ibáñez","Tortel"],
+  "Magallanes (XII)": ["Antártica","Cabo de Hornos","Laguna Blanca","Natales","Porvenir","Primavera","Punta Arenas","Río Verde","San Gregorio","Timaukel","Torres del Paine"],
+};
+const ALL_COMMUNES = Object.values(COMMUNES_BY_REGION).flat().sort((a, b) => a.localeCompare(b, "es"));
+
+// Trigger where product filter applies
+const PRODUCT_FILTER_TRIGGERS = new Set<AutomationTrigger>(["ordered_product"]);
+
 // Triggers where location-based delay makes sense (have shipping address in payload)
 const LOCATION_DELAY_TRIGGERS = new Set<AutomationTrigger>([
   "placed_order", "ordered_product", "fulfilled_order", "fulfilled_partial_order",
   "confirmed_shipment", "delivered_shipment", "marked_out_for_delivery",
   "cancelled_order", "refunded_order",
 ]);
+
 
 // Triggers where filtering by order count makes sense
 const ORDER_COUNT_FILTERABLE = new Set<AutomationTrigger>([
@@ -142,6 +167,187 @@ function TimerPicker({ label, hint, value, unit, units, onValueChange, onUnitCha
   );
 }
 
+// ── Commune multi-select ─────────────────────────────────────────────────────
+function CommuneMultiSelect({ selected, onChange }: { selected: string[]; onChange: (v: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = search
+    ? ALL_COMMUNES.filter((c) => c.toLowerCase().includes(search.toLowerCase()))
+    : ALL_COMMUNES;
+
+  function toggle(city: string) {
+    onChange(selected.includes(city) ? selected.filter((c) => c !== city) : [...selected, city]);
+  }
+
+  function addRegion(region: string) {
+    const communes = COMMUNES_BY_REGION[region] || [];
+    onChange([...new Set([...selected, ...communes])]);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full text-left border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 flex items-center justify-between bg-white"
+      >
+        <span className={selected.length === 0 ? "text-gray-400" : "text-gray-900"}>
+          {selected.length === 0 ? "Seleccionar comunas..." : `${selected.length} comunas seleccionadas`}
+        </span>
+        <ChevronDown size={14} className="text-gray-400 shrink-0" />
+      </button>
+
+      {selected.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {selected.map((c) => (
+            <span key={c} className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-0.5 rounded-full">
+              {c}
+              <button type="button" onClick={() => toggle(c)} className="hover:text-brand-900"><X size={10} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl" style={{ minWidth: 260 }}>
+          <div className="p-2 border-b border-gray-100">
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar comuna..."
+              className="w-full text-sm px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+          {!search && (
+            <div className="p-2 border-b border-gray-100">
+              <p className="text-xs text-gray-400 mb-1.5">Agregar región completa:</p>
+              <div className="flex flex-wrap gap-1">
+                {Object.keys(COMMUNES_BY_REGION).map((region) => (
+                  <button key={region} type="button" onClick={() => addRegion(region)}
+                    className="text-xs px-2 py-0.5 rounded-full bg-gray-100 hover:bg-brand-100 hover:text-brand-700 text-gray-600 transition-colors">
+                    + {region.split(" (")[0]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="max-h-52 overflow-y-auto">
+            {filtered.map((city) => (
+              <label key={city} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" checked={selected.includes(city)} onChange={() => toggle(city)} className="accent-brand-600" />
+                <span className="text-sm text-gray-700">{city}</span>
+              </label>
+            ))}
+            {filtered.length === 0 && <p className="text-sm text-gray-400 px-3 py-3 text-center">Sin resultados</p>}
+          </div>
+          <div className="p-2 border-t border-gray-100 flex justify-between items-center">
+            <button type="button" onClick={() => onChange([])} className="text-xs text-gray-400 hover:text-red-500">Limpiar todo</button>
+            <button type="button" onClick={() => { setOpen(false); setSearch(""); }} className="text-xs text-brand-600 font-medium hover:text-brand-700">Listo ✓</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Product multi-select ─────────────────────────────────────────────────────
+function ProductMultiSelect({ selected, onChange, products, loading }: {
+  selected: string[];
+  onChange: (v: string[]) => void;
+  products: ShopifyProduct[];
+  loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = products.filter((p) => p.title.toLowerCase().includes(search.toLowerCase()));
+  const selectedProducts = products.filter((p) => selected.includes(p.id));
+
+  function toggle(id: string) {
+    onChange(selected.includes(id) ? selected.filter((i) => i !== id) : [...selected, id]);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full text-left border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 flex items-center justify-between bg-white"
+      >
+        <span className={selected.length === 0 ? "text-gray-400" : "text-gray-900"}>
+          {loading ? "Cargando productos..." : selected.length === 0
+            ? "Todos los productos (sin filtro)"
+            : `${selected.length} producto${selected.length !== 1 ? "s" : ""} seleccionado${selected.length !== 1 ? "s" : ""}`}
+        </span>
+        <ChevronDown size={14} className="text-gray-400 shrink-0" />
+      </button>
+
+      {selectedProducts.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {selectedProducts.map((p) => (
+            <span key={p.id} className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-0.5 rounded-full max-w-[220px]">
+              <span className="truncate">{p.title}</span>
+              <button type="button" onClick={() => toggle(p.id)} className="hover:text-brand-900 shrink-0"><X size={10} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl">
+          <div className="p-2 border-b border-gray-100">
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar producto..."
+              className="w-full text-sm px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {filtered.map((p) => (
+              <label key={p.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-50">
+                <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggle(p.id)} className="accent-brand-600 shrink-0" />
+                {p.image_url && <img src={p.image_url} alt={p.title} className="w-9 h-9 rounded object-cover shrink-0 border border-gray-100" />}
+                <div className="min-w-0">
+                  <p className="text-sm text-gray-800 truncate">{p.title}</p>
+                  {p.price && <p className="text-xs text-gray-400">${parseFloat(p.price).toLocaleString("es-CL")}</p>}
+                </div>
+              </label>
+            ))}
+            {filtered.length === 0 && !loading && <p className="text-sm text-gray-400 px-3 py-3 text-center">Sin resultados</p>}
+            {loading && <p className="text-sm text-gray-400 px-3 py-3 text-center">Cargando...</p>}
+          </div>
+          <div className="p-2 border-t border-gray-100 flex justify-between items-center">
+            <button type="button" onClick={() => onChange([])} className="text-xs text-gray-400 hover:text-red-500">Sin filtro</button>
+            <button type="button" onClick={() => { setOpen(false); setSearch(""); }} className="text-xs text-brand-600 font-medium hover:text-brand-700">Listo ✓</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Step card ────────────────────────────────────────────────────────────────
 const VARIANT_COLORS = [
   { bg: "bg-purple-100", text: "text-purple-700", border: "border-purple-300" },
@@ -160,7 +366,7 @@ interface VariantState {
 interface LocationDelayRule {
   id: string;
   label: string;
-  cities: string;   // comma-separated, empty = default/fallback
+  cities: string[];
   delay: number;
   unit: TimeUnit;
   is_default: boolean;
@@ -462,9 +668,12 @@ export default function NewAutomationPage() {
   // Location-based delay
   const [locationDelayEnabled, setLocationDelayEnabled] = useState(false);
   const [locationDelayRules, setLocationDelayRules] = useState<LocationDelayRule[]>([
-    { id: "1", label: "Región Metropolitana", cities: "", delay: 2, unit: "dias", is_default: false },
-    { id: "2", label: "Regiones",             cities: "", delay: 7, unit: "dias", is_default: true },
+    { id: "1", label: "Región Metropolitana", cities: [], delay: 2, unit: "dias", is_default: false },
+    { id: "2", label: "Regiones",             cities: [], delay: 7, unit: "dias", is_default: true },
   ]);
+
+  // Product filter (for ordered_product trigger)
+  const [productFilterIds, setProductFilterIds] = useState<string[]>([]);
 
   function buildOrderCountFilter(): Record<string, unknown> | undefined {
     const presets: Record<string, { operator: string; value: number }> = {
@@ -505,6 +714,13 @@ export default function NewAutomationPage() {
     queryKey: ["coupon-campaigns"],
     queryFn: () => api.get("/coupons/campaigns").then((r) => r.data),
     staleTime: 5 * 60_000,
+  });
+
+  const { data: shopifyProducts = [], isLoading: productsLoading } = useQuery<ShopifyProduct[]>({
+    queryKey: ["shopify-products"],
+    queryFn: () => shopifyApi.products().then((r) => r.data),
+    staleTime: 10 * 60_000,
+    enabled: PRODUCT_FILTER_TRIGGERS.has(triggerType),
   });
 
   const [couponCampaignId, setCouponCampaignId] = useState<number | null>(null);
@@ -553,10 +769,15 @@ export default function NewAutomationPage() {
       if (locationDelayEnabled && LOCATION_DELAY_TRIGGERS.has(triggerType) && locationDelayRules.length > 0) {
         triggerConfig.location_delay_rules = locationDelayRules.map((r) => ({
           label: r.label,
-          cities: r.is_default ? [] : r.cities.split(",").map((c) => c.trim()).filter(Boolean),
+          cities: r.is_default ? [] : r.cities,
           delay_hours: toHours(r.delay, r.unit),
           is_default: r.is_default,
         }));
+      }
+
+      // Attach product filter if configured
+      if (PRODUCT_FILTER_TRIGGERS.has(triggerType) && productFilterIds.length > 0) {
+        triggerConfig.product_filter_ids = productFilterIds;
       }
 
       const stepsPayload: AutomationStep[] = steps.map((s, i) => {
@@ -728,6 +949,24 @@ export default function NewAutomationPage() {
             </div>
           )}
 
+          {/* Product filter — only for ordered_product trigger */}
+          {PRODUCT_FILTER_TRIGGERS.has(triggerType) && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Disparar solo si compraron este producto
+              </label>
+              <ProductMultiSelect
+                selected={productFilterIds}
+                onChange={setProductFilterIds}
+                products={shopifyProducts}
+                loading={productsLoading}
+              />
+              {productFilterIds.length === 0 && (
+                <p className="text-xs text-gray-400 mt-1">Sin filtro: se activa con cualquier producto comprado.</p>
+              )}
+            </div>
+          )}
+
           {/* Location-based delay — shown for Shopify triggers with shipping address */}
           {LOCATION_DELAY_TRIGGERS.has(triggerType) && (
             <div>
@@ -785,13 +1024,11 @@ export default function NewAutomationPage() {
                       </div>
 
                       {!rule.is_default && (
-                        <input
-                          value={rule.cities}
-                          onChange={(e) => setLocationDelayRules((prev) =>
-                            prev.map((r, i) => i === idx ? { ...r, cities: e.target.value } : r)
+                        <CommuneMultiSelect
+                          selected={rule.cities}
+                          onChange={(v) => setLocationDelayRules((prev) =>
+                            prev.map((r, i) => i === idx ? { ...r, cities: v } : r)
                           )}
-                          placeholder="ej. Santiago, Providencia, Las Condes, Vitacura"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       )}
                       {rule.is_default && (
@@ -823,7 +1060,7 @@ export default function NewAutomationPage() {
                     type="button"
                     onClick={() => setLocationDelayRules((prev) => [
                       ...prev,
-                      { id: String(Date.now()), label: "", cities: "", delay: 3, unit: "dias", is_default: false },
+                      { id: String(Date.now()), label: "", cities: [], delay: 3, unit: "dias", is_default: false },
                     ])}
                     className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1 font-medium mt-1"
                   >
