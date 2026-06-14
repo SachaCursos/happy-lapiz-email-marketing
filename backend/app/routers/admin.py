@@ -320,20 +320,57 @@ _SHOPIFY_PRODUCTS_CREATE = """
 """
 
 def _ensure_shopify_products_table() -> None:
-    """Rebuild shopify_products with the correct schema if shopify_id column is missing.
-    Uses a raw AUTOCOMMIT connection so DDL can never be blocked by an open transaction.
+    """Ensure shopify_products exists with the correct schema.
+    Uses AUTOCOMMIT so DDL can never be blocked by an open transaction.
+    Adds missing columns in-place to preserve any dependent views.
     """
     with db_engine.connect() as conn:
         conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-        row = conn.execute(text(
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'"
-        )).scalar()
 
-        if row == 0:
-            logger.warning("shopify_products missing shopify_id column — rebuilding table")
-            conn.execute(text("DROP TABLE IF EXISTS shopify_products"))
+        # Create table from scratch if it doesn't exist at all
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_name = 'shopify_products'"
+        )).scalar()
+        if not table_exists:
+            logger.warning("shopify_products does not exist — creating table")
             conn.execute(text(_SHOPIFY_PRODUCTS_CREATE))
+            return
+
+        # Table exists — add any missing columns in-place (preserves dependent views)
+        existing_cols = {
+            row[0] for row in conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'shopify_products'"
+            ))
+        }
+        needed = {
+            "shopify_id": "BIGINT",
+            "title":       "VARCHAR",
+            "handle":      "VARCHAR",
+            "product_type":"VARCHAR",
+            "tags":        "TEXT",
+            "vendor":      "VARCHAR",
+            "image_url":   "TEXT",
+            "price":       "NUMERIC(10,2)",
+            "status":      "VARCHAR NOT NULL DEFAULT 'active'",
+            "synced_at":   "TIMESTAMP NOT NULL DEFAULT NOW()",
+        }
+        for col, col_type in needed.items():
+            if col not in existing_cols:
+                logger.warning("shopify_products: adding missing column %s", col)
+                conn.execute(text(f"ALTER TABLE shopify_products ADD COLUMN {col} {col_type}"))
+
+        # Ensure unique index on shopify_id exists
+        idx_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM pg_indexes "
+            "WHERE tablename = 'shopify_products' AND indexname = 'shopify_products_shopify_id_key'"
+        )).scalar()
+        if not idx_exists:
+            conn.execute(text(
+                "ALTER TABLE shopify_products ADD CONSTRAINT shopify_products_shopify_id_key "
+                "UNIQUE (shopify_id)"
+            ))
 
 
 @router.post("/sync-products")
