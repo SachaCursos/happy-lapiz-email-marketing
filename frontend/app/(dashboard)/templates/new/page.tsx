@@ -63,19 +63,6 @@ const VAR_GROUPS = [
     ],
   },
   {
-    label: "Reserva HotBoat",
-    color: "teal",
-    vars: [
-      { v: "{{ servicio }}", d: "Nombre del servicio/experiencia" },
-      { v: "{{ fecha_reserva }}", d: "Fecha de la reserva" },
-      { v: "{{ hora_reserva }}", d: "Hora de la reserva" },
-      { v: "{{ personas }}", d: "Descripción de personas (ej. 2 adultos + 1 niño)" },
-      { v: "{{ num_adultos }}", d: "Número de adultos" },
-      { v: "{{ num_ninos }}", d: "Número de niños" },
-      { v: "{{ ingreso_total }}", d: "Total de la reserva (ej. $45.000)" },
-    ],
-  },
-  {
     label: "Jinja2",
     color: "gray",
     vars: [
@@ -96,7 +83,6 @@ const COLOR_MAP: Record<string, { badge: string; header: string }> = {
   orange: { badge: "bg-orange-50 text-orange-700 border-orange-200", header: "text-orange-700" },
   green:  { badge: "bg-green-50 text-green-700 border-green-200",    header: "text-green-700" },
   pink:   { badge: "bg-pink-50 text-pink-700 border-pink-200",       header: "text-pink-700" },
-  teal:   { badge: "bg-teal-50 text-teal-700 border-teal-200",       header: "text-teal-700" },
   gray:   { badge: "bg-gray-100 text-gray-600 border-gray-200",      header: "text-gray-600" },
 };
 
