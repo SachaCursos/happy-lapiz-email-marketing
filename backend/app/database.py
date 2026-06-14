@@ -30,6 +30,20 @@ def _run_migrations():
         "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
+        # Shopify products cache table
+        """CREATE TABLE IF NOT EXISTS shopify_products (
+            id SERIAL PRIMARY KEY,
+            shopify_id BIGINT UNIQUE NOT NULL,
+            title VARCHAR NOT NULL,
+            handle VARCHAR,
+            product_type VARCHAR,
+            tags TEXT,
+            vendor VARCHAR,
+            image_url TEXT,
+            price NUMERIC(10,2),
+            status VARCHAR NOT NULL DEFAULT 'active',
+            synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )""",
         # Coupon tables — created here so they exist even after a clean deploy
         """CREATE TABLE IF NOT EXISTS coupon_campaigns (
             id SERIAL PRIMARY KEY,

@@ -247,6 +247,105 @@ def _fetch_cross_sell_products(
     return result
 
 
+def _fetch_cross_sell_from_db(
+    session: Session,
+    customer_email: str,
+    purchased_product_ids: list[str],
+    max_products: int = 4,
+) -> list[dict]:
+    """DB-based cross-sell: match active products by shared tags/type, exclude customer's history."""
+    ids_int = [int(p) for p in purchased_product_ids if p.isdigit()]
+    if not ids_int:
+        return []
+
+    # Tags and product_type of the purchased products
+    tag_rows = session.execute(text("""
+        SELECT tags, product_type FROM shopify_products
+        WHERE shopify_id = ANY(:ids) AND status = 'active'
+    """), {"ids": ids_int}).fetchall()
+
+    if not tag_rows:
+        return []
+
+    all_tags: set[str] = set()
+    product_types: set[str] = set()
+    for row in tag_rows:
+        if row[0]:
+            for t in row[0].split(","):
+                s = t.strip().lower()
+                if s:
+                    all_tags.add(s)
+        if row[1]:
+            product_types.add(row[1].strip().lower())
+
+    # All product IDs ever purchased by this customer (from order webhook payloads)
+    history_rows = session.execute(text("""
+        SELECT payload FROM shopify_events
+        WHERE LOWER(email) = LOWER(:email)
+          AND event_type = 'placed_order'
+          AND payload IS NOT NULL
+    """), {"email": customer_email}).fetchall()
+
+    ever_bought: set[str] = set(str(p) for p in purchased_product_ids)
+    for row in history_rows:
+        try:
+            payload_data = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            for item in payload_data.get("line_items", []):
+                pid = str(item.get("product_id", ""))
+                if pid:
+                    ever_bought.add(pid)
+        except Exception:
+            pass
+
+    excl_ints = [int(p) for p in ever_bought if p.isdigit()]
+
+    if not all_tags and not product_types:
+        return []
+
+    params: dict = {"max_n": max_products}
+    match_parts: list[str] = []
+    for i, tag in enumerate(sorted(all_tags)):
+        match_parts.append(f"LOWER(tags) LIKE :t{i}")
+        params[f"t{i}"] = f"%{tag}%"
+    for i, pt in enumerate(sorted(product_types)):
+        match_parts.append(f"LOWER(product_type) = :pt{i}")
+        params[f"pt{i}"] = pt
+
+    match_clause = " OR ".join(match_parts)
+    excl_clause = "AND shopify_id != ALL(:excl)" if excl_ints else ""
+    if excl_ints:
+        params["excl"] = excl_ints
+
+    try:
+        rows = session.execute(text(f"""
+            SELECT shopify_id, title, handle, image_url, price
+            FROM shopify_products
+            WHERE status = 'active'
+              {excl_clause}
+              AND ({match_clause})
+            ORDER BY RANDOM()
+            LIMIT :max_n
+        """), params).fetchall()
+    except Exception as exc:
+        logger.warning("cross_sell_db: query failed: %s", exc)
+        return []
+
+    result = []
+    for row in rows:
+        _, title, handle, image_url, price = row
+        try:
+            price_fmt = f"${int(float(price or 0)):,}".replace(",", ".")
+        except Exception:
+            price_fmt = ""
+        result.append({
+            "title": title or "",
+            "url": f"https://www.happylapiz.cl/products/{handle or ''}",
+            "image_url": image_url or "",
+            "price": price_fmt,
+        })
+    return result
+
+
 def _build_cross_sell_html(products: list[dict]) -> str:
     """Generate a 2-column responsive product grid for cross-sell emails."""
     if not products:
@@ -344,13 +443,25 @@ def _send_email_step(
         # Inject cross-sell product grid if configured
         cross_sell_cfg = (auto.trigger_config or {}).get("cross_sell_config") if auto.trigger_config else None
         if cross_sell_cfg:
-            purchased_ids = {str(p) for p in (vars_.get("purchased_product_ids") or [])}
-            rec = _fetch_cross_sell_products(
-                collection_id=cross_sell_cfg.get("collection_id") or None,
-                product_ids=[str(p) for p in (cross_sell_cfg.get("product_ids") or [])],
-                exclude_ids=purchased_ids,
-                max_products=int(cross_sell_cfg.get("max_products", 4)),
-            )
+            purchased_ids = [str(p) for p in (vars_.get("purchased_product_ids") or [])]
+            max_p = int(cross_sell_cfg.get("max_products", 4))
+            mode = cross_sell_cfg.get("mode", "db")
+            has_explicit = bool(cross_sell_cfg.get("collection_id") or cross_sell_cfg.get("product_ids"))
+            if mode == "db" or not has_explicit:
+                # Use DB-based matching (tags + product_type + exclude purchase history)
+                rec = _fetch_cross_sell_from_db(
+                    session=session,
+                    customer_email=contact.email,
+                    purchased_product_ids=purchased_ids,
+                    max_products=max_p,
+                )
+            else:
+                rec = _fetch_cross_sell_products(
+                    collection_id=cross_sell_cfg.get("collection_id") or None,
+                    product_ids=[str(p) for p in (cross_sell_cfg.get("product_ids") or [])],
+                    exclude_ids=set(purchased_ids),
+                    max_products=max_p,
+                )
             vars_["recommended_products"] = rec
             vars_["recommended_products_html"] = _build_cross_sell_html(rec)
 

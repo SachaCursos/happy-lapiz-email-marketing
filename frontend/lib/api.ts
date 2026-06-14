@@ -147,6 +147,12 @@ export const syncApi = {
   },
 };
 
+// Admin
+export const adminApi = {
+  syncProducts: () => api.post("/admin/sync-products"),
+  seedTemplates: () => api.post("/admin/seed-templates"),
+};
+
 // Shopify
 export const shopifyApi = {
   products: () => api.get<ShopifyProduct[]>("/shopify/products"),

@@ -135,7 +135,87 @@ SEED_TEMPLATES = [
   </div>
   <p style="text-align:center;font-size:14px;color:#888;margin:0;">¿Quieres saber más? <a href="https://hotboat.cl" style="color:#2563eb;font-weight:600;text-decoration:none;">Ver toda la experiencia</a></p>""" + FOOTER + "</div>",
     },
+    {
+        "name":    "Cross-sell — Recomendados por compra",
+        "subject": "{% if first_product %}¿Compraste {{ first_product }}? También podría interesarte...{% else %}Productos que te van a encantar ✨{% endif %}",
+        "preview": "Basado en tu última compra, seleccionamos estos juguetes especialmente para ti.",
+        "segment": "_none",
+        "html":    "__CROSS_SELL__",
+    },
 ]
+
+CROSS_SELL_TEMPLATE_HTML = """\
+<div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+
+  <!-- Header -->
+  <div style="background:#ffffff;padding:28px 32px 0;text-align:center;">
+    <a href="https://www.happylapiz.cl" style="display:inline-block;">
+      <img src="https://cdn.shopify.com/s/files/1/0556/5343/3495/files/LOGO_HappyLapiz.png?v=1621889822"
+           alt="Happy L&#225;piz" width="160"
+           style="height:auto;display:block;margin:0 auto;" />
+    </a>
+  </div>
+
+  <!-- Hero banner -->
+  <div style="background:linear-gradient(135deg,#5b21b6 0%,#682ae7 60%,#2a2ee7 100%);
+              margin:24px 0 0;padding:36px 32px;text-align:center;">
+    <p style="color:#e9d5ff;font-size:13px;font-weight:600;text-transform:uppercase;
+              letter-spacing:1.5px;margin:0 0 10px;">Recomendado para ti</p>
+    <h1 style="color:#ffffff;font-size:24px;font-weight:800;margin:0 0 12px;line-height:1.3;">
+      {% if first_product %}
+      Ya tienes {{ first_product }}<br/>&#161;Esto tambi&#233;n te va a encantar!
+      {% else %}
+      &#161;Hay productos que te pueden interesar!
+      {% endif %}
+    </h1>
+    <p style="color:#ddd6fe;font-size:15px;margin:0;line-height:1.6;">
+      Hola {{ first_name or 'amigo/a' }}, basado en tu compra seleccionamos estos juguetes especialmente para ti &#128071;
+    </p>
+  </div>
+
+  <!-- Recommended products grid -->
+  <div style="padding:32px 24px 0;">
+    {% if recommended_products_html %}
+    {{ recommended_products_html }}
+    {% else %}
+    <p style="color:#9ca3af;text-align:center;font-size:14px;padding:20px 0;">
+      No encontramos productos adicionales por mostrar.
+    </p>
+    {% endif %}
+  </div>
+
+  <!-- CTA button -->
+  <div style="text-align:center;padding:28px 32px 12px;">
+    <a href="https://www.happylapiz.cl"
+       style="background:#682ae7;color:#ffffff;font-weight:700;font-size:15px;
+              padding:14px 40px;border-radius:30px;text-decoration:none;
+              display:inline-block;letter-spacing:0.3px;">
+      Ver toda la tienda &#8594;
+    </a>
+  </div>
+
+  <!-- Tagline -->
+  <p style="text-align:center;color:#9ca3af;font-size:13px;
+            padding:0 32px 32px;margin:8px 0 0;line-height:1.6;">
+    Juguetes educativos pensados para cada etapa del desarrollo &#127775;
+  </p>
+
+  <!-- Footer -->
+  <div style="border-top:1px solid #f3f4f6;padding:24px 32px;text-align:center;">
+    <a href="https://www.happylapiz.cl" style="display:inline-block;margin-bottom:14px;">
+      <img src="https://cdn.shopify.com/s/files/1/0556/5343/3495/files/LOGO_HappyLapiz.png?v=1621889822"
+           alt="Happy L&#225;piz" width="100"
+           style="height:auto;display:block;margin:0 auto;opacity:0.5;" />
+    </a>
+    <p style="font-size:12px;color:#d1d5db;margin:0 0 6px;">
+      Happy L&#225;piz &middot; Juguetes educativos &middot; Chile
+    </p>
+    <p style="font-size:12px;color:#d1d5db;margin:0;">
+      <a href="##unsub##" style="color:#d1d5db;text-decoration:underline;">Cancelar suscripci&#243;n</a>
+    </p>
+  </div>
+
+</div>"""
 
 SEED_SEGMENTS = [
     {
@@ -184,7 +264,7 @@ def seed_templates(
     # Plantillas y campañas
     for t in SEED_TEMPLATES:
         existing_tpl = session.exec(select(Template).where(Template.name == t["name"])).first()
-        html = t["html"].replace("__LOGO_PNG__", logo_url)
+        html = t["html"].replace("__LOGO_PNG__", logo_url).replace("__CROSS_SELL__", CROSS_SELL_TEMPLATE_HTML)
         if existing_tpl:
             existing_tpl.html_content    = html
             existing_tpl.subject_default = t["subject"]
@@ -280,6 +360,86 @@ def fix_logo(
             fixed.append(tpl.name)
     session.commit()
     return {"ok": True, "fixed": fixed, "logo_url": logo_url}
+
+
+@router.post("/sync-products")
+def sync_shopify_products(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_admin),
+):
+    """Sync all Shopify products to local shopify_products table (tags, type, image, price)."""
+    import re as _re
+    from app.core.config import settings as _s
+    token = _s.SHOPIFY_ACCESS_TOKEN
+    domain = _s.SHOPIFY_DOMAIN
+    if not token:
+        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN not configured"}
+
+    headers = {"X-Shopify-Access-Token": token}
+    all_products: list[dict] = []
+    url = f"https://{domain}/admin/api/2024-01/products.json"
+    params: dict = {
+        "limit": 250,
+        "fields": "id,title,handle,product_type,tags,vendor,images,variants,status",
+    }
+
+    with httpx.Client(timeout=30.0) as client:
+        while True:
+            r = client.get(url, params=params, headers=headers)
+            if r.status_code != 200:
+                return {"ok": False, "error": f"Shopify API {r.status_code}: {r.text[:200]}"}
+            products = r.json().get("products", [])
+            all_products.extend(products)
+            link_header = r.headers.get("Link", "")
+            if 'rel="next"' not in link_header:
+                break
+            # Extract next page_info from Link header
+            next_part = [p for p in link_header.split(",") if 'rel="next"' in p]
+            m = _re.search(r'page_info=([^&>]+)', next_part[0]) if next_part else None
+            if not m:
+                break
+            params = {"limit": 250, "page_info": m.group(1)}
+
+    now = datetime.utcnow()
+    upserted = 0
+    for p in all_products:
+        try:
+            variant = (p.get("variants") or [{}])[0]
+            price = float(variant.get("price") or 0)
+            image_url = (p.get("images") or [{}])[0].get("src", "")
+            session.execute(text("""
+                INSERT INTO shopify_products
+                    (shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at)
+                VALUES
+                    (:sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now)
+                ON CONFLICT (shopify_id) DO UPDATE SET
+                    title        = EXCLUDED.title,
+                    handle       = EXCLUDED.handle,
+                    product_type = EXCLUDED.product_type,
+                    tags         = EXCLUDED.tags,
+                    vendor       = EXCLUDED.vendor,
+                    image_url    = EXCLUDED.image_url,
+                    price        = EXCLUDED.price,
+                    status       = EXCLUDED.status,
+                    synced_at    = EXCLUDED.synced_at
+            """), {
+                "sid":    int(p["id"]),
+                "title":  p.get("title", ""),
+                "handle": p.get("handle", ""),
+                "ptype":  p.get("product_type", ""),
+                "tags":   p.get("tags", ""),
+                "vendor": p.get("vendor", ""),
+                "img":    image_url,
+                "price":  price,
+                "status": p.get("status", "active"),
+                "now":    now,
+            })
+            upserted += 1
+        except Exception:
+            pass
+
+    session.commit()
+    return {"ok": True, "synced": upserted, "total_fetched": len(all_products)}
 
 
 @router.post("/register-shopify-webhooks")
