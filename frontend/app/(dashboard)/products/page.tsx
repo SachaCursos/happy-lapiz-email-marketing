@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { adminApi, SyncedProduct } from "@/lib/api";
+import { adminApi } from "@/lib/api";
+import type { SyncedProduct } from "@/lib/api";
 import { Search, RefreshCw, Package, Tag, ChevronLeft, ChevronRight } from "lucide-react";
 
 function formatPrice(price: number) {
@@ -23,10 +24,11 @@ export default function ProductsPage() {
   const [page, setPage] = useState(1);
   const [syncResult, setSyncResult] = useState<{ synced: number; total_fetched: number; errors: string[] } | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["synced-products", search, typeFilter, page],
     queryFn: () => adminApi.getProducts({ search, product_type: typeFilter, page }).then((r) => r.data),
     placeholderData: (prev) => prev,
+    retry: 1,
   });
 
   const syncMutation = useMutation({
@@ -108,6 +110,11 @@ export default function ProductsPage() {
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20 text-gray-400">Cargando…</div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center py-20 text-gray-400 gap-3">
+          <Package size={36} className="opacity-30" />
+          <p className="text-sm text-red-500">No se pudo cargar el catálogo. Verifica que el backend esté activo.</p>
+        </div>
       ) : products.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400 gap-3">
           <Package size={36} className="opacity-30" />
