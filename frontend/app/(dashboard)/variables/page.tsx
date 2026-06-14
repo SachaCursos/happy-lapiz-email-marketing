@@ -145,7 +145,7 @@ const JINJA2_EXAMPLES = [
   <div>
     <img src="{{ p.image_url }}" alt="{{ p.title }}" />
     <a href="{{ p.url }}">{{ p.title }}</a>
-    <strong>${{ p.price }}</strong>
+    <strong>\${{ p.price }}</strong>
   </div>
 {% endfor %}`,
   },
