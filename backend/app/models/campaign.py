@@ -46,6 +46,7 @@ class CampaignCreate(SQLModel):
     segment_id: int
     exclude_segment_ids: Optional[List[int]] = None
     scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
 
 
 class CampaignUpdate(SQLModel):

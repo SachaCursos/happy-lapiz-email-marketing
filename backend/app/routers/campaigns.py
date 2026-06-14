@@ -35,7 +35,10 @@ def create_campaign(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
 ):
-    campaign = Campaign(**payload.model_dump(), created_by=current_user.id)
+    data = payload.model_dump()
+    if not data.get("status"):
+        data["status"] = "scheduled" if data.get("scheduled_at") else "draft"
+    campaign = Campaign(**data, created_by=current_user.id)
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
