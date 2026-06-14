@@ -57,9 +57,9 @@ const GROUPS: VarGroup[] = [
       { tag: "{{ cart_total }}",                description: "Total del carrito formateado",                 example: "$32.990" },
       { tag: "{{ first_product }}",             description: "Nombre del primer producto",                  example: "Pack Mi Primer Taladro" },
       { tag: "{{ cart_url }}",                  description: "Enlace directo al carrito",                   example: "https://happylapiz.cl/cart/abc" },
-      { tag: "{{ event.extra.checkout_url }}", description: "URL de checkout (compatible Klaviyo)",         example: "https://happylapiz.cl/checkout/xyz" },
-      { tag: "{{ event.extra.checkout_url_with_coupon }}", description: "URL de checkout con cupón pre-aplicado", example: "https://happylapiz.cl/checkout/xyz?discount=BIENVENIDA10" },
-      { tag: "{{ coupon_code }}",               description: "Código de cupón asignado al contacto",        example: "BIENVENIDA10" },
+      { tag: "{{ event.extra.checkout_url }}", description: "URL de checkout sin cupón",                    example: "https://happylapiz.cl/checkouts/abc123" },
+      { tag: "{{ event.extra.checkout_url_with_coupon }}", description: "⭐ URL de checkout con cupón ya aplicado — usar esta para botones CTA cuando la automatización tiene cupón configurado", example: "https://happylapiz.cl/checkouts/abc123?discount=BIENVENIDA10" },
+      { tag: "{{ coupon_code }}",               description: "Solo el código del cupón (para mostrarlo en texto: 'Usa el código X')", example: "BIENVENIDA10" },
     ],
   },
   {
@@ -105,6 +105,14 @@ const GROUPS: VarGroup[] = [
 ];
 
 const JINJA2_EXAMPLES = [
+  {
+    title: "Botón de carrito abandonado con cupón",
+    description: "Usar checkout_url_with_coupon si hay cupón, y cart_url como fallback si no.",
+    code: `<a href="{{ event.extra.checkout_url_with_coupon or cart_url }}"
+   style="background:#682ae7;color:#fff;padding:14px 32px;border-radius:30px;text-decoration:none;font-weight:700;">
+  Volver al carrito{% if coupon_code %} — {{ coupon_code }}{% endif %}
+</a>`,
+  },
   {
     title: "Condicional simple",
     description: "Mostrar algo solo si la variable tiene valor.",
