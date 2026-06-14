@@ -81,6 +81,34 @@ async def list_shopify_products(_: User = Depends(get_current_user)):
     return result
 
 
+@router.get("/collections")
+async def list_shopify_collections(_: User = Depends(get_current_user)):
+    """Devuelve todas las colecciones de Shopify para el configurador de cross-sell."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=400, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+    headers = {"X-Shopify-Access-Token": token}
+    smart, custom = [], []
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r1 = await client.get(
+            f"https://{domain}/admin/api/2024-01/smart_collections.json",
+            params={"limit": 250, "fields": "id,title,handle"}, headers=headers,
+        )
+        if r1.status_code == 200:
+            smart = r1.json().get("smart_collections", [])
+        r2 = await client.get(
+            f"https://{domain}/admin/api/2024-01/custom_collections.json",
+            params={"limit": 250, "fields": "id,title,handle"}, headers=headers,
+        )
+        if r2.status_code == 200:
+            custom = r2.json().get("custom_collections", [])
+    return sorted(
+        [{"id": str(c["id"]), "title": c["title"]} for c in smart + custom],
+        key=lambda c: c["title"],
+    )
+
+
 def _verify_shopify(body: bytes, hmac_header: str) -> bool:
     secret = getattr(settings, "SHOPIFY_WEBHOOK_SECRET", "")
     if not secret:

@@ -15,6 +15,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
+import httpx
 import resend
 from jinja2 import Environment, ChainableUndefined
 from sqlalchemy import create_engine, text
@@ -189,6 +190,98 @@ def _pick_variant(step: dict) -> tuple[dict, str | None]:
     return {**step, "template_id": last["template_id"], "subject": last["subject"]}, str(last["variant"])
 
 
+def _fetch_cross_sell_products(
+    collection_id: str | None,
+    product_ids: list[str],
+    exclude_ids: set[str],
+    max_products: int = 4,
+) -> list[dict]:
+    """Fetch recommended products from Shopify for cross-sell; excludes purchased products."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        return []
+    headers = {"X-Shopify-Access-Token": token}
+    raw: list[dict] = []
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            if collection_id:
+                r = client.get(
+                    f"https://{domain}/admin/api/2024-01/collections/{collection_id}/products.json",
+                    params={"limit": max_products + len(exclude_ids) + 5, "fields": "id,title,handle,images,variants,status"},
+                    headers=headers,
+                )
+                if r.status_code == 200:
+                    raw = r.json().get("products", [])
+            elif product_ids:
+                r = client.get(
+                    f"https://{domain}/admin/api/2024-01/products.json",
+                    params={"ids": ",".join(product_ids), "fields": "id,title,handle,images,variants,status"},
+                    headers=headers,
+                )
+                if r.status_code == 200:
+                    raw = r.json().get("products", [])
+    except Exception as exc:
+        logger.warning("cross_sell: product fetch failed: %s", exc)
+        return []
+
+    result = []
+    for p in raw:
+        if p.get("status", "active") != "active":
+            continue
+        if str(p.get("id", "")) in exclude_ids:
+            continue
+        variant = (p.get("variants") or [{}])[0]
+        try:
+            price_fmt = f"${int(float(variant.get('price', 0))):,}".replace(",", ".")
+        except Exception:
+            price_fmt = ""
+        result.append({
+            "title": p.get("title", ""),
+            "url": f"https://www.happylapiz.cl/products/{p.get('handle', '')}",
+            "image_url": (p.get("images") or [{}])[0].get("src", ""),
+            "price": price_fmt,
+        })
+        if len(result) >= max_products:
+            break
+    return result
+
+
+def _build_cross_sell_html(products: list[dict]) -> str:
+    """Generate a 2-column responsive product grid for cross-sell emails."""
+    if not products:
+        return ""
+    rows_html = ""
+    for i in range(0, len(products), 2):
+        pair = products[i:i+2]
+        cells = ""
+        for p in pair:
+            safe_title = p["title"].replace("'", "&#39;").replace('"', '&quot;')
+            img = (
+                f'<img src="{p["image_url"]}" alt="{safe_title}" width="200" '
+                f'style="width:100%;max-width:200px;height:auto;border-radius:10px;'
+                f'display:block;margin:0 auto 12px;" />'
+            ) if p.get("image_url") else ""
+            cells += (
+                f'<td width="50%" style="width:50%;padding:12px 8px;vertical-align:top;text-align:center;">'
+                f'<a href="{p["url"]}" style="text-decoration:none;color:#1a1a1a;display:block;">'
+                f'{img}'
+                f'<p style="font-size:14px;font-weight:600;margin:0 0 5px;line-height:1.3;">{p["title"]}</p>'
+                f'<p style="font-size:15px;color:#e85d04;font-weight:700;margin:0 0 12px;">{p["price"]}</p>'
+                f'<span style="display:inline-block;background:#f97316;color:#fff;font-size:12px;'
+                f'font-weight:600;padding:7px 18px;border-radius:20px;text-decoration:none;">Ver producto &rarr;</span>'
+                f'</a></td>'
+            )
+        if len(pair) == 1:
+            cells += '<td width="50%" style="width:50%;"></td>'
+        rows_html += f"<tr>{cells}</tr>"
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;max-width:560px;margin:0 auto;">'
+        f"<tbody>{rows_html}</tbody></table>"
+    )
+
+
 def _send_email_step(
     session: Session,
     auto: Automation,
@@ -248,8 +341,21 @@ def _send_email_step(
             if raw_url:
                 sep = "&" if "?" in raw_url else "?"
                 event_extra["checkout_url_with_coupon"] = f"{raw_url}{sep}discount={coupon_code}"
-        raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
+        # Inject cross-sell product grid if configured
+        cross_sell_cfg = (auto.trigger_config or {}).get("cross_sell_config") if auto.trigger_config else None
+        if cross_sell_cfg:
+            purchased_ids = {str(p) for p in (vars_.get("purchased_product_ids") or [])}
+            rec = _fetch_cross_sell_products(
+                collection_id=cross_sell_cfg.get("collection_id") or None,
+                product_ids=[str(p) for p in (cross_sell_cfg.get("product_ids") or [])],
+                exclude_ids=purchased_ids,
+                max_products=int(cross_sell_cfg.get("max_products", 4)),
+            )
+            vars_["recommended_products"] = rec
+            vars_["recommended_products_html"] = _build_cross_sell_html(rec)
+
         _env = Environment(undefined=ChainableUndefined)
+        raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
 
         preview_text = step.get("preview_text", "")
@@ -266,7 +372,7 @@ def _send_email_step(
         result = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
             "to": [contact.email],
-            "subject": str(step["subject"]),
+            "subject": _env.from_string(str(step.get("subject", ""))).render(**vars_),
             "html": html,
             "headers": _unsub_headers(contact.email),
         })
@@ -676,6 +782,7 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             "tracking_number": tracking,
             "shipping_city": shipping_city,
             "shipping_province": payload.get("shipping_address", {}).get("province", ""),
+            "purchased_product_ids": [str(item.get("product_id", "")) for item in items],
         }
         enrolled = _enroll(session, auto, email, trigger_key, effective_delay, extra_vars)
         if enrolled:

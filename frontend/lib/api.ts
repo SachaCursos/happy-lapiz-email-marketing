@@ -150,7 +150,13 @@ export const syncApi = {
 // Shopify
 export const shopifyApi = {
   products: () => api.get<ShopifyProduct[]>("/shopify/products"),
+  collections: () => api.get<ShopifyCollection[]>("/shopify/collections"),
 };
+
+export interface ShopifyCollection {
+  id: string;
+  title: string;
+}
 
 export interface ShopifyProduct {
   id: string;
