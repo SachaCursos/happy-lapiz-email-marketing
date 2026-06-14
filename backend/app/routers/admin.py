@@ -315,7 +315,8 @@ _SHOPIFY_PRODUCTS_CREATE = """
         image_url TEXT,
         price NUMERIC(10,2),
         status VARCHAR NOT NULL DEFAULT 'active',
-        synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+        synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        edad_recomendada VARCHAR
     )
 """
 
@@ -345,16 +346,17 @@ def _ensure_shopify_products_table() -> None:
             ))
         }
         needed = {
-            "shopify_id": "BIGINT",
-            "title":       "VARCHAR",
-            "handle":      "VARCHAR",
-            "product_type":"VARCHAR",
-            "tags":        "TEXT",
-            "vendor":      "VARCHAR",
-            "image_url":   "TEXT",
-            "price":       "NUMERIC(10,2)",
-            "status":      "VARCHAR NOT NULL DEFAULT 'active'",
-            "synced_at":   "TIMESTAMP NOT NULL DEFAULT NOW()",
+            "shopify_id":       "BIGINT",
+            "title":            "VARCHAR",
+            "handle":           "VARCHAR",
+            "product_type":     "VARCHAR",
+            "tags":             "TEXT",
+            "vendor":           "VARCHAR",
+            "image_url":        "TEXT",
+            "price":            "NUMERIC(10,2)",
+            "status":           "VARCHAR NOT NULL DEFAULT 'active'",
+            "synced_at":        "TIMESTAMP NOT NULL DEFAULT NOW()",
+            "edad_recomendada": "VARCHAR",
         }
         for col, col_type in needed.items():
             if col not in existing_cols:
@@ -466,12 +468,23 @@ def sync_shopify_products(
     }
 
 
+_SORT_COLUMNS = {
+    "title": "title",
+    "product_type": "product_type",
+    "tags": "tags",
+    "price": "price",
+    "status": "status",
+    "edad_recomendada": "edad_recomendada",
+}
+
 @router.get("/products")
 def list_synced_products(
     search: str = "",
     product_type: str = "",
     page: int = 1,
     per_page: int = 50,
+    sort_by: str = "title",
+    sort_dir: str = "asc",
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
 ):
@@ -481,6 +494,10 @@ def list_synced_products(
     except Exception as exc:
         logger.error("_ensure_shopify_products_table failed: %s", exc, exc_info=True)
         return {"total": 0, "page": page, "per_page": per_page, "products": [], "product_types": [], "error": str(exc)}
+
+    col = _SORT_COLUMNS.get(sort_by, "title")
+    direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+
     where_clauses = ["1=1"]
     params: dict = {}
     if search:
@@ -498,9 +515,9 @@ def list_synced_products(
     params["limit"] = per_page
     rows = session.execute(
         text(f"""
-            SELECT shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at
+            SELECT shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at, edad_recomendada
             FROM shopify_products WHERE {where}
-            ORDER BY title ASC
+            ORDER BY {col} {direction} NULLS LAST
             LIMIT :limit OFFSET :offset
         """),
         params,
@@ -516,6 +533,7 @@ def list_synced_products(
             "product_type": r[3], "tags": r[4], "vendor": r[5],
             "image_url": r[6], "price": float(r[7] or 0),
             "status": r[8], "synced_at": str(r[9]) if r[9] else None,
+            "edad_recomendada": r[10],
         }
         for r in rows
     ]

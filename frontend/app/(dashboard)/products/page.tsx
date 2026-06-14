@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/api";
 import type { SyncedProduct } from "@/lib/api";
-import { Search, RefreshCw, Package, Tag, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, RefreshCw, Package, Tag, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
 function formatPrice(price: number) {
   return price > 0
@@ -17,16 +17,37 @@ function formatDate(s: string | null) {
   return new Date(s).toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+type SortKey = "title" | "product_type" | "tags" | "price" | "status" | "edad_recomendada";
+
+function SortIcon({ col, sortBy, sortDir }: { col: SortKey; sortBy: SortKey; sortDir: "asc" | "desc" }) {
+  if (sortBy !== col) return <ChevronsUpDown size={13} className="ml-1 text-gray-300 inline" />;
+  return sortDir === "asc"
+    ? <ChevronUp size={13} className="ml-1 text-brand-500 inline" />
+    : <ChevronDown size={13} className="ml-1 text-brand-500 inline" />;
+}
+
 export default function ProductsPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState<SortKey>("title");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [syncResult, setSyncResult] = useState<{ ok?: boolean; synced?: number; total_fetched?: number; errors?: string[]; error?: string } | null>(null);
 
+  function handleSort(col: SortKey) {
+    if (sortBy === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+    setPage(1);
+  }
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["synced-products", search, typeFilter, page],
-    queryFn: () => adminApi.getProducts({ search, product_type: typeFilter, page }).then((r) => r.data),
+    queryKey: ["synced-products", search, typeFilter, page, sortBy, sortDir],
+    queryFn: () => adminApi.getProducts({ search, product_type: typeFilter, page, sort_by: sortBy, sort_dir: sortDir }).then((r) => r.data),
     placeholderData: (prev) => prev,
     retry: 1,
   });
@@ -44,6 +65,18 @@ export default function ProductsPage() {
   const perPage = data?.per_page ?? 50;
   const totalPages = Math.ceil(total / perPage);
   const productTypes: string[] = data?.product_types ?? [];
+
+  function th(label: string, col: SortKey, className = "") {
+    return (
+      <th
+        className={`px-4 py-3 text-left font-medium text-gray-500 cursor-pointer select-none hover:text-gray-800 transition-colors ${className}`}
+        onClick={() => handleSort(col)}
+      >
+        {label}
+        <SortIcon col={col} sortBy={sortBy} sortDir={sortDir} />
+      </th>
+    );
+  }
 
   return (
     <div className="p-8 max-w-7xl">
@@ -133,12 +166,13 @@ export default function ProductsPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500 w-12"></th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Producto</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500 hidden md:table-cell">Tipo</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500 hidden lg:table-cell">Etiquetas</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Precio</th>
-                <th className="px-4 py-3 text-center font-medium text-gray-500 hidden sm:table-cell">Estado</th>
+                <th className="px-4 py-3 w-12"></th>
+                {th("Producto", "title")}
+                {th("Tipo", "product_type", "hidden md:table-cell")}
+                {th("Etiquetas", "tags", "hidden lg:table-cell")}
+                {th("Edad rec.", "edad_recomendada", "hidden md:table-cell")}
+                {th("Precio", "price", "text-right")}
+                {th("Estado", "status", "text-center hidden sm:table-cell")}
                 <th className="px-4 py-3 text-right font-medium text-gray-500 hidden xl:table-cell">Sincronizado</th>
               </tr>
             </thead>
@@ -188,6 +222,9 @@ export default function ProductsPage() {
                     ) : (
                       <span className="text-gray-300">—</span>
                     )}
+                  </td>
+                  <td className="px-4 py-2 hidden md:table-cell text-gray-500 text-sm">
+                    {p.edad_recomendada || <span className="text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-gray-700">
                     {formatPrice(p.price)}
