@@ -35,6 +35,7 @@ const TRIGGER_LABELS: Record<string, { label: string; description: string; color
   welcome:                  { label: "Bienvenida",                      description: "Nuevo contacto con opt-in activo.",                      color: "bg-gray-100 text-gray-700" },
   reactivation:             { label: "Reactivación",                    description: "Clientes sin compra en N días.",                         color: "bg-gray-100 text-gray-700" },
   post_visit:               { label: "Post-compra",                     description: "N días después de la última compra.",                    color: "bg-gray-100 text-gray-700" },
+  birthday_reminder:        { label: "Cumpleaños",                      description: "N días antes del cumpleaños del niño/a.",                color: "bg-pink-100 text-pink-700" },
 };
 
 function configSummary(auto: Automation): string {
@@ -46,6 +47,8 @@ function configSummary(auto: Automation): string {
       return `${c.delay_days ?? 3} días después de la última compra`;
     case "reactivation":
       return `Sin compra en ${c.inactivity_days ?? 90}+ días`;
+    case "birthday_reminder":
+      return `${c.days_before ?? 30} días antes del cumpleaños`;
     default:
       if (c.delay_hours !== undefined) {
         const h = Number(c.delay_hours);

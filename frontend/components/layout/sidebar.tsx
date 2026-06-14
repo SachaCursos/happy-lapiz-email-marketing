@@ -17,6 +17,7 @@ import {
   Tag,
   Palette,
   Braces,
+  ShoppingBag,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,7 @@ const nav = [
   { href: "/templates",    label: "Plantillas",       icon: FileText },
   { href: "/campaigns",    label: "Campañas",         icon: Send },
   { href: "/automations",  label: "Automatizaciones", icon: Zap },
+  { href: "/products",    label: "Productos",          icon: ShoppingBag },
   { href: "/variables",   label: "Variables",         icon: Braces },
   { href: "/forms",        label: "Formularios",      icon: MousePointerClick },
   { href: "/asuntos",      label: "Asuntos",          icon: BarChart2 },

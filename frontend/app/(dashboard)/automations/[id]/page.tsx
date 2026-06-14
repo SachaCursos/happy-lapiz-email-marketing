@@ -34,6 +34,7 @@ const TRIGGER_LABELS: Record<string, { label: string; color: string }> = {
   welcome:                  { label: "Bienvenida",             color: "bg-gray-100 text-gray-700" },
   reactivation:             { label: "Reactivación",           color: "bg-gray-100 text-gray-700" },
   post_visit:               { label: "Post-compra",            color: "bg-gray-100 text-gray-700" },
+  birthday_reminder:        { label: "Cumpleaños",             color: "bg-pink-100 text-pink-700" },
 };
 
 function delayLabel(h: number): string {

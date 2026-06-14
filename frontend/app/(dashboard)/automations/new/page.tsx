@@ -38,6 +38,7 @@ const TRIGGERS: {
   { value: "welcome",                  badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Bienvenida (nuevo suscriptor)",    description: "Nuevo contacto con opt-in activo." },
   { value: "reactivation",             badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Reactivación (cliente inactivo)",  description: "Sin compra en N días." },
   { value: "post_visit",               badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Seguimiento post-compra",          description: "N días después de la última compra." },
+  { value: "birthday_reminder",        badge: "Interno",  badgeColor: "bg-pink-100 text-pink-700",     label: "Recordatorio de cumpleaños",       description: "N días antes del cumpleaños guardado en custom_fields." },
 ];
 
 const EVENT_TRIGGERS = new Set<AutomationTrigger>([
@@ -658,6 +659,9 @@ export default function NewAutomationPage() {
   const [inactivityDays, setInactivityDays] = useState(90);
   const [cooldownDays, setCooldownDays] = useState(180);
   const [postVisitDays, setPostVisitDays] = useState(3);
+  const [birthdayDaysBefore, setBirthdayDaysBefore] = useState(30);
+  const [birthdayField, setBirthdayField] = useState("fecha_nacimiento");
+  const [birthdayNameField, setBirthdayNameField] = useState("nombre_regalado");
 
   // Order count filter
   const [orderCountPreset, setOrderCountPreset] = useState("none");
@@ -763,6 +767,8 @@ export default function NewAutomationPage() {
         triggerConfig = { inactivity_days: inactivityDays, cooldown_days: cooldownDays };
       } else if (triggerType === "post_visit") {
         triggerConfig = { delay_days: postVisitDays };
+      } else if (triggerType === "birthday_reminder") {
+        triggerConfig = { days_before: birthdayDaysBefore, birthday_field: birthdayField, name_field: birthdayNameField };
       } else if (EVENT_TRIGGERS.has(triggerType)) {
         triggerConfig = {
           lookback_hours: toHours(lookbackValue, lookbackUnit as TimeUnit),
@@ -953,6 +959,51 @@ export default function NewAutomationPage() {
                     className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
                   <span className="text-sm text-gray-500">días</span>
                 </div>
+              </div>
+            </div>
+          )}
+          {triggerType === "birthday_reminder" && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Enviar N días antes del cumpleaños
+                </label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Crea múltiples automatizaciones con 30, 15 y 7 días para enviar una secuencia de recordatorios.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={1} max={365} value={birthdayDaysBefore}
+                    onChange={(e) => setBirthdayDaysBefore(Math.max(1, Number(e.target.value)))}
+                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                  <span className="text-sm text-gray-500">días antes</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Campo de fecha en custom_fields
+                  </label>
+                  <input type="text" value={birthdayField}
+                    onChange={(e) => setBirthdayField(e.target.value)}
+                    placeholder="fecha_nacimiento"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Campo de nombre en custom_fields
+                  </label>
+                  <input type="text" value={birthdayNameField}
+                    onChange={(e) => setBirthdayNameField(e.target.value)}
+                    placeholder="nombre_regalado"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                </div>
+              </div>
+              <div className="bg-pink-50 border border-pink-200 rounded-lg px-4 py-3 text-xs text-pink-700">
+                Variables disponibles en el email:{" "}
+                <code>{"{{ nombre_regalado }}"}</code>,{" "}
+                <code>{"{{ relacion }}"}</code>,{" "}
+                <code>{"{{ dias_para_cumpleanos }}"}</code>,{" "}
+                <code>{"{{ fecha_cumpleanos }}"}</code>
               </div>
             </div>
           )}

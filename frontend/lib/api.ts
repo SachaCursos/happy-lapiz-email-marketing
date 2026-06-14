@@ -151,6 +151,11 @@ export const syncApi = {
 export const adminApi = {
   syncProducts: () => api.post("/admin/sync-products"),
   seedTemplates: () => api.post("/admin/seed-templates"),
+  getProducts: (params?: { search?: string; product_type?: string; page?: number }) =>
+    api.get<{ total: number; page: number; per_page: number; products: SyncedProduct[]; product_types: string[] }>(
+      "/admin/products",
+      { params }
+    ),
 };
 
 // Shopify
@@ -172,4 +177,17 @@ export interface ShopifyProduct {
   image_url: string;
   price: string;
   compare_at_price: string;
+}
+
+export interface SyncedProduct {
+  shopify_id: number;
+  title: string;
+  handle: string;
+  product_type: string;
+  tags: string;
+  vendor: string;
+  image_url: string;
+  price: number;
+  status: string;
+  synced_at: string | null;
 }

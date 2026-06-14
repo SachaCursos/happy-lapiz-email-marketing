@@ -414,6 +414,12 @@ def _send_email_step(
 
         nombre = _fmt_nombre(contact.name, contact.email)
         first_name = nombre.split()[0] if contact.name else ""
+        cf = contact.custom_fields or {}
+        if isinstance(cf, str):
+            try:
+                cf = json.loads(cf)
+            except Exception:
+                cf = {}
         vars_ = {
             "nombre": nombre,
             "first_name": first_name,
@@ -423,7 +429,11 @@ def _send_email_step(
             "ticket_medio": contact.ticket_medio or 0,
             "total_spent": contact.total_spent or 0,
             "shipping_city": contact.shipping_city or "",
+            "shipping_province": contact.shipping_province or "",
             "coupon_code": coupon_code or "",
+            "custom_fields": cf,
+            # Spread custom_fields at top level so {{ nombre_regalado }} works directly
+            **{k: v for k, v in cf.items() if isinstance(k, str)},
             **(extra_vars or {}),
         }
         # If there's a coupon code and a checkout URL, inject checkout_url_with_coupon
@@ -834,6 +844,91 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             session.commit()
 
 
+def _check_birthday_reminder(auto: Automation, session: Session) -> None:
+    """
+    Triggers for contacts whose custom_fields contains a child birthday (fecha_nacimiento)
+    that falls exactly `days_before` days from today (checked daily).
+    Each contact+year combination fires once. custom_fields keys configured via trigger_config:
+      days_before: int            — how many days before birthday to send (default 30)
+      birthday_field: str         — key inside custom_fields for the date (default "fecha_nacimiento")
+      name_field: str             — key inside custom_fields for the child's name (default "nombre_regalado")
+      relation_field: str         — key inside custom_fields for relationship (default "relacion")
+    """
+    config = auto.trigger_config or {}
+    days_before = int(config.get("days_before", 30))
+    birthday_field = config.get("birthday_field", "fecha_nacimiento")
+    name_field = config.get("name_field", "nombre_regalado")
+    relation_field = config.get("relation_field", "relacion")
+
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", 0))
+
+    today = datetime.utcnow().date()
+    target = today + timedelta(days=days_before)  # the birthday date we're looking for
+    target_mmdd = f"{target.month:02d}-{target.day:02d}"  # MM-DD, ignoring year
+
+    # Query contacts that have custom_fields with the birthday field set
+    rows = session.execute(text("""
+        SELECT id, email, name, custom_fields
+        FROM contacts
+        WHERE opted_in = TRUE
+          AND custom_fields IS NOT NULL
+          AND custom_fields::text LIKE :pattern
+    """), {"pattern": f"%{birthday_field}%"}).fetchall()
+
+    for row in rows:
+        cf = row[3] or {}
+        if isinstance(cf, str):
+            try:
+                cf = json.loads(cf)
+            except Exception:
+                continue
+
+        raw_date = cf.get(birthday_field, "")
+        if not raw_date:
+            continue
+
+        # Accept YYYY-MM-DD or DD-MM-YYYY or DD/MM/YYYY
+        try:
+            if len(raw_date) == 10 and raw_date[4] in ("-", "/"):
+                # YYYY-MM-DD
+                bday = datetime.strptime(raw_date, "%Y-%m-%d").date()
+                bday_mmdd = f"{bday.month:02d}-{bday.day:02d}"
+            else:
+                for fmt in ("%d-%m-%Y", "%d/%m/%Y"):
+                    try:
+                        bday = datetime.strptime(raw_date, fmt).date()
+                        bday_mmdd = f"{bday.month:02d}-{bday.day:02d}"
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    continue
+        except Exception:
+            continue
+
+        if bday_mmdd != target_mmdd:
+            continue
+
+        child_name = cf.get(name_field, "")
+        relation = cf.get(relation_field, "")
+        contact_name = row[2] or row[1]
+        first = contact_name.split()[0]
+
+        trigger_key = f"birthday:{row[0]}:{target.year}:{days_before}"
+        extra_vars = {
+            "nombre": contact_name,
+            "first_name": first,
+            "nombre_regalado": child_name,
+            "relacion": relation,
+            "dias_para_cumpleanos": days_before,
+            "fecha_cumpleanos": str(target),
+        }
+        _enroll(session, auto, row[1], trigger_key, first_delay, extra_vars)
+
+
 def _make_shopify_handler(trigger_type: str):
     def handler(auto, session): _check_shopify_event(auto, session, trigger_type)
     handler.__name__ = f"_check_{trigger_type}"
@@ -861,6 +956,7 @@ HANDLERS = {
     "welcome":                  _check_welcome,
     "post_visit":               _check_post_visit,
     "reactivation":             _check_reactivation,
+    "birthday_reminder":        _check_birthday_reminder,
 }
 
 

@@ -241,6 +241,7 @@ export type AutomationTrigger =
   | "viewed_product" | "active_on_site" | "subscribed_to_back_in_stock"
   // Internos
   | "welcome" | "post_visit" | "reactivation"
+  | "birthday_reminder"
   | "form_submitted";
 export type AutomationStatus = "active" | "paused";
 

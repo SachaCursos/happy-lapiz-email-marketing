@@ -387,6 +387,63 @@ def sync_shopify_products(
     }
 
 
+@router.get("/products")
+def list_synced_products(
+    search: str = "",
+    product_type: str = "",
+    page: int = 1,
+    per_page: int = 50,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_admin),
+):
+    """Devuelve los productos sincronizados desde Shopify."""
+    where_clauses = ["1=1"]
+    params: dict = {}
+    if search:
+        where_clauses.append("(title ILIKE :search OR tags ILIKE :search)")
+        params["search"] = f"%{search}%"
+    if product_type:
+        where_clauses.append("product_type = :ptype")
+        params["ptype"] = product_type
+    where = " AND ".join(where_clauses)
+
+    total_row = session.execute(text(f"SELECT COUNT(*) FROM shopify_products WHERE {where}"), params).fetchone()
+    total = int(total_row[0]) if total_row else 0
+
+    params["offset"] = (page - 1) * per_page
+    params["limit"] = per_page
+    rows = session.execute(
+        text(f"""
+            SELECT shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at
+            FROM shopify_products WHERE {where}
+            ORDER BY title ASC
+            LIMIT :limit OFFSET :offset
+        """),
+        params,
+    ).fetchall()
+
+    types_rows = session.execute(
+        text("SELECT DISTINCT product_type FROM shopify_products WHERE product_type IS NOT NULL AND product_type <> '' ORDER BY product_type")
+    ).fetchall()
+
+    products = [
+        {
+            "shopify_id": r[0], "title": r[1], "handle": r[2],
+            "product_type": r[3], "tags": r[4], "vendor": r[5],
+            "image_url": r[6], "price": float(r[7] or 0),
+            "status": r[8], "synced_at": str(r[9]) if r[9] else None,
+        }
+        for r in rows
+    ]
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "products": products,
+        "product_types": [r[0] for r in types_rows],
+    }
+
+
 @router.post("/register-shopify-webhooks")
 def register_shopify_webhooks(current_user: User = Depends(require_admin)):
     """Registra los webhooks de Shopify en la tienda usando el token del backend."""
