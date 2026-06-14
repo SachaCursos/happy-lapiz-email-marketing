@@ -300,6 +300,44 @@ def fix_logo(
     return {"ok": True, "fixed": fixed, "logo_url": HL_LOGO}
 
 
+def _ensure_shopify_products_table(session: Session) -> None:
+    """Drop and recreate shopify_products if the shopify_id column is missing.
+    Uses its own nested commit so the schema fix is independent of the caller's transaction.
+    """
+    try:
+        has_col = session.execute(text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'"
+        )).scalar()
+        session.commit()
+    except Exception:
+        session.rollback()
+        has_col = 1  # assume table is fine if we can't check
+
+    if has_col == 0:
+        try:
+            session.execute(text("DROP TABLE IF EXISTS shopify_products"))
+            session.execute(text("""
+                CREATE TABLE shopify_products (
+                    id SERIAL PRIMARY KEY,
+                    shopify_id BIGINT UNIQUE NOT NULL,
+                    title VARCHAR NOT NULL,
+                    handle VARCHAR,
+                    product_type VARCHAR,
+                    tags TEXT,
+                    vendor VARCHAR,
+                    image_url TEXT,
+                    price NUMERIC(10,2),
+                    status VARCHAR NOT NULL DEFAULT 'active',
+                    synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """))
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise RuntimeError("No se pudo recrear la tabla shopify_products con el esquema correcto.")
+
+
 @router.post("/sync-products")
 def sync_shopify_products(
     session: Session = Depends(get_session),
@@ -338,36 +376,10 @@ def sync_shopify_products(
                 break
             params = {"limit": 250, "page_info": m.group(1)}
 
-    # Ensure the table has the correct schema before inserting.
-    # If shopify_id column is missing (stale schema from a prior deploy),
-    # drop and recreate the table so the sync can proceed without waiting for a restart.
     try:
-        has_col = session.execute(text(
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'"
-        )).scalar()
-        session.commit()
-        if has_col == 0:
-            session.execute(text("DROP TABLE IF EXISTS shopify_products"))
-            session.execute(text("""
-                CREATE TABLE shopify_products (
-                    id SERIAL PRIMARY KEY,
-                    shopify_id BIGINT UNIQUE NOT NULL,
-                    title VARCHAR NOT NULL,
-                    handle VARCHAR,
-                    product_type VARCHAR,
-                    tags TEXT,
-                    vendor VARCHAR,
-                    image_url TEXT,
-                    price NUMERIC(10,2),
-                    status VARCHAR NOT NULL DEFAULT 'active',
-                    synced_at TIMESTAMP NOT NULL DEFAULT NOW()
-                )
-            """))
-            session.commit()
-    except Exception as exc:
-        session.rollback()
-        return {"ok": False, "error": f"No se pudo preparar la tabla shopify_products: {exc}"}
+        _ensure_shopify_products_table(session)
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
 
     now = datetime.utcnow()
     upserted = 0
@@ -428,6 +440,7 @@ def list_synced_products(
     current_user: User = Depends(require_admin),
 ):
     """Devuelve los productos sincronizados desde Shopify."""
+    _ensure_shopify_products_table(session)
     where_clauses = ["1=1"]
     params: dict = {}
     if search:
