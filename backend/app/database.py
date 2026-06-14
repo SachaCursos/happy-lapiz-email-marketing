@@ -18,7 +18,23 @@ def create_db_and_tables():
 
 
 def _run_migrations():
-    """Add columns that were added after initial table creation."""
+    """Add columns/tables that were added after initial table creation.
+    Each statement runs in its own transaction so one failure never blocks the rest.
+    """
+    # Step 1: fix shopify_products if it exists without the shopify_id column
+    # (Python-side check avoids DO $$ syntax issues and transaction abort cascade)
+    with Session(engine) as session:
+        try:
+            has_col = session.execute(text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'"
+            )).scalar()
+            if has_col == 0:
+                session.execute(text("DROP TABLE IF EXISTS shopify_products"))
+            session.commit()
+        except Exception:
+            session.rollback()
+
     migrations = [
         "ALTER TABLE templates ALTER COLUMN subject_default SET DEFAULT ''",
         "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS design_config JSONB",
@@ -30,16 +46,6 @@ def _run_migrations():
         "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
-        # Shopify products cache table — recreate with correct schema if shopify_id column is missing
-        """DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'
-          ) THEN
-            DROP TABLE IF EXISTS shopify_products;
-          END IF;
-        END $$""",
         """CREATE TABLE IF NOT EXISTS shopify_products (
             id SERIAL PRIMARY KEY,
             shopify_id BIGINT UNIQUE NOT NULL,
@@ -53,7 +59,6 @@ def _run_migrations():
             status VARCHAR NOT NULL DEFAULT 'active',
             synced_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
-        # Coupon tables — created here so they exist even after a clean deploy
         """CREATE TABLE IF NOT EXISTS coupon_campaigns (
             id SERIAL PRIMARY KEY,
             name VARCHAR NOT NULL,
@@ -82,13 +87,14 @@ def _run_migrations():
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
     ]
-    with Session(engine) as session:
-        for sql in migrations:
+    # Each migration gets its own transaction — a failure in one never aborts the rest
+    for sql in migrations:
+        with Session(engine) as session:
             try:
                 session.execute(text(sql))
+                session.commit()
             except Exception:
-                pass
-        session.commit()
+                session.rollback()
 
 
 def get_session():
