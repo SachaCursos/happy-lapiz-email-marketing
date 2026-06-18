@@ -1,4 +1,5 @@
 """
+kok
 Adds new columns to existing tables in Railway DB.
 Safe to run multiple times (uses IF NOT EXISTS logic).
 """
@@ -11,6 +12,8 @@ conn = psycopg2.connect(DB)
 cur = conn.cursor()
 
 migrations = [
+    # campaigns.template_id — make nullable so templates can be deleted independently
+    "ALTER TABLE campaigns ALTER COLUMN template_id DROP NOT NULL",
     # contacts — new profile columns
     "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS birthday DATE",
     "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes TEXT",
