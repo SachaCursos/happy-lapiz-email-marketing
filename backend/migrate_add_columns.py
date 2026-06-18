@@ -12,8 +12,12 @@ conn = psycopg2.connect(DB)
 cur = conn.cursor()
 
 migrations = [
-    # campaigns.template_id — make nullable so templates can be deleted independently
+    # campaigns.template_id — nullable + ON DELETE SET NULL so templates can be deleted freely
     "ALTER TABLE campaigns ALTER COLUMN template_id DROP NOT NULL",
+    "ALTER TABLE campaigns DROP CONSTRAINT IF EXISTS campaigns_template_id_fkey",
+    "ALTER TABLE campaigns ADD CONSTRAINT campaigns_template_id_fkey FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE SET NULL",
+    "ALTER TABLE automations DROP CONSTRAINT IF EXISTS automations_template_id_fkey",
+    "ALTER TABLE automations ADD CONSTRAINT automations_template_id_fkey FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE SET NULL",
     # contacts — new profile columns
     "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS birthday DATE",
     "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes TEXT",
