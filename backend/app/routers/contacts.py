@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlmodel import Session, select
 import resend
 from app.database import get_session
@@ -214,46 +214,6 @@ def contact_segments(
     return matching
 
 
-@router.get("/{contact_id}/bookings")
-def contact_bookings(
-    contact_id: int,
-    session: Session = Depends(get_session),
-    _: User = Depends(get_current_user),
-):
-    """Historial de compras del contacto."""
-    contact = session.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contacto no encontrado")
-
-    src_url = settings.HOTBOAT_DATABASE_URL or settings.DATABASE_URL
-    try:
-        engine = create_engine(src_url)
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT
-                    fecha,
-                    status,
-                    ingreso_total,
-                    como_supieron,
-                    extras_json
-                FROM all_appointments
-                WHERE email = :email
-                ORDER BY fecha DESC
-                LIMIT 50
-            """), {"email": contact.email}).fetchall()
-        return [
-            {
-                "fecha": str(r.fecha),
-                "status": r.status,
-                "ingreso_total": float(r.ingreso_total) if r.ingreso_total else None,
-                "como_supieron": r.como_supieron,
-                "extras": r.extras_json if r.extras_json else {},
-            }
-            for r in rows
-        ]
-    except Exception as exc:
-        # Source DB not available — return empty without crashing
-        return []
 
 
 @router.get("/{contact_id}/email_activity")

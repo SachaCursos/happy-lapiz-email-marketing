@@ -140,6 +140,74 @@ def _passes_order_count_filter(filter_cfg: dict | None, orders_count: int) -> bo
     return True
 
 
+def _passes_numeric_filter(filter_cfg: dict | None, value: float | int | None) -> bool:
+    """Generic numeric filter (operators: eq, lt, lte, gt, gte). Used for total_spent, ticket_medio, etc."""
+    if not filter_cfg:
+        return True
+    if value is None:
+        return False
+    op  = filter_cfg.get("operator", "gte")
+    val = float(filter_cfg.get("value", 0))
+    v   = float(value)
+    if op == "eq":  return v == val
+    if op == "lt":  return v < val
+    if op == "lte": return v <= val
+    if op == "gt":  return v > val
+    if op == "gte": return v >= val
+    return True
+
+
+def _normalize_str(s: str) -> str:
+    """Lowercase + strip accents for fuzzy matching."""
+    import unicodedata
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", (s or "").lower().strip())
+        if not unicodedata.combining(c)
+    )
+
+
+def _passes_contact_filters(config: dict, contact: "Contact") -> bool:
+    """
+    Evaluate all extra contact-level filters from trigger_config.
+
+    Supported keys in config:
+      total_spent_filter:    { operator, value }   — total spent in CLP
+      ticket_medio_filter:   { operator, value }   — avg ticket in CLP
+      city_filter:           [str, ...]             — shipping_city whitelist (fuzzy)
+      province_filter:       [str, ...]             — shipping_province whitelist (fuzzy)
+      accepts_marketing:     true | false           — marketing consent
+    """
+    if not config:
+        return True
+
+    if not _passes_numeric_filter(config.get("total_spent_filter"), contact.total_spent):
+        return False
+
+    if not _passes_numeric_filter(config.get("ticket_medio_filter"), contact.ticket_medio):
+        return False
+
+    city_filter = config.get("city_filter")
+    if city_filter:
+        contact_city = _normalize_str(contact.shipping_city or "")
+        allowed = [_normalize_str(c) for c in city_filter]
+        if contact_city not in allowed:
+            return False
+
+    province_filter = config.get("province_filter")
+    if province_filter:
+        contact_prov = _normalize_str(contact.shipping_province or "")
+        allowed = [_normalize_str(p) for p in province_filter]
+        if contact_prov not in allowed:
+            return False
+
+    accepts_marketing = config.get("accepts_marketing")
+    if accepts_marketing is not None:
+        if bool(contact.accepts_marketing) != bool(accepts_marketing):
+            return False
+
+    return True
+
+
 def _passes_condition(condition: str | None, enrollment: AutomationEnrollment, session: Session) -> bool:
     """Check enrollment condition before sending a step. Returns True if the step should be sent."""
     if not condition or condition == "always":
@@ -341,6 +409,140 @@ def _fetch_cross_sell_from_db(
     return result
 
 
+def _get_purchase_history_items(session: Session, customer_email: str) -> list[dict]:
+    """Returns all unique products the customer has ever bought, from shopify_events payloads."""
+    rows = session.execute(text("""
+        SELECT payload FROM shopify_events
+        WHERE LOWER(email) = LOWER(:email)
+          AND event_type = 'placed_order'
+          AND payload IS NOT NULL
+        ORDER BY created_at DESC
+    """), {"email": customer_email}).fetchall()
+
+    seen: set[str] = set()
+    items: list[dict] = []
+    for row in rows:
+        try:
+            payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            for item in payload.get("line_items", []):
+                pid = str(item.get("product_id", ""))
+                if pid and pid not in seen:
+                    seen.add(pid)
+                    items.append({
+                        "product_id": pid,
+                        "title": item.get("title") or item.get("name") or "",
+                        "price": item.get("price") or "",
+                        "variant_title": item.get("variant_title") or "",
+                        "image_url": (item.get("properties") or [{}])[0].get("value") if item.get("properties") else "",
+                    })
+        except Exception:
+            pass
+    return items
+
+
+def _build_products_list_html(items: list[dict]) -> str:
+    """Builds a clean HTML list of purchased products."""
+    if not items:
+        return ""
+    parts = ["<ul style='padding:0;margin:0;list-style:none;'>"]
+    for item in items:
+        title   = item.get("title", "")
+        variant = item.get("variant_title", "")
+        price   = item.get("price", "")
+        label   = f"{title} — {variant}" if variant and variant.lower() != "default title" else title
+        try:
+            price_str = f" <span style='color:#6b7280;font-size:13px;'>${int(float(price)):,}</span>".replace(",", ".")
+        except (ValueError, TypeError):
+            price_str = ""
+        parts.append(
+            f"<li style='padding:8px 0;border-bottom:1px solid #f3f4f6;"
+            f"font-size:14px;color:#111;line-height:1.4;'>"
+            f"{label}{price_str}</li>"
+        )
+    parts.append("</ul>")
+    return "".join(parts)
+
+
+def _age_matches(edad_rec: str, age: int) -> bool:
+    """Check if an edad_recomendada string (e.g. '3-5', '6+', '4') contains the given age."""
+    s = edad_rec.strip()
+    if "-" in s:
+        lo_s, hi_s = s.split("-", 1)
+        try:
+            return int(lo_s) <= age <= int(hi_s)
+        except ValueError:
+            return False
+    if s.endswith("+"):
+        try:
+            return age >= int(s[:-1])
+        except ValueError:
+            return False
+    try:
+        return int(s) == age
+    except ValueError:
+        return False
+
+
+def _fetch_age_recommended_products(
+    session: Session,
+    customer_email: str,
+    edad_regalon: int,
+    max_products: int = 4,
+) -> list[dict]:
+    """Returns active products whose edad_recomendada matches the gift age, excluding already bought."""
+    history_rows = session.execute(text("""
+        SELECT payload FROM shopify_events
+        WHERE LOWER(email) = LOWER(:email)
+          AND event_type = 'placed_order'
+          AND payload IS NOT NULL
+    """), {"email": customer_email}).fetchall()
+
+    ever_bought: set[int] = set()
+    for row in history_rows:
+        try:
+            payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            for item in payload.get("line_items", []):
+                pid = item.get("product_id")
+                if pid:
+                    ever_bought.add(int(pid))
+        except Exception:
+            pass
+
+    excl_clause = "AND shopify_id != ALL(:excl)" if ever_bought else ""
+    params: dict = {}
+    if ever_bought:
+        params["excl"] = list(ever_bought)
+
+    try:
+        all_rows = session.execute(text(f"""
+            SELECT shopify_id, title, handle, image_url, price, edad_recomendada
+            FROM shopify_products
+            WHERE status = 'active'
+              AND edad_recomendada IS NOT NULL
+              AND edad_recomendada <> ''
+              {excl_clause}
+        """), params).fetchall()
+    except Exception as exc:
+        logger.warning("age_recommended: query failed: %s", exc)
+        return []
+
+    matched = [
+        {
+            "shopify_id": r[0],
+            "title": r[1],
+            "handle": r[2],
+            "image_url": r[3],
+            "price": float(r[4]) if r[4] else 0,
+        }
+        for r in all_rows
+        if _age_matches(r[5] or "", edad_regalon)
+    ]
+
+    import random
+    random.shuffle(matched)
+    return matched[:max_products]
+
+
 def _build_cross_sell_html(products: list[dict]) -> str:
     """Generate a 2-column responsive product grid for cross-sell emails."""
     if not products:
@@ -469,6 +671,27 @@ def _send_email_step(
                 )
             vars_["recommended_products"] = rec
             vars_["recommended_products_html"] = _build_cross_sell_html(rec)
+
+        # Purchase history variables (always available, derived from shopify_events)
+        orders_count_val = contact.orders_count or 0
+        history_items = _get_purchase_history_items(session, contact.email) if orders_count_val >= 1 else []
+        if orders_count_val == 1 and history_items:
+            vars_["producto_comprado_html"] = _build_products_list_html(history_items[:1])
+            vars_["producto_comprado"] = history_items[0].get("title", "")
+        elif orders_count_val > 1 and history_items:
+            vars_["productos_comprados_html"] = _build_products_list_html(history_items)
+            vars_["primer_producto_comprado"] = history_items[0].get("title", "")
+
+        # Age-based product recommendations (uses custom_fields.edad_regalon)
+        edad_regalon_raw = cf.get("edad_regalon")
+        if edad_regalon_raw is not None:
+            try:
+                edad_int = int(edad_regalon_raw)
+                age_rec = _fetch_age_recommended_products(session, contact.email, edad_int)
+                vars_["productos_recomendados_edad"] = age_rec
+                vars_["productos_recomendados_edad_html"] = _build_cross_sell_html(age_rec)
+            except (ValueError, TypeError):
+                pass
 
         _env = Environment(undefined=ChainableUndefined)
         raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
@@ -610,6 +833,8 @@ def _check_welcome(auto: Automation, session: Session) -> None:
             continue
         if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
             continue
+        if not _passes_contact_filters(config, contact):
+            continue
         trigger_key = f"welcome:{contact.id}"
         extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
         _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
@@ -634,6 +859,8 @@ def _check_post_visit(auto: Automation, session: Session) -> None:
     order_count_filter = config.get("order_count_filter")
     for contact in contacts:
         if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
+            continue
+        if not _passes_contact_filters(config, contact):
             continue
         trigger_key = f"postvisit:{contact.id}:{target_date}"
         extra_vars = {"nombre": contact.name or contact.email, "first_name": (contact.name or contact.email).split()[0]}
@@ -673,6 +900,8 @@ def _check_reactivation(auto: Automation, session: Session) -> None:
         if recent_run:
             continue
         if order_count_filter and not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
+            continue
+        if not _passes_contact_filters(config, contact):
             continue
         week = datetime.utcnow().strftime("%Y-W%W")
         trigger_key = f"reactivation:{contact.id}:{week}"
@@ -718,6 +947,8 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         if order_count_filter and contact:
             if not _passes_order_count_filter(order_count_filter, contact.orders_count or 0):
                 continue
+        if contact and not _passes_contact_filters(config, contact):
+            continue
 
         # Atomically claim the cart to prevent concurrent duplicate enrollments
         claimed = session.execute(text("""
@@ -801,10 +1032,13 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             cust_count = payload.get("customer", {}).get("orders_count")
             count_to_check = int(cust_count) if cust_count is not None else (contact.orders_count or 0)
             if not _passes_order_count_filter(order_count_filter, count_to_check):
-                # Mark processed so the engine won't keep re-evaluating this event
                 session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
                 session.commit()
                 continue
+        if not _passes_contact_filters(config, contact):
+            session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+            session.commit()
+            continue
 
         items = payload.get("line_items", [])
 

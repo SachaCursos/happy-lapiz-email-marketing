@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronUp, ChevronDown, Trash2, Plus, Eye, Layout, Code,
   Star, X, Monitor, Smartphone, Search, Link as LinkIcon,
-  AlignLeft, Send,
+  AlignLeft, AlignCenter, AlignRight, Send,
 } from "lucide-react";
 import { shopifyApi, ShopifyProduct, api } from "@/lib/api";
 
@@ -15,6 +15,7 @@ export interface Block {
   id: string;
   type: BlockType;
   props: Record<string, string | number | boolean>;
+  _favName?: string;
 }
 
 // ── Defaults ───────────────────────────────────────────────────────────────────
@@ -37,6 +38,66 @@ const FONT_OPTIONS = [
   { label: "Georgia (Serif)", value: "Georgia, 'Times New Roman', serif" },
   { label: "Verdana", value: "Verdana, Geneva, Tahoma, sans-serif" },
   { label: "Courier New (Monospace)", value: "'Courier New', Courier, monospace" },
+];
+
+const TEMPLATE_VARS: { group: string; vars: { key: string; desc: string; raw?: boolean }[] }[] = [
+  {
+    group: "Siempre disponibles",
+    vars: [
+      { key: "nombre",        desc: "Nombre del contacto (ej: Juan)" },
+      { key: "first_name",    desc: "Primer nombre" },
+      { key: "email",         desc: "Email del contacto" },
+      { key: "orders_count",  desc: "Número de pedidos en Shopify" },
+      { key: "total_spent",   desc: "Total gastado en la tienda" },
+      { key: "ticket_medio",  desc: "Ticket promedio por pedido" },
+      { key: "shipping_city", desc: "Ciudad de envío" },
+      { key: "coupon_code",   desc: "Código de cupón dinámico" },
+      { key: "{% unsubscribe %}", desc: "Enlace para darse de baja", raw: true },
+    ],
+  },
+  {
+    group: "Carrito abandonado",
+    vars: [
+      { key: "cart_total",                    desc: "Total del carrito (ej: $29.990)" },
+      { key: "first_product",                 desc: "Nombre del primer producto" },
+      { key: "cart_url",                      desc: "URL del carrito" },
+      { key: "event.extra.checkout_url",      desc: "URL de checkout directo" },
+      { key: "event.extra.checkout_url_with_coupon", desc: "Checkout con cupón pre-aplicado" },
+    ],
+  },
+  {
+    group: "Pedidos",
+    vars: [
+      { key: "order_number",    desc: "Número de pedido (ej: #1234)" },
+      { key: "order_total",     desc: "Total del pedido" },
+      { key: "tracking_number", desc: "Número de seguimiento (fulfilled_order)" },
+    ],
+  },
+  {
+    group: "Historial de compras",
+    vars: [
+      { key: "producto_comprado_html",   desc: "HTML del producto comprado (solo cuando el cliente hizo 1 pedido)" },
+      { key: "producto_comprado",        desc: "Nombre del producto comprado (1 pedido)" },
+      { key: "productos_comprados_html", desc: "HTML lista de todos los productos comprados (más de 1 pedido)" },
+      { key: "primer_producto_comprado", desc: "Nombre del primer producto en su historial (más de 1 pedido)" },
+    ],
+  },
+  {
+    group: "Cumpleaños / Regalón",
+    vars: [
+      { key: "nombre_regalado",               desc: "Nombre del niño/destinatario del regalo (custom_fields)" },
+      { key: "dias_para_cumpleanos",           desc: "Días que faltan para el cumpleaños" },
+      { key: "fecha_cumpleanos",              desc: "Fecha del próximo cumpleaños" },
+      { key: "edad_regalon",                  desc: "Edad del regalón (custom_fields.edad_regalon)" },
+      { key: "productos_recomendados_edad_html", desc: "Grilla HTML de productos para la edad del regalón, sin los ya comprados" },
+    ],
+  },
+  {
+    group: "Cross-sell (con configuración)",
+    vars: [
+      { key: "recommended_products_html", desc: "Grilla HTML de productos recomendados (requiere cross_sell_config en la automatización)" },
+    ],
+  },
 ];
 
 const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
@@ -879,7 +940,7 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
   }
 }
 
-// ── Inline text editor (contentEditable) ──────────────────────────────────────
+// ── Inline text editor (contentEditable) with rich-text toolbar ───────────────
 function InlineTextEditor({
   content,
   style,
@@ -890,6 +951,7 @@ function InlineTextEditor({
   onCommit: (html: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [, rerender] = useState(0);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -904,19 +966,128 @@ function InlineTextEditor({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function execFmt(cmd: string, value?: string) {
+    ref.current?.focus();
+    try { document.execCommand("styleWithCSS", false, "true"); } catch { /* noop */ }
+    document.execCommand(cmd, false, value);
+    rerender((n) => n + 1);
+  }
+
+  function applyInlineStyle(prop: string, value: string) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) {
+      // No selection: apply to whole editor via execCommand fallback
+      if (prop === "color") execFmt("foreColor", value);
+      return;
+    }
+    try {
+      const span = document.createElement("span");
+      (span.style as unknown as Record<string, string>)[prop] = value;
+      range.surroundContents(span);
+    } catch { /* partial element selection — skip */ }
+    rerender((n) => n + 1);
+  }
+
+  function isActive(cmd: string) {
+    try { return document.queryCommandState(cmd); } catch { return false; }
+  }
+
+  const tb = "flex items-center justify-center w-7 h-7 rounded text-xs transition-colors select-none";
+  const off = "text-gray-600 hover:bg-gray-100";
+  const on  = "bg-brand-600 text-white";
+
   return (
-    <div
-      ref={ref}
-      contentEditable
-      suppressContentEditableWarning
-      style={{ ...style, outline: "2px solid #6366f1", outlineOffset: "-2px", cursor: "text", minHeight: 40 }}
-      onBlur={(e) => onCommit(e.currentTarget.innerHTML)}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        e.stopPropagation();
-        if (e.key === "Escape") e.currentTarget.blur();
-      }}
-    />
+    <div className="border-2 border-brand-400 rounded overflow-hidden">
+      {/* Formatting toolbar */}
+      <div
+        className="flex items-center gap-0.5 px-2 py-1.5 bg-white border-b border-gray-200 flex-wrap"
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        {/* B / I / U */}
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("bold"); }}
+          className={`${tb} font-bold ${isActive("bold") ? on : off}`} title="Negrita (Ctrl+B)">B</button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("italic"); }}
+          className={`${tb} italic ${isActive("italic") ? on : off}`} title="Cursiva (Ctrl+I)">I</button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("underline"); }}
+          className={`${tb} underline ${isActive("underline") ? on : off}`} title="Subrayado (Ctrl+U)">U</button>
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Font sizes */}
+        {[12, 14, 16, 18, 24, 32].map((sz) => (
+          <button key={sz}
+            onMouseDown={(e) => { e.preventDefault(); applyInlineStyle("fontSize", `${sz}px`); }}
+            className={`px-1.5 h-6 rounded text-xs font-medium ${off}`} title={`Tamaño ${sz}px`}>
+            {sz}
+          </button>
+        ))}
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Color swatches */}
+        {BRAND_PALETTE.map((c) => (
+          <button key={c}
+            onMouseDown={(e) => { e.preventDefault(); applyInlineStyle("color", c); }}
+            title={c}
+            style={{ background: c }}
+            className="w-5 h-5 rounded-full border border-gray-300 hover:scale-110 transition-transform shrink-0"
+          />
+        ))}
+        <input type="color" defaultValue="#222222"
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => { ref.current?.focus(); applyInlineStyle("color", e.target.value); }}
+          className="w-6 h-6 rounded border border-gray-300 cursor-pointer p-0 shrink-0" title="Color personalizado"
+        />
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Alignment */}
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("justifyLeft"); }}
+          className={`${tb} ${isActive("justifyLeft") ? on : off}`} title="Alinear izquierda">
+          <AlignLeft size={13} />
+        </button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("justifyCenter"); }}
+          className={`${tb} ${isActive("justifyCenter") ? on : off}`} title="Centrar">
+          <AlignCenter size={13} />
+        </button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("justifyRight"); }}
+          className={`${tb} ${isActive("justifyRight") ? on : off}`} title="Alinear derecha">
+          <AlignRight size={13} />
+        </button>
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Font family */}
+        <select
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => { ref.current?.focus(); applyInlineStyle("fontFamily", e.target.value); }}
+          defaultValue={FONT_OPTIONS[0].value}
+          className="h-6 text-xs border border-gray-200 rounded px-1 text-gray-700 max-w-[130px]"
+        >
+          {FONT_OPTIONS.map((f) => (
+            <option key={f.value} value={f.value}>{f.label.split(" (")[0]}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Editable area */}
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        style={{ ...style, outline: "none", cursor: "text", minHeight: 40 }}
+        onBlur={(e) => onCommit(e.currentTarget.innerHTML)}
+        onClick={(e) => e.stopPropagation()}
+        onKeyUp={() => rerender((n) => n + 1)}
+        onMouseUp={() => rerender((n) => n + 1)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Escape") e.currentTarget.blur();
+        }}
+      />
+    </div>
   );
 }
 
@@ -1318,6 +1489,7 @@ export function TemplateBlockEditor({
   );
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [favorites, setFavorites] = useState<Block[]>(() => loadFavorites());
+  const [varsOpen, setVarsOpen] = useState(false);
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
   const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
   const [convertMsg, setConvertMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -1356,7 +1528,10 @@ export function TemplateBlockEditor({
 
   function saveToFavorites() {
     if (!selected) return;
-    const fav: Block = { ...selected, id: `fav_${Date.now()}` };
+    const defaultName = PALETTE.find((x) => x.type === selected.type)?.label ?? selected.type;
+    const name = window.prompt("Nombre para este favorito:", defaultName);
+    if (name === null) return;
+    const fav: Block = { ...selected, id: `fav_${Date.now()}`, _favName: name.trim() || defaultName };
     const next = [...favorites, fav];
     setFavorites(next);
     saveFavorites(next);
@@ -1579,13 +1754,17 @@ export function TemplateBlockEditor({
                   </p>
                   <div className="px-2 pb-4 space-y-0.5">
                     {favorites.map((fav) => {
-                      const label = PALETTE.find((x) => x.type === fav.type)?.label ?? fav.type;
+                      const label = fav._favName || PALETTE.find((x) => x.type === fav.type)?.label || fav.type;
+                      const typeSub = PALETTE.find((x) => x.type === fav.type)?.sub ?? "";
                       return (
                         <div key={fav.id} className="flex items-center gap-1 group">
                           <button onClick={() => addFavorite(fav)}
                             className="flex-1 flex items-start gap-2 px-3 py-2 rounded-lg text-left hover:bg-white hover:shadow-sm border border-transparent hover:border-amber-200 transition-all">
                             <Star size={11} className="text-amber-400 shrink-0 mt-0.5" />
-                            <p className="text-xs font-semibold text-gray-700 truncate">{label}</p>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-gray-700 truncate">{label}</p>
+                              {typeSub && <p className="text-xs text-gray-400 truncate">{typeSub}</p>}
+                            </div>
                           </button>
                           <button onClick={() => removeFavorite(fav.id)}
                             className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center text-gray-400 hover:text-red-500 transition-all shrink-0">
@@ -1596,6 +1775,51 @@ export function TemplateBlockEditor({
                     })}
                   </div>
                 </>
+              )}
+              {/* Variables panel */}
+              <button
+                onClick={() => setVarsOpen((v) => !v)}
+                className="w-full flex items-center gap-1.5 px-4 pt-4 pb-2 text-left"
+              >
+                <span className="text-xs font-bold text-brand-500 uppercase tracking-widest">{"{{ }}"}</span>
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest flex-1">Variables</span>
+                <span className="text-xs text-gray-400">{varsOpen ? "▴" : "▾"}</span>
+              </button>
+              {varsOpen && (
+                <div className="px-2 pb-4 space-y-3 overflow-y-auto max-h-80">
+                  {TEMPLATE_VARS.map((group) => (
+                    <div key={group.group}>
+                      <p className="text-xs font-semibold text-gray-400 px-2 mb-1 uppercase tracking-wider">{group.group}</p>
+                      <div className="space-y-0.5">
+                        {group.vars.map((v) => {
+                          const tag = v.raw ? v.key : `{{ ${v.key} }}`;
+                          return (
+                            <button
+                              key={v.key}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                const active = document.activeElement;
+                                const isEditable =
+                                  active?.getAttribute("contenteditable") === "true" ||
+                                  active?.tagName === "TEXTAREA";
+                                if (isEditable) {
+                                  document.execCommand("insertText", false, tag);
+                                } else {
+                                  navigator.clipboard.writeText(tag).catch(() => {});
+                                }
+                              }}
+                              className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-brand-50 border border-transparent hover:border-brand-200 transition-all group"
+                              title="Clic para insertar en el editor activo"
+                            >
+                              <span className="text-xs font-mono text-brand-700 block truncate">{tag}</span>
+                              <span className="text-xs text-gray-400 group-hover:text-gray-600 leading-tight block">{v.desc}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

@@ -7,6 +7,8 @@ from app.database import get_session
 from app.core.deps import get_current_user, require_editor
 from app.models.user import User
 from app.models.template import Template, TemplateCreate, TemplateRead, TemplateUpdate
+from app.models.campaign import Campaign
+from app.models.automation import Automation
 
 router = APIRouter()
 
@@ -65,6 +67,23 @@ def delete_template(
     tpl = session.get(Template, template_id)
     if not tpl:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+
+    campaigns_using = session.exec(
+        select(Campaign).where(Campaign.template_id == template_id)
+    ).all()
+    if campaigns_using:
+        names = ", ".join(f'"{c.name}"' for c in campaigns_using[:3])
+        suffix = f" (y {len(campaigns_using) - 3} más)" if len(campaigns_using) > 3 else ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"Esta plantilla está siendo usada por {len(campaigns_using)} campaña(s): {names}{suffix}. Elimina o reasigna esas campañas primero."
+        )
+
+    # Automations reference is nullable — clear it before deleting
+    for auto in session.exec(select(Automation).where(Automation.template_id == template_id)).all():
+        auto.template_id = None
+        session.add(auto)
+
     session.delete(tpl)
     session.commit()
 
