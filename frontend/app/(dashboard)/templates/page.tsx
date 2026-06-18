@@ -44,7 +44,14 @@ function PreviewModal({ tpl, onClose }: { tpl: Template; onClose: () => void }) 
             sandbox="allow-same-origin"
             title={tpl.name}
             className="w-full rounded-lg border border-gray-100"
-            style={{ height: "900px" }}
+            style={{ minHeight: "300px", height: "900px" }}
+            onLoad={(e) => {
+              const f = e.currentTarget;
+              try {
+                const h = f.contentDocument?.documentElement?.scrollHeight;
+                if (h && h > 0) f.style.height = h + "px";
+              } catch {}
+            }}
           />
         </div>
       </div>

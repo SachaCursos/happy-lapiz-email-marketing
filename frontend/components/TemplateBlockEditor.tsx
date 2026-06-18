@@ -614,6 +614,20 @@ export function htmlToBlocks(htmlStr: string): Block[] {
       }
 
       sections.forEach(classifySection);
+
+      // Last-resort fallback: wrap the entire body content as a single text block.
+      // Covers plain-text HTML (only <p> tags, no block structure recognised above).
+      if (blocks.length === 0) {
+        const bodyContent = container.innerHTML.trim();
+        if (bodyContent) {
+          blocks.push({
+            id: uid("text"),
+            type: "text",
+            props: { ...DEFAULTS.text, content: bodyContent, bg_color: "#ffffff" },
+          });
+        }
+      }
+
       return blocks;
     }
   } catch {
@@ -1485,7 +1499,7 @@ export function TemplateBlockEditor({
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; cartFound?: boolean; checkoutUrl?: string } | null>(null);
   const [tab, setTab] = useState<"editor" | "preview" | "html" | "plain">(
-    initialMode === "plain" ? "plain" : initialHtmlOverride ? "editor" : "editor"
+    initialMode === "plain" ? "plain" : "editor"
   );
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [favorites, setFavorites] = useState<Block[]>(() => loadFavorites());
@@ -1995,7 +2009,14 @@ export function TemplateBlockEditor({
                   )}
                   <iframe srcDoc={previewHtml} className="w-full border-0 bg-white"
                     style={{ minHeight: 500, borderRadius: previewDevice === "mobile" ? "0 0 16px 16px" : 0 }}
-                    title="Preview email" />
+                    title="Preview email"
+                    onLoad={(e) => {
+                      const f = e.currentTarget;
+                      try {
+                        const h = f.contentDocument?.documentElement?.scrollHeight;
+                        if (h && h > 0) f.style.height = h + "px";
+                      } catch {}
+                    }} />
                 </div>
               </div>
             )}
