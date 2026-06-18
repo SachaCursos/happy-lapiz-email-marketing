@@ -156,6 +156,13 @@ export const adminApi = {
       "/admin/products",
       { params }
     ),
+  uploadImage: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<{ ok: boolean; url: string }>("/admin/upload-image", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
 };
 
 // Shopify

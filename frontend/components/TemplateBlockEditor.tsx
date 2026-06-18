@@ -6,7 +6,8 @@ import {
   Star, X, Monitor, Smartphone, Search, Link as LinkIcon,
   AlignLeft, AlignCenter, AlignRight, Send,
 } from "lucide-react";
-import { shopifyApi, ShopifyProduct, api } from "@/lib/api";
+import { shopifyApi, ShopifyProduct, api, adminApi } from "@/lib/api";
+import { Upload } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type BlockType = "header" | "text" | "image" | "button" | "product" | "coupon" | "divider" | "spacer";
@@ -1238,12 +1239,16 @@ function PropsPanel({
   onChange,
   onPickProduct,
   onSaveToFavorites,
+  onUploadImage,
+  imgUploading,
   isEditing = false,
 }: {
   block: Block;
   onChange: (p: Block["props"]) => void;
   onPickProduct: () => void;
   onSaveToFavorites: () => void;
+  onUploadImage: () => void;
+  imgUploading: string | null;
   isEditing?: boolean;
 }) {
   const p = block.props;
@@ -1286,7 +1291,18 @@ function PropsPanel({
       </>}
 
       {block.type === "image" && <>
-        <Field label="URL de la imagen"><TI value={p.src as string} onChange={(v) => set("src", v)} placeholder="https://cdn.shopify.com/..." /></Field>
+        <Field label="URL de la imagen">
+          <TI value={p.src as string} onChange={(v) => set("src", v)} placeholder="https://cdn.shopify.com/..." />
+          <button
+            type="button"
+            disabled={imgUploading === block.id}
+            onClick={onUploadImage}
+            className="mt-1.5 flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-800 disabled:opacity-50"
+          >
+            <Upload size={13} />
+            {imgUploading === block.id ? "Subiendo..." : "Subir imagen a Shopify"}
+          </button>
+        </Field>
         <Field label="Texto alternativo"><TI value={p.alt as string} onChange={(v) => set("alt", v)} placeholder="Descripción de la imagen" /></Field>
         <Field label="Enlace al hacer clic"><TI value={p.link as string} onChange={(v) => set("link", v)} placeholder="https://..." /></Field>
         <Field label="Ancho (px) — 0 = ancho completo">
@@ -1507,6 +1523,9 @@ export function TemplateBlockEditor({
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
   const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
   const [convertMsg, setConvertMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [imgUploading, setImgUploading] = useState<string | null>(null); // blockId being uploaded
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const imgUploadTargetRef = useRef<string | null>(null); // blockId for pending upload
 
   // When the editor tab is active and there's a pending HTML override with no blocks,
   // auto-convert so the user lands directly in the editable canvas instead of a dead screen.
@@ -1549,6 +1568,26 @@ export function TemplateBlockEditor({
     const next = [...favorites, fav];
     setFavorites(next);
     saveFavorites(next);
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const blockId = imgUploadTargetRef.current;
+    if (!file || !blockId) return;
+    e.target.value = "";
+    setImgUploading(blockId);
+    try {
+      const res = await adminApi.uploadImage(file);
+      const url = res.data.url;
+      setBlocks((prev) =>
+        prev.map((b) => b.id === blockId ? { ...b, props: { ...b.props, src: url } } : b)
+      );
+    } catch {
+      alert("No se pudo subir la imagen. Revisa la consola o intenta de nuevo.");
+    } finally {
+      setImgUploading(null);
+      imgUploadTargetRef.current = null;
+    }
   }
 
   function handleConvertToBlocks() {
@@ -1631,6 +1670,13 @@ export function TemplateBlockEditor({
 
   return (
     <>
+      <input
+        ref={imgInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageUpload}
+      />
       {productPickerBlockId && (
         <ProductPickerModal
           onSelect={handleSelectProduct}
@@ -2081,6 +2127,8 @@ export function TemplateBlockEditor({
                     onChange={(props) => update(selected.id, props)}
                     onPickProduct={() => setProductPickerBlockId(selected.id)}
                     onSaveToFavorites={saveToFavorites}
+                    onUploadImage={() => { imgUploadTargetRef.current = selected.id; imgInputRef.current?.click(); }}
+                    imgUploading={imgUploading}
                     isEditing={editingId === selected.id}
                   />
                 ) : (

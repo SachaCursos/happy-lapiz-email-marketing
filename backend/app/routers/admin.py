@@ -1,8 +1,9 @@
 import re
 import logging
 import httpx
+import mimetypes
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlmodel import Session, select, text
 from app.database import get_session, engine as db_engine
 
@@ -625,6 +626,106 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
         tag = r.json().get("script_tag", {})
         return {"ok": True, "id": tag.get("id"), "src": script_url}
     return {"ok": False, "error": r.text[:200]}
+
+
+@router.post("/upload-image")
+async def upload_image_to_shopify(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+):
+    """
+    Sube una imagen a Shopify Files y devuelve la URL cdn.shopify.com.
+    Flujo: stagedUploadsCreate → PUT al S3 presignado → fileCreate.
+    """
+    token  = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+
+    content   = await file.read()
+    mime_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    filename  = file.filename or "image.jpg"
+    file_size = len(content)
+
+    gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
+    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+
+    # 1. Request a staged upload target from Shopify
+    stage_query = """
+    mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets {
+          url
+          resourceUrl
+          parameters { name value }
+        }
+        userErrors { field message }
+      }
+    }
+    """
+    stage_vars = {"input": [{
+        "filename":   filename,
+        "mimeType":   mime_type,
+        "resource":   "FILE",
+        "fileSize":   str(file_size),
+        "httpMethod": "POST",
+    }]}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(gql_url, headers=headers, json={"query": stage_query, "variables": stage_vars})
+
+    data = r.json()
+    targets = data.get("data", {}).get("stagedUploadsCreate", {}).get("stagedTargets", [])
+    errors  = data.get("data", {}).get("stagedUploadsCreate", {}).get("userErrors", [])
+    if errors or not targets:
+        raise HTTPException(status_code=500, detail=f"Shopify staged upload error: {errors or data}")
+
+    target       = targets[0]
+    upload_url   = target["url"]
+    resource_url = target["resourceUrl"]
+    params       = {p["name"]: p["value"] for p in target["parameters"]}
+
+    # 2. POST the file to the presigned S3 URL
+    async with httpx.AsyncClient(timeout=60) as client:
+        r2 = await client.post(
+            upload_url,
+            data=params,
+            files={"file": (filename, content, mime_type)},
+        )
+    if r2.status_code not in (200, 201, 204):
+        raise HTTPException(status_code=500, detail=f"S3 upload failed: {r2.status_code} {r2.text[:200]}")
+
+    # 3. Register the file in Shopify Files
+    create_query = """
+    mutation fileCreate($files: [FileCreateInput!]!) {
+      fileCreate(files: $files) {
+        files {
+          ... on MediaImage { image { url } }
+          ... on GenericFile  { url }
+        }
+        userErrors { field message }
+      }
+    }
+    """
+    create_vars = {"files": [{"originalSource": resource_url, "contentType": "IMAGE"}]}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r3 = await client.post(gql_url, headers=headers, json={"query": create_query, "variables": create_vars})
+
+    data3  = r3.json()
+    files  = data3.get("data", {}).get("fileCreate", {}).get("files", [])
+    errors3 = data3.get("data", {}).get("fileCreate", {}).get("userErrors", [])
+
+    cdn_url = None
+    if files:
+        f = files[0]
+        cdn_url = f.get("image", {}).get("url") or f.get("url")
+
+    if not cdn_url:
+        # Shopify sometimes takes a moment to process — return the resource_url as fallback
+        cdn_url = resource_url
+
+    return {"ok": True, "url": cdn_url}
 
 
 @router.get("/brand")
