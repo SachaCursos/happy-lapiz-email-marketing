@@ -291,7 +291,7 @@ def submit_form(
                 session.commit()
 
     # Trigger form_submitted automations for this specific form
-    _trigger_form_submitted_automations(session, form_id, email, payload, coupon_code, extra_data)
+    _trigger_form_submitted_automations(session, form_id, email, payload, coupon_code, payload.extra_data or {})
 
     return {"ok": True, "coupon_code": coupon_code}
 
