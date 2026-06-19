@@ -408,7 +408,8 @@ def _build_embed_js(cfg: dict) -> str:
     (function() {{
       var C = {cfg_json};
       var STORE_KEY = 'hb_form_' + C.id;
-      if (sessionStorage.getItem(STORE_KEY)) return;
+      // localStorage persists across sessions — popup never shows again after submit or dismiss
+      if (localStorage.getItem(STORE_KEY)) return;
 
       // ── A/B variant selection ─────────────────────────────────────────────
       var _abVariant = null;
@@ -779,7 +780,7 @@ def _build_embed_js(cfg: dict) -> str:
                 if (codeEl2) codeEl2.textContent = code;
               }}
             }}
-            sessionStorage.setItem(STORE_KEY, 'submitted');
+            localStorage.setItem(STORE_KEY, 'submitted');
             setTimeout(closePopup, 10000);
           }})
           .catch(function() {{
@@ -793,20 +794,29 @@ def _build_embed_js(cfg: dict) -> str:
       function closePopup() {{
         var el = document.getElementById('hb-popup-overlay');
         if (el) el.parentNode.removeChild(el);
-        sessionStorage.setItem(STORE_KEY, '1');
+        localStorage.setItem(STORE_KEY, '1');
       }}
 
-      if (C.trigger === 'delay') {{
-        setTimeout(showPopup, C.delay_seconds * 1000);
-      }} else if (C.trigger === 'exit_intent') {{
+      // Triggers: activate delay AND/OR scroll (whichever fires first shows the popup)
+      if (C.trigger === 'exit_intent') {{
         document.addEventListener('mouseleave', function h(e) {{
           if (e.clientY <= 0) {{ showPopup(); document.removeEventListener('mouseleave', h); }}
         }});
-      }} else if (C.trigger === 'scroll') {{
-        window.addEventListener('scroll', function h() {{
-          var pct = (window.scrollY / Math.max(1, document.body.scrollHeight - window.innerHeight)) * 100;
-          if (pct >= C.scroll_pct) {{ showPopup(); window.removeEventListener('scroll', h); }}
-        }});
+      }} else {{
+        var _triggered = false;
+        function _triggerOnce() {{ if (!_triggered) {{ _triggered = true; showPopup(); }} }}
+        if (C.delay_seconds > 0) {{
+          setTimeout(_triggerOnce, C.delay_seconds * 1000);
+        }}
+        if (C.scroll_pct > 0) {{
+          window.addEventListener('scroll', function _sh() {{
+            var pct = (window.scrollY / Math.max(1, document.body.scrollHeight - window.innerHeight)) * 100;
+            if (pct >= C.scroll_pct) {{ _triggerOnce(); window.removeEventListener('scroll', _sh); }}
+          }});
+        }}
+        if (C.delay_seconds <= 0 && C.scroll_pct <= 0) {{
+          setTimeout(_triggerOnce, 5000);
+        }}
       }}
     }})();
     """).strip()
