@@ -10,7 +10,7 @@ import { shopifyApi, ShopifyProduct, api, adminApi } from "@/lib/api";
 import { Upload } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-type BlockType = "header" | "text" | "image" | "button" | "product" | "coupon" | "divider" | "spacer";
+type BlockType = "header" | "text" | "image" | "button" | "product" | "product_grid" | "coupon" | "divider" | "spacer";
 
 export interface Block {
   id: string;
@@ -164,6 +164,12 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     height: "32",
     bg_color: "#ffffff",
   },
+  product_grid: {
+    variable: "productos_recomendados_edad_html",
+    bg_color: "#ffffff",
+    padding_y: "16",
+    padding_x: "0",
+  },
 };
 
 const PALETTE: { type: BlockType; label: string; sub: string }[] = [
@@ -173,6 +179,7 @@ const PALETTE: { type: BlockType; label: string; sub: string }[] = [
   { type: "button",  label: "Botón CTA",    sub: "Llamada a acción" },
   { type: "product", label: "Producto",     sub: "Imagen + precio" },
   { type: "coupon",  label: "Cupón",        sub: "Código descuento" },
+  { type: "product_grid", label: "Grilla productos", sub: "Recomendados / historial" },
   { type: "divider", label: "Divisor",      sub: "Línea separadora" },
   { type: "spacer",  label: "Espaciado",    sub: "Espacio en blanco" },
 ];
@@ -730,6 +737,9 @@ function blockHtml(block: Block): string {
     case "spacer":
       return `<div style="height:${p.height}px;background:${p.bg_color};line-height:${p.height}px;font-size:1px;">&nbsp;</div>`;
 
+    case "product_grid":
+      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;">{{ ${p.variable} }}</div>`;
+
     default:
       return "";
   }
@@ -950,6 +960,40 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
           <span style={{ fontSize: 11, color: "#d1d5db" }}>↕ {p.height}px</span>
         </div>
       );
+
+    case "product_grid": {
+      const varLabel: Record<string, string> = {
+        "productos_recomendados_edad_html": "Recomendados por edad",
+        "recommended_products_html": "Recomendados por compra",
+        "productos_comprados_html": "Historial de compras",
+      };
+      const label = varLabel[p.variable as string] || String(p.variable);
+      const placeholders = [
+        { name: "Marcadores Happy Lápiz Set 12 colores", price: "$12.990" },
+        { name: "Kit Lettering Completo Principiantes", price: "$24.990" },
+        { name: "Cuaderno Bocetos A5", price: "$8.490" },
+        { name: "Acuarelas 24 colores Premium", price: "$18.990" },
+      ];
+      return (
+        <div style={{ background: (p.bg_color as string) || "#fff", padding: `${p.padding_y || 16}px ${p.padding_x || 0}px` }}>
+          <div style={{ fontSize: 10, color: "#9ca3af", textAlign: "center", marginBottom: 10, fontFamily: "monospace" }}>
+            {"{{ "}{p.variable as string}{" }}"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {placeholders.map((prod, i) => (
+              <div key={i} style={{ textAlign: "center", padding: 10, border: "1px dashed #e5e7eb", borderRadius: 10 }}>
+                <div style={{ width: "100%", height: 90, backgroundColor: "#f3f4f6", borderRadius: 8, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db", fontSize: 11 }}>imagen</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#111", lineHeight: 1.3, maxHeight: "3.9em", overflow: "hidden", marginBottom: 4 }}>{prod.name}</div>
+                <div style={{ fontSize: 13, color: "#e85d04", fontWeight: 700, marginBottom: 6 }}>{prod.price}</div>
+                <div style={{ display: "inline-block", background: "#f97316", color: "#fff", fontSize: 11, padding: "5px 12px", borderRadius: 12 }}>Ver producto →</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: "#c4b5fd", textAlign: "center", marginTop: 8 }}>{label} · vista previa con productos de ejemplo</div>
+        </div>
+      );
+    }
+
     default:
       return null;
   }
@@ -1240,6 +1284,7 @@ function PropsPanel({
   onPickProduct,
   onSaveToFavorites,
   onUploadImage,
+  onPickShopifyImage,
   imgUploading,
   isEditing = false,
 }: {
@@ -1248,6 +1293,7 @@ function PropsPanel({
   onPickProduct: () => void;
   onSaveToFavorites: () => void;
   onUploadImage: () => void;
+  onPickShopifyImage: () => void;
   imgUploading: string | null;
   isEditing?: boolean;
 }) {
@@ -1293,15 +1339,25 @@ function PropsPanel({
       {block.type === "image" && <>
         <Field label="URL de la imagen">
           <TI value={p.src as string} onChange={(v) => set("src", v)} placeholder="https://cdn.shopify.com/..." />
-          <button
-            type="button"
-            disabled={imgUploading === block.id}
-            onClick={onUploadImage}
-            className="mt-1.5 flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-800 disabled:opacity-50"
-          >
-            <Upload size={13} />
-            {imgUploading === block.id ? "Subiendo..." : "Subir imagen a Shopify"}
-          </button>
+          <div className="flex gap-3 mt-1.5">
+            <button
+              type="button"
+              disabled={imgUploading === block.id}
+              onClick={onUploadImage}
+              className="flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-800 disabled:opacity-50"
+            >
+              <Upload size={13} />
+              {imgUploading === block.id ? "Subiendo..." : "Subir desde PC"}
+            </button>
+            <button
+              type="button"
+              onClick={onPickShopifyImage}
+              className="flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-800"
+            >
+              <Upload size={13} className="rotate-180" />
+              Elegir de Shopify
+            </button>
+          </div>
         </Field>
         <Field label="Texto alternativo"><TI value={p.alt as string} onChange={(v) => set("alt", v)} placeholder="Descripción de la imagen" /></Field>
         <Field label="Enlace al hacer clic"><TI value={p.link as string} onChange={(v) => set("link", v)} placeholder="https://..." /></Field>
@@ -1398,12 +1454,97 @@ function PropsPanel({
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
       </>}
 
+      {block.type === "product_grid" && <>
+        <Field label="Variable a usar">
+          <select
+            value={p.variable as string}
+            onChange={(e) => set("variable", e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            <option value="productos_recomendados_edad_html">Recomendados por edad del regalón</option>
+            <option value="recommended_products_html">Recomendados por última compra</option>
+            <option value="productos_comprados_html">Historial de compras</option>
+          </select>
+        </Field>
+        <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
+        <Field label="Padding vertical (px)"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} min={0} max={80} /></Field>
+        <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3 leading-relaxed">
+          Este bloque inserta <code className="font-mono bg-gray-100 px-1 rounded">{"{{ variable }}"}</code> en el HTML. Los productos reales se inyectan automáticamente en cada automatización. La vista previa del editor usa productos de ejemplo.
+        </div>
+      </>}
+
       {/* Save to favorites */}
       <div className="pt-2 border-t border-gray-100">
         <button onClick={onSaveToFavorites}
           className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors">
           <Star size={12} /> Guardar como favorito
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Shopify Image Picker Modal ────────────────────────────────────────────────
+function ShopifyImagePickerModal({ onSelect, onClose }: { onSelect: (url: string) => void; onClose: () => void }) {
+  const [images, setImages] = React.useState<{ url: string; alt: string }[]>([]);
+  const [cursor, setCursor] = React.useState<string | undefined>(undefined);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+
+  const fetchImages = async (after?: string) => {
+    setLoading(true);
+    try {
+      const res = await adminApi.shopifyImages(after);
+      const data = res.data;
+      setImages((prev) => after ? [...prev, ...data.images] : data.images);
+      setHasMore(data.pageInfo.hasNextPage);
+      setCursor(data.pageInfo.endCursor);
+    } catch { /* noop */ }
+    finally { setLoading(false); }
+  };
+
+  React.useEffect(() => { fetchImages(); }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 flex flex-col" style={{ maxHeight: "85vh" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <h3 className="font-semibold text-gray-900">Imágenes de Shopify</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X size={20} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading && images.length === 0 ? (
+            <div className="grid grid-cols-4 gap-3">
+              {[...Array(12)].map((_, i) => <div key={i} className="aspect-square bg-gray-100 rounded-lg animate-pulse" />)}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-4 gap-3">
+                {images.map((img, i) => (
+                  <button
+                    key={i}
+                    onClick={() => onSelect(img.url)}
+                    className="aspect-square rounded-lg overflow-hidden border-2 border-transparent hover:border-brand-500 transition-colors focus:outline-none focus:border-brand-500"
+                  >
+                    <img src={img.url} alt={img.alt} className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+              {hasMore && (
+                <div className="text-center mt-4">
+                  <button
+                    onClick={() => fetchImages(cursor)}
+                    disabled={loading}
+                    className="px-4 py-2 text-sm text-brand-600 border border-brand-200 rounded-lg hover:bg-brand-50 disabled:opacity-50"
+                  >
+                    {loading ? "Cargando..." : "Cargar más"}
+                  </button>
+                </div>
+              )}
+              {images.length === 0 && <p className="text-center text-gray-400 py-12">No hay imágenes en Shopify Files.</p>}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1523,9 +1664,11 @@ export function TemplateBlockEditor({
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
   const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
   const [convertMsg, setConvertMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [imgUploading, setImgUploading] = useState<string | null>(null); // blockId being uploaded
+  const [imgUploading, setImgUploading] = useState<string | null>(null);
+  const [shopifyPickerOpen, setShopifyPickerOpen] = useState(false);
   const imgInputRef = useRef<HTMLInputElement>(null);
-  const imgUploadTargetRef = useRef<string | null>(null); // blockId for pending upload
+  const imgUploadTargetRef = useRef<string | null>(null);
+  const shopifyPickerTargetRef = useRef<string | null>(null);
 
   // When the editor tab is active and there's a pending HTML override with no blocks,
   // auto-convert so the user lands directly in the editable canvas instead of a dead screen.
@@ -1681,6 +1824,19 @@ export function TemplateBlockEditor({
         <ProductPickerModal
           onSelect={handleSelectProduct}
           onClose={() => setProductPickerBlockId(null)}
+        />
+      )}
+      {shopifyPickerOpen && (
+        <ShopifyImagePickerModal
+          onSelect={(url) => {
+            const blockId = shopifyPickerTargetRef.current;
+            if (blockId) {
+              setBlocks((prev) => prev.map((b) => b.id === blockId ? { ...b, props: { ...b.props, src: url } } : b));
+            }
+            setShopifyPickerOpen(false);
+            shopifyPickerTargetRef.current = null;
+          }}
+          onClose={() => { setShopifyPickerOpen(false); shopifyPickerTargetRef.current = null; }}
         />
       )}
 
@@ -2128,6 +2284,7 @@ export function TemplateBlockEditor({
                     onPickProduct={() => setProductPickerBlockId(selected.id)}
                     onSaveToFavorites={saveToFavorites}
                     onUploadImage={() => { imgUploadTargetRef.current = selected.id; imgInputRef.current?.click(); }}
+                    onPickShopifyImage={() => { shopifyPickerTargetRef.current = selected.id; setShopifyPickerOpen(true); }}
                     imgUploading={imgUploading}
                     isEditing={editingId === selected.id}
                   />

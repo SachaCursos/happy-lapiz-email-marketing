@@ -163,6 +163,11 @@ export const adminApi = {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
+  shopifyImages: (after?: string) =>
+    api.get<{ images: { url: string; width?: number; height?: number; alt: string }[]; pageInfo: { hasNextPage: boolean; endCursor?: string } }>(
+      "/admin/shopify-images",
+      { params: after ? { after } : {} }
+    ),
 };
 
 // Shopify

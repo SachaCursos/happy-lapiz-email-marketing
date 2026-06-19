@@ -543,6 +543,13 @@ def _fetch_age_recommended_products(
     return matched[:max_products]
 
 
+def _trunc_title(title: str, max_chars: int = 55) -> str:
+    """Truncate product title to max_chars chars at a word boundary."""
+    if len(title) <= max_chars:
+        return title
+    return title[:max_chars].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
 def _build_cross_sell_html(products: list[dict]) -> str:
     """Generate a 2-column responsive product grid for cross-sell emails."""
     if not products:
@@ -552,7 +559,8 @@ def _build_cross_sell_html(products: list[dict]) -> str:
         pair = products[i:i+2]
         cells = ""
         for p in pair:
-            safe_title = p["title"].replace("'", "&#39;").replace('"', '&quot;')
+            title = _trunc_title(p["title"])
+            safe_title = title.replace("'", "&#39;").replace('"', '&quot;')
             img = (
                 f'<img src="{p["image_url"]}" alt="{safe_title}" width="200" '
                 f'style="width:100%;max-width:200px;height:auto;border-radius:10px;'
@@ -562,7 +570,8 @@ def _build_cross_sell_html(products: list[dict]) -> str:
                 f'<td width="50%" style="width:50%;padding:12px 8px;vertical-align:top;text-align:center;">'
                 f'<a href="{p["url"]}" style="text-decoration:none;color:#1a1a1a;display:block;">'
                 f'{img}'
-                f'<p style="font-size:14px;font-weight:600;margin:0 0 5px;line-height:1.3;">{p["title"]}</p>'
+                f'<p style="font-size:14px;font-weight:600;margin:0 0 5px;line-height:1.3;'
+                f'max-height:3.9em;overflow:hidden;">{title}</p>'
                 f'<p style="font-size:15px;color:#e85d04;font-weight:700;margin:0 0 12px;">{p["price"]}</p>'
                 f'<span style="display:inline-block;background:#f97316;color:#fff;font-size:12px;'
                 f'font-weight:600;padding:7px 18px;border-radius:20px;text-decoration:none;">Ver producto &rarr;</span>'

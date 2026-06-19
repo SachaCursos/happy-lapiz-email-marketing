@@ -728,6 +728,46 @@ async def upload_image_to_shopify(
     return {"ok": True, "url": cdn_url}
 
 
+@router.get("/shopify-images")
+def list_shopify_images(
+    after: str = None,
+    _: User = Depends(get_current_user),
+):
+    """List images from Shopify Files for the in-editor image picker."""
+    token  = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+
+    gql = """
+    query getImages($after: String) {
+      files(first: 30, after: $after, sortKey: CREATED_AT, reverse: true, query: "media_type:IMAGE") {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          ... on MediaImage {
+            image { url width height altText }
+          }
+        }
+      }
+    }"""
+    variables = {"after": after} if after else {}
+    resp = httpx.post(
+        f"https://{domain}/admin/api/2024-01/graphql.json",
+        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+        json={"query": gql, "variables": variables},
+        timeout=20,
+    )
+    data   = resp.json().get("data", {}).get("files", {})
+    nodes  = [n for n in data.get("nodes", []) if n]
+    images = []
+    for n in nodes:
+        img = n.get("image") or {}
+        url = img.get("url", "")
+        if url:
+            images.append({"url": url, "width": img.get("width"), "height": img.get("height"), "alt": img.get("altText") or ""})
+    return {"images": images, "pageInfo": data.get("pageInfo", {})}
+
+
 @router.get("/brand")
 def get_brand_assets(
     session: Session = Depends(get_session),
