@@ -290,7 +290,68 @@ def submit_form(
                 session.add(enrollment)
                 session.commit()
 
+    # Trigger form_submitted automations for this specific form
+    _trigger_form_submitted_automations(session, form_id, email, payload, coupon_code, extra_data)
+
     return {"ok": True, "coupon_code": coupon_code}
+
+
+def _trigger_form_submitted_automations(
+    session: Session,
+    form_id: int,
+    email: str,
+    payload,
+    coupon_code: str | None,
+    extra_data: dict,
+) -> None:
+    """Enroll contact in any active automations with trigger_type=form_submitted for this form."""
+    from app.models.automation import Automation
+    from app.services.automation_engine import _get_steps
+    from datetime import timedelta
+
+    automations = session.exec(
+        select(Automation).where(
+            Automation.trigger_type == "form_submitted",
+            Automation.status == "active",
+        )
+    ).all()
+
+    for auto in automations:
+        cfg = auto.trigger_config or {}
+        if str(cfg.get("form_id", "")) != str(form_id):
+            continue
+        trigger_key = f"form_submitted:{form_id}:{email}"
+        existing = session.exec(
+            select(AutomationEnrollment).where(
+                AutomationEnrollment.automation_id == auto.id,
+                AutomationEnrollment.trigger_key == trigger_key,
+            )
+        ).first()
+        if existing:
+            continue
+        steps = _get_steps(auto)
+        first_delay = float(steps[0].get("delay_hours", 0)) if steps else 0
+        extra = {
+            "nombre": (payload.name or "").strip() or email,
+            "first_name": ((payload.name or "").strip() or email).split()[0],
+            "email": email,
+            "coupon_code": coupon_code or "",
+            "nombre_regalado": extra_data.get("destinatario_nombre", ""),
+            "cual_es_su_fecha_de_nacimiento": extra_data.get("cual_es_su_fecha_de_nacimiento", ""),
+            **{k: v for k, v in extra_data.items()},
+        }
+        enrollment = AutomationEnrollment(
+            automation_id=auto.id,
+            contact_email=email,
+            trigger_key=trigger_key,
+            enrolled_at=datetime.utcnow(),
+            next_send_at=datetime.utcnow() + timedelta(hours=first_delay),
+            next_step=1,
+            status="active",
+            extra_vars_json=json.dumps(extra),
+        )
+        session.add(enrollment)
+    session.commit()
 
 
 @router.get("/{form_id}/embed.js", response_class=PlainTextResponse)

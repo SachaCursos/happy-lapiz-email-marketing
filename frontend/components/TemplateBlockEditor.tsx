@@ -167,6 +167,7 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
   product_grid: {
     variable: "productos_recomendados_edad_html",
     bg_color: "#ffffff",
+    btn_color: "#f97316",
     padding_y: "16",
     padding_x: "0",
   },
@@ -1466,6 +1467,7 @@ function PropsPanel({
             <option value="productos_comprados_html">Historial de compras</option>
           </select>
         </Field>
+        <Field label="Color botones"><CI value={p.btn_color as string ?? "#f97316"} onChange={(v) => set("btn_color", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
         <Field label="Padding vertical (px)"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} min={0} max={80} /></Field>
         <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3 leading-relaxed">

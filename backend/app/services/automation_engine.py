@@ -550,7 +550,7 @@ def _trunc_title(title: str, max_chars: int = 55) -> str:
     return title[:max_chars].rsplit(" ", 1)[0].rstrip(",;:") + "…"
 
 
-def _build_cross_sell_html(products: list[dict]) -> str:
+def _build_cross_sell_html(products: list[dict], btn_color: str = "#f97316") -> str:
     """Generate a 2-column responsive product grid for cross-sell emails."""
     if not products:
         return ""
@@ -573,7 +573,7 @@ def _build_cross_sell_html(products: list[dict]) -> str:
                 f'<p style="font-size:14px;font-weight:600;margin:0 0 5px;line-height:1.3;'
                 f'max-height:3.9em;overflow:hidden;">{title}</p>'
                 f'<p style="font-size:15px;color:#e85d04;font-weight:700;margin:0 0 12px;">{p["price"]}</p>'
-                f'<span style="display:inline-block;background:#f97316;color:#fff;font-size:12px;'
+                f'<span style="display:inline-block;background:{btn_color};color:#fff;font-size:12px;'
                 f'font-weight:600;padding:7px 18px;border-radius:20px;text-decoration:none;">Ver producto &rarr;</span>'
                 f'</a></td>'
             )
@@ -679,7 +679,16 @@ def _send_email_step(
                     max_products=max_p,
                 )
             vars_["recommended_products"] = rec
-            vars_["recommended_products_html"] = _build_cross_sell_html(rec)
+            # Get btn_color from template json_blocks if available
+            _cs_btn = "#f97316"
+            try:
+                _blks = json.loads(tpl.json_blocks) if isinstance(tpl.json_blocks, str) else (tpl.json_blocks or [])
+                for _b in (_blks if isinstance(_blks, list) else []):
+                    if _b.get("type") == "product_grid" and _b.get("props", {}).get("btn_color"):
+                        _cs_btn = _b["props"]["btn_color"]; break
+            except Exception:
+                pass
+            vars_["recommended_products_html"] = _build_cross_sell_html(rec, _cs_btn)
 
         # Purchase history variables (always available, derived from shopify_events)
         orders_count_val = contact.orders_count or 0
@@ -691,14 +700,36 @@ def _send_email_step(
             vars_["productos_comprados_html"] = _build_products_list_html(history_items)
             vars_["primer_producto_comprado"] = history_items[0].get("title", "")
 
-        # Age-based product recommendations (uses custom_fields.edad_regalon)
-        edad_regalon_raw = cf.get("edad_regalon")
+        # Age-based product recommendations (uses custom_fields.edad_regalon OR fecha_nacimiento from form)
+        edad_regalon_raw = cf.get("edad_regalon") or (extra_vars or {}).get("edad_regalon")
+        if edad_regalon_raw is None:
+            # Calculate age from date of birth if provided (form_submitted trigger)
+            dob_str = (extra_vars or {}).get("cual_es_su_fecha_de_nacimiento") or cf.get("cual_es_su_fecha_de_nacimiento")
+            if dob_str:
+                try:
+                    from datetime import date as _date
+                    dob = _date.fromisoformat(str(dob_str))
+                    today = _date.today()
+                    edad_regalon_raw = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                except Exception:
+                    pass
         if edad_regalon_raw is not None:
             try:
                 edad_int = int(edad_regalon_raw)
+                # Get btn_color from template json_blocks if available
+                btn_color = "#f97316"
+                try:
+                    blocks = json.loads(tpl.json_blocks) if isinstance(tpl.json_blocks, str) else (tpl.json_blocks or [])
+                    for blk in (blocks if isinstance(blocks, list) else []):
+                        props = blk.get("props", {})
+                        if blk.get("type") == "product_grid" and props.get("btn_color"):
+                            btn_color = props["btn_color"]
+                            break
+                except Exception:
+                    pass
                 age_rec = _fetch_age_recommended_products(session, contact.email, edad_int)
                 vars_["productos_recomendados_edad"] = age_rec
-                vars_["productos_recomendados_edad_html"] = _build_cross_sell_html(age_rec)
+                vars_["productos_recomendados_edad_html"] = _build_cross_sell_html(age_rec, btn_color)
             except (ValueError, TypeError):
                 pass
 

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { automationsApi, templatesApi, api, shopifyApi, ShopifyProduct, ShopifyCollection } from "@/lib/api";
+import { automationsApi, templatesApi, api, shopifyApi, formsApi, ShopifyProduct, ShopifyCollection } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
 import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart, MapPin } from "lucide-react";
 
@@ -39,6 +39,7 @@ const TRIGGERS: {
   { value: "reactivation",             badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Reactivación (cliente inactivo)",  description: "Sin compra en N días." },
   { value: "post_visit",               badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Seguimiento post-compra",          description: "N días después de la última compra." },
   { value: "birthday_reminder",        badge: "Interno",  badgeColor: "bg-pink-100 text-pink-700",     label: "Recordatorio de cumpleaños",       description: "N días antes del cumpleaños guardado en custom_fields." },
+  { value: "form_submitted",           badge: "Formulario", badgeColor: "bg-indigo-100 text-indigo-700", label: "Formulario completado",            description: "El contacto completó un formulario de suscripción." },
 ];
 
 const EVENT_TRIGGERS = new Set<AutomationTrigger>([
@@ -662,6 +663,7 @@ export default function NewAutomationPage() {
   const [birthdayDaysBefore, setBirthdayDaysBefore] = useState(30);
   const [birthdayField, setBirthdayField] = useState("fecha_nacimiento");
   const [birthdayNameField, setBirthdayNameField] = useState("nombre_regalado");
+  const [formSubmittedFormId, setFormSubmittedFormId] = useState<string>("");
 
   // Order count filter
   const [orderCountPreset, setOrderCountPreset] = useState("none");
@@ -719,6 +721,12 @@ export default function NewAutomationPage() {
     staleTime: 5 * 60_000,
   });
 
+  const { data: signupForms = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["forms"],
+    queryFn: () => formsApi.list().then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+
   const { data: couponCampaigns = [] } = useQuery<CouponCampaign[]>({
     queryKey: ["coupon-campaigns"],
     queryFn: () => api.get("/coupons/campaigns").then((r) => r.data),
@@ -769,6 +777,8 @@ export default function NewAutomationPage() {
         triggerConfig = { delay_days: postVisitDays };
       } else if (triggerType === "birthday_reminder") {
         triggerConfig = { days_before: birthdayDaysBefore, birthday_field: birthdayField, name_field: birthdayNameField };
+      } else if (triggerType === "form_submitted") {
+        triggerConfig = { form_id: formSubmittedFormId };
       } else if (EVENT_TRIGGERS.has(triggerType)) {
         triggerConfig = {
           lookback_hours: toHours(lookbackValue, lookbackUnit as TimeUnit),
@@ -1004,6 +1014,32 @@ export default function NewAutomationPage() {
                 <code>{"{{ relacion }}"}</code>,{" "}
                 <code>{"{{ dias_para_cumpleanos }}"}</code>,{" "}
                 <code>{"{{ fecha_cumpleanos }}"}</code>
+              </div>
+            </div>
+          )}
+          {triggerType === "form_submitted" && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Formulario que dispara la automatización
+                </label>
+                <select
+                  value={formSubmittedFormId}
+                  onChange={(e) => setFormSubmittedFormId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="">Seleccionar formulario…</option>
+                  {signupForms.map((f) => (
+                    <option key={f.id} value={String(f.id)}>{f.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 text-xs text-indigo-700 space-y-1">
+                <p className="font-semibold mb-1">Variables disponibles en el email:</p>
+                <p><code>{"{{ nombre }}"}</code> — nombre del suscriptor</p>
+                <p><code>{"{{ nombre_regalado }}"}</code> — nombre del destinatario del regalo</p>
+                <p><code>{"{{ coupon_code }}"}</code> — cupón generado (si aplica)</p>
+                <p><code>{"{{ products_recomendados_edad_html }}"}</code> — grilla de productos recomendados por edad</p>
               </div>
             </div>
           )}
