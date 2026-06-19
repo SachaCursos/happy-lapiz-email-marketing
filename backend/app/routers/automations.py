@@ -10,6 +10,7 @@ from app.models.automation import (
     Automation, AutomationCreate, AutomationRead, AutomationUpdate,
     AutomationEnrollment, AutomationRun, AutomationRunRead,
 )
+from app.services import automation_engine
 
 router = APIRouter()
 
@@ -286,3 +287,10 @@ def automation_pending(
         })
 
     return {"count": len(contacts), "contacts": contacts}
+
+
+@router.post("/run-now")
+def run_automations_now(_: User = Depends(get_current_user)):
+    """Manually trigger one cycle of the automation engine (admin use)."""
+    automation_engine.run_automations()
+    return {"ok": True}
