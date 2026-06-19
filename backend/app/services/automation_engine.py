@@ -1288,23 +1288,31 @@ def run_scheduled_campaigns() -> None:
 
 
 def run_automations() -> None:
+    # Phase 1: detect triggers → enroll (each handler in its own session)
     with Session(db_engine) as session:
         automations = session.exec(
             select(Automation).where(Automation.status == "active")
         ).all()
-        # Phase 1: detect triggers → enroll
-        for auto in automations:
-            handler = HANDLERS.get(auto.trigger_type)
-            if handler:
-                try:
-                    handler(auto, session)
-                except Exception as exc:
-                    logger.exception("Automation %d (%s) trigger error: %s", auto.id, auto.trigger_type, exc)
-        # Phase 2: process ready enrollments → send emails
+        auto_ids = [(a.id, a.trigger_type) for a in automations]
+
+    for auto_id, trigger_type in auto_ids:
+        handler = HANDLERS.get(trigger_type)
+        if not handler:
+            continue
         try:
-            _process_enrollments(session)
+            with Session(db_engine) as session:
+                auto = session.get(Automation, auto_id)
+                if auto:
+                    handler(auto, session)
         except Exception as exc:
-            logger.exception("Enrollment processing error: %s", exc)
+            logger.exception("Automation %d (%s) trigger error: %s", auto_id, trigger_type, exc)
+
+    # Phase 2: process ready enrollments → send emails (own session, isolated)
+    try:
+        with Session(db_engine) as session:
+            _process_enrollments(session)
+    except Exception as exc:
+        logger.exception("Enrollment processing error: %s", exc)
 
 
 def _run_with_timeout(fn, timeout_sec: int, label: str) -> None:
