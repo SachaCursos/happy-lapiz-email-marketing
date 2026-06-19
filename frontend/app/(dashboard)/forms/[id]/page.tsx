@@ -166,8 +166,23 @@ function PopupPreview({
               ))}
             </div>
           )}
-          {stepFields.map((k) => renderFieldPreview(k))}
-          <div style={btnStyle}>{btnText}</div>
+          {activeStep?.coupon_step ? (
+            /* Coupon step preview */
+            <div style={{ textAlign: "center", paddingTop: 4 }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🎉</div>
+              <div style={{ margin: "4px 0 16px", padding: "14px 20px", background: "#f0f9ff", border: `2px dashed ${design.btn_bg}`, borderRadius: 12, textAlign: "center" }}>
+                <p style={{ margin: "0 0 6px", fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "1.5px", fontWeight: 700 }}>Tu cupón</p>
+                <p style={{ margin: 0, fontSize: 26, fontWeight: 900, color: design.btn_bg, letterSpacing: 4 }}>{couponCode || "HAPPY15"}</p>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b" }}>{activeStep.description || "Úsalo en tu próxima compra"}</p>
+              </div>
+              <div style={btnStyle}>{activeStep.button_text || "Ir a la tienda →"}</div>
+            </div>
+          ) : (
+            <>
+              {stepFields.map((k) => renderFieldPreview(k))}
+              <div style={btnStyle}>{btnText}</div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -391,6 +406,20 @@ function StepsEditor({
     onChange([...(steps || []), newStep]);
   }
 
+  function addCouponStep() {
+    // Only one coupon step allowed; insert at the end
+    if (steps?.some((s) => s.coupon_step)) return;
+    const newStep: FormStep = {
+      step: (steps?.length || 0) + 1,
+      title: "¡Felicitaciones! 🎉",
+      description: "Úsalo en tu próxima compra",
+      fields: [],
+      button_text: "Ir a la tienda →",
+      coupon_step: true,
+    };
+    onChange([...(steps || []), newStep]);
+  }
+
   function updateStep(idx: number, patch: Partial<FormStep>) {
     if (!steps) return;
     onChange(steps.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
@@ -456,7 +485,10 @@ function StepsEditor({
               <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b border-gray-100">
                 <GripVertical size={14} className="text-gray-300" />
                 <span className="text-sm font-semibold text-gray-700">Paso {idx + 1}</span>
-                <span className="ml-auto text-xs text-gray-400">{step.fields.length} campos</span>
+                {step.coupon_step && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">🎁 Cupón</span>
+                )}
+                <span className="ml-auto text-xs text-gray-400">{step.coupon_step ? "pantalla de cupón" : `${step.fields.length} campos`}</span>
                 {steps.length > 1 && (
                   <button onClick={() => removeStep(idx)} className="text-red-400 hover:text-red-600">
                     <Trash2 size={13} />
@@ -469,7 +501,7 @@ function StepsEditor({
                   <input
                     value={step.title}
                     onChange={(e) => updateStep(idx, { title: e.target.value })}
-                    placeholder={form.title}
+                    placeholder={step.coupon_step ? "¡Felicitaciones! 🎉" : form.title}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
@@ -478,19 +510,20 @@ function StepsEditor({
                   <input
                     value={step.button_text}
                     onChange={(e) => updateStep(idx, { button_text: e.target.value })}
-                    placeholder={idx < steps.length - 1 ? "Continuar →" : form.button_text}
+                    placeholder={step.coupon_step ? "Ir a la tienda →" : idx < steps.length - 1 ? "Continuar →" : form.button_text}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs text-gray-500 mb-1">Descripción (opcional)</label>
+                  <label className="block text-xs text-gray-500 mb-1">{step.coupon_step ? "Texto debajo del código (ej: invitación a usar el cupón)" : "Descripción (opcional)"}</label>
                   <input
                     value={step.description}
                     onChange={(e) => updateStep(idx, { description: e.target.value })}
-                    placeholder="Descripción corta del paso"
+                    placeholder={step.coupon_step ? "¡Úsalo en tu próxima compra y ahorra!" : "Descripción corta del paso"}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
+                {!step.coupon_step && (
                 <div className="col-span-2">
                   <label className="block text-xs text-gray-500 mb-2">Campos en este paso</label>
                   <div className="flex flex-wrap gap-2">
@@ -515,16 +548,32 @@ function StepsEditor({
                     <p className="text-xs text-red-500 mt-1">Selecciona al menos un campo</p>
                   )}
                 </div>
+                )}
+                {step.coupon_step && (
+                  <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                    El código de cupón se muestra automáticamente tras el envío del formulario. Asegúrate de tener un cupón configurado en la pestaña Cupón.
+                  </div>
+                )}
               </div>
             </div>
           ))}
 
-          <button
-            onClick={addStep}
-            className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-400 hover:text-brand-600 hover:border-brand-300 transition-colors"
-          >
-            <Plus size={15} /> Añadir paso
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={addStep}
+              className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-400 hover:text-brand-600 hover:border-brand-300 transition-colors"
+            >
+              <Plus size={15} /> Añadir paso
+            </button>
+            {!steps.some((s) => s.coupon_step) && (
+              <button
+                onClick={addCouponStep}
+                className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-dashed border-amber-200 rounded-xl text-sm text-amber-500 hover:text-amber-700 hover:border-amber-400 transition-colors"
+              >
+                <Plus size={15} /> 🎁 Paso de cupón
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

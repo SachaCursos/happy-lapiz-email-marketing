@@ -169,6 +169,7 @@ export interface FormStep {
   description: string;
   fields: string[];
   button_text: string;
+  coupon_step?: boolean;   // last step shown after submit, displays the generated coupon
 }
 
 export interface AbFormVariant {

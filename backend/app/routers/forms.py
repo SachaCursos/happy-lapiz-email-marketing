@@ -550,15 +550,39 @@ def _build_embed_js(cfg: dict) -> str:
           progressHtml += '</div>';
         }}
 
+        // Determine which is the last submit step (coupon step is shown after submit, not submitted)
+        var lastSubmitIdx = steps.length - 1;
+        for (var _si = steps.length - 1; _si >= 0; _si--) {{
+          if (!steps[_si].coupon_step) {{ lastSubmitIdx = _si; break; }}
+        }}
+
         var stepsHtml = '';
         steps.forEach(function(s,idx){{
+          var isCouponStep = !!s.coupon_step;
           var fieldsHtml = '';
-          (s.fields||[]).forEach(function(k){{ fieldsHtml += renderField(k); }});
-          var btnText = s.button_text || (idx === steps.length-1 ? C.button_text : 'Continuar →');
-          stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
-            fieldsHtml +
-            '<button id="hb-popup-btn" type="button" data-step="'+idx+'" data-final="'+(idx===steps.length-1?'1':'0')+'">' + btnText + '</button>' +
-            '</div>';
+          if (!isCouponStep) {{
+            (s.fields||[]).forEach(function(k){{ fieldsHtml += renderField(k); }});
+          }}
+          var isFinal = (idx === lastSubmitIdx);
+          var btnText = s.button_text || (isFinal && !isCouponStep ? C.button_text : isCouponStep ? 'Ir a la tienda →' : 'Continuar →');
+
+          if (isCouponStep) {{
+            // Coupon step: shown after submit, not a real form step
+            stepsHtml += '<div class="hb-step" id="hb-step-'+idx+'" style="text-align:center;padding-top:4px">' +
+              '<div style="font-size:36px;margin-bottom:8px">🎉</div>' +
+              '<div class="hb-coupon-box" id="hb-coupon-box">' +
+              '<p style="margin:0 0 6px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+              '<p style="margin:0;font-size:26px;font-weight:900;color:'+btnBg+';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
+              (s.description ? '<p style="margin:8px 0 0;font-size:13px;color:#475569">'+s.description+'</p>' : '') +
+              '</div>' +
+              '<button type="button" onclick="window.open(\'https://happylapiz.cl\',\'_blank\')" style="width:100%;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit">' + btnText + '</button>' +
+              '</div>';
+          }} else {{
+            stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
+              fieldsHtml +
+              '<button id="hb-popup-btn" type="button" data-step="'+idx+'" data-final="'+(isFinal?'1':'0')+'">' + btnText + '</button>' +
+              '</div>';
+          }}
         }});
 
         var couponPlaceholder = (C.coupon_code || C.has_dynamic_coupon)
@@ -685,20 +709,48 @@ def _build_embed_js(cfg: dict) -> str:
           }})
           .then(function(r) {{ return r.json(); }})
           .then(function(res) {{
-            document.getElementById('hb-popup-form').style.display = 'none';
-            if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
-            var suc = document.getElementById('hb-popup-success');
-            if (suc) suc.style.display = 'block';
-            // Show coupon if returned
             var code = res.coupon_code || C.coupon_code || '';
-            if (code) {{
-              var box2 = document.getElementById('hb-coupon-box');
-              var codeEl = document.getElementById('hb-coupon-code');
-              if (box2) box2.style.display = 'block';
-              if (codeEl) codeEl.textContent = code;
+            // Check if there's a coupon step to advance to
+            var couponStepIdx = -1;
+            if (C.steps && C.steps.length > 0) {{
+              for (var _ci = 0; _ci < C.steps.length; _ci++) {{
+                if (C.steps[_ci].coupon_step) {{ couponStepIdx = _ci; break; }}
+              }}
+            }}
+            if (couponStepIdx >= 0) {{
+              // Advance to coupon step
+              advanceStep(couponStepIdx);
+              document.getElementById('hb-popup-form').style.display = 'none';
+              if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
+              var couponStepEl = document.getElementById('hb-step-' + couponStepIdx);
+              if (couponStepEl) couponStepEl.style.display = 'block';
+              if (code) {{
+                var codeEl = document.getElementById('hb-coupon-code');
+                if (codeEl) codeEl.textContent = code;
+              }}
+              // Update header for coupon step
+              var cs = C.steps[couponStepIdx];
+              if (cs) {{
+                var t = document.getElementById('hb-popup-title');
+                var s2 = document.getElementById('hb-popup-subtitle');
+                if (t && cs.title) t.textContent = cs.title;
+                if (s2) s2.textContent = cs.description || '';
+              }}
+            }} else {{
+              // No coupon step: show regular success screen
+              document.getElementById('hb-popup-form').style.display = 'none';
+              if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
+              var suc = document.getElementById('hb-popup-success');
+              if (suc) suc.style.display = 'block';
+              if (code) {{
+                var box2 = document.getElementById('hb-coupon-box');
+                var codeEl2 = document.getElementById('hb-coupon-code');
+                if (box2) box2.style.display = 'block';
+                if (codeEl2) codeEl2.textContent = code;
+              }}
             }}
             sessionStorage.setItem(STORE_KEY, 'submitted');
-            setTimeout(closePopup, 8000);
+            setTimeout(closePopup, 10000);
           }})
           .catch(function() {{
             btn.disabled = false;
