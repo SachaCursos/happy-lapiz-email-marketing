@@ -522,12 +522,9 @@ def _build_embed_js(cfg: dict) -> str:
               if (o.toLowerCase() === 'otro' || o.toLowerCase() === 'otra') hasOtro = true;
             }});
             var otroInput = hasOtro
-              ? '<input class="hb-input" type="text" name="' + key + '_otro" placeholder="¿Cuál?" style="display:none;margin-top:-4px" />'
+              ? '<input class="hb-input hb-otro-inp" type="text" name="' + key + '_otro" placeholder="¿Cuál?" style="display:none;margin-top:-4px" />'
               : '';
-            var onchange = hasOtro
-              ? ' onchange="(function(s){{var n=s.parentNode.querySelector(\'input[name=\\''+key+'_otro\\']\');if(n){{n.style.display=(s.value.toLowerCase()==\'otro\'||s.value.toLowerCase()==\'otra\')?\'block\':\'none\';n.required=(s.value.toLowerCase()==\'otro\'||s.value.toLowerCase()==\'otra\');}}}}})(this)"'
-              : '';
-            inp = '<select class="hb-input" name="' + key + '"' + (cf.required?' required':'') + onchange + '>' + opts + '</select>' + otroInput;
+            inp = '<select class="hb-input' + (hasOtro?' hb-otro-sel':'') + '" name="' + key + '"' + (cf.required?' required':'') + '>' + opts + '</select>' + otroInput;
           }} else if (cf.type === 'textarea') {{
             inp = '<textarea class="hb-input" name="' + key + '" placeholder="' + (cf.placeholder||'') + '" rows="2"' + (cf.required?' required':'') + ' style="resize:none"></textarea>';
           }} else {{
@@ -641,6 +638,18 @@ def _build_embed_js(cfg: dict) -> str:
 
         overlay.appendChild(box);
         document.body.appendChild(overlay);
+
+        // Wire "Otro/Otra" select fields: show text input when selected
+        box.querySelectorAll('select.hb-otro-sel').forEach(function(sel) {{
+          var inp = sel.parentNode ? sel.parentNode.querySelector('.hb-otro-inp') : null;
+          if (!inp) return;
+          function _chk() {{
+            var isOtro = sel.value.toLowerCase() === 'otro' || sel.value.toLowerCase() === 'otra';
+            inp.style.display = isOtro ? 'block' : 'none';
+            inp.required = isOtro;
+          }}
+          sel.addEventListener('change', _chk);
+        }});
 
         var closeBtn = document.getElementById('hb-popup-close');
         if (closeBtn) closeBtn.addEventListener('click', closePopup);
