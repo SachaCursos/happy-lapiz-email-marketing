@@ -502,14 +502,14 @@ def _build_embed_js(cfg: dict) -> str:
         (document.head || document.documentElement).appendChild(style);
       }} catch(e) {{}}
 
-      // ── Debug indicator (shows embed.js loaded) ─────────────────────────────
+      // ── Debug banner (shows embed.js loaded) — REMOVE AFTER TESTING ──────────
       try {{
         var _dbg = document.createElement('div');
         _dbg.id = 'hb-debug-ok';
-        _dbg.style.cssText = 'position:fixed;bottom:4px;right:4px;background:#16a34a;color:#fff;padding:4px 8px;font-size:11px;border-radius:4px;z-index:2147483647;font-family:sans-serif';
-        _dbg.textContent = 'Popup OK';
-        (document.body || document.documentElement).appendChild(_dbg);
-        setTimeout(function(){{ if (_dbg.parentNode) _dbg.parentNode.removeChild(_dbg); }}, 5000);
+        _dbg.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#16a34a;color:#fff;padding:12px;font-size:18px;font-weight:bold;text-align:center;z-index:2147483647;font-family:sans-serif';
+        _dbg.textContent = '✅ EMBED.JS CARGADO — el popup aparecerá en 1 segundo';
+        document.documentElement.appendChild(_dbg);
+        setTimeout(function(){{ if (_dbg.parentNode) _dbg.parentNode.removeChild(_dbg); }}, 8000);
       }} catch(e) {{}}
 
       // ── Field renderer ──────────────────────────────────────────────────────
@@ -823,7 +823,7 @@ def _build_embed_js(cfg: dict) -> str:
         var _triggered = false;
         function _triggerOnce() {{ if (!_triggered) {{ _triggered = true; showPopup(); }} }}
         if (C.delay_seconds > 0) {{
-          setTimeout(_triggerOnce, C.delay_seconds * 1000);
+          setTimeout(_triggerOnce, 1000); // TEST: forced 1s, restore to C.delay_seconds * 1000
         }}
         if (C.scroll_pct > 0) {{
           window.addEventListener('scroll', function _sh() {{
