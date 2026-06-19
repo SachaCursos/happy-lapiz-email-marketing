@@ -438,6 +438,15 @@ function StepsEditor({
     updateStep(stepIdx, { fields: next });
   }
 
+  function moveField(stepIdx: number, fieldIdx: number, dir: -1 | 1) {
+    if (!steps) return;
+    const fields = [...steps[stepIdx].fields];
+    const target = fieldIdx + dir;
+    if (target < 0 || target >= fields.length) return;
+    [fields[fieldIdx], fields[target]] = [fields[target], fields[fieldIdx]];
+    updateStep(stepIdx, { fields });
+  }
+
   return (
     <div className="space-y-5">
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-700">
@@ -524,29 +533,55 @@ function StepsEditor({
                   />
                 </div>
                 {!step.coupon_step && (
-                <div className="col-span-2">
-                  <label className="block text-xs text-gray-500 mb-2">Campos en este paso</label>
-                  <div className="flex flex-wrap gap-2">
-                    {ALL_FIELDS.map((f) => {
-                      const checked = step.fields.includes(f.key);
-                      return (
-                        <button
-                          key={f.key}
-                          onClick={() => toggleField(idx, f.key)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                            checked
-                              ? "bg-brand-100 border-brand-400 text-brand-700"
-                              : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100"
-                          }`}
-                        >
-                          {f.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div className="col-span-2 space-y-2">
+                  <label className="block text-xs text-gray-500">Campos activos (arrastra con ↑↓ para ordenar)</label>
                   {step.fields.length === 0 && (
-                    <p className="text-xs text-red-500 mt-1">Selecciona al menos un campo</p>
+                    <p className="text-xs text-red-500">Selecciona al menos un campo</p>
                   )}
+                  {step.fields.length > 0 && (
+                    <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden">
+                      {step.fields.map((fKey, fIdx) => {
+                        const fieldDef = ALL_FIELDS.find((f) => f.key === fKey);
+                        return (
+                          <div key={fKey} className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-gray-50">
+                            <span className="flex-1 text-xs font-medium text-gray-700">{fieldDef?.label ?? fKey}</span>
+                            <button
+                              type="button"
+                              onClick={() => moveField(idx, fIdx, -1)}
+                              disabled={fIdx === 0}
+                              className="text-gray-400 hover:text-gray-700 disabled:opacity-25 leading-none"
+                              title="Subir"
+                            >▲</button>
+                            <button
+                              type="button"
+                              onClick={() => moveField(idx, fIdx, 1)}
+                              disabled={fIdx === step.fields.length - 1}
+                              className="text-gray-400 hover:text-gray-700 disabled:opacity-25 leading-none"
+                              title="Bajar"
+                            >▼</button>
+                            <button
+                              type="button"
+                              onClick={() => toggleField(idx, fKey)}
+                              className="text-red-400 hover:text-red-600 text-xs leading-none ml-1"
+                              title="Quitar"
+                            >✕</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {ALL_FIELDS.filter((f) => !step.fields.includes(f.key)).map((f) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => toggleField(idx, f.key)}
+                        className="px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                      >
+                        + {f.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 )}
                 {step.coupon_step && (
