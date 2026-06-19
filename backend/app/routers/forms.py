@@ -502,16 +502,6 @@ def _build_embed_js(cfg: dict) -> str:
         (document.head || document.documentElement).appendChild(style);
       }} catch(e) {{}}
 
-      // ── Debug banner (shows embed.js loaded) — REMOVE AFTER TESTING ──────────
-      try {{
-        var _dbg = document.createElement('div');
-        _dbg.id = 'hb-debug-ok';
-        _dbg.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#16a34a;color:#fff;padding:12px;font-size:18px;font-weight:bold;text-align:center;z-index:2147483647;font-family:sans-serif';
-        _dbg.textContent = '✅ EMBED.JS CARGADO — el popup aparecerá en 1 segundo';
-        document.documentElement.appendChild(_dbg);
-        setTimeout(function(){{ if (_dbg.parentNode) _dbg.parentNode.removeChild(_dbg); }}, 8000);
-      }} catch(e) {{}}
-
       // ── Field renderer ──────────────────────────────────────────────────────
       var CF_MAP = {{}};
       (C.custom_fields||[]).forEach(function(f){{ CF_MAP[f.key] = f; }});
@@ -600,7 +590,7 @@ def _build_embed_js(cfg: dict) -> str:
               '<p style="margin:0;font-size:26px;font-weight:900;color:'+btnBg+';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
               (s.description ? '<p style="margin:8px 0 0;font-size:13px;color:#475569">'+s.description+'</p>' : '') +
               '</div>' +
-              '<button type="button" onclick="window.open(\'https://happylapiz.cl\',\'_blank\')" style="width:100%;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit">' + btnText + '</button>' +
+              '<a href="https://happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
               '</div>';
           }} else {{
             stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
@@ -823,7 +813,7 @@ def _build_embed_js(cfg: dict) -> str:
         var _triggered = false;
         function _triggerOnce() {{ if (!_triggered) {{ _triggered = true; showPopup(); }} }}
         if (C.delay_seconds > 0) {{
-          setTimeout(_triggerOnce, 1000); // TEST: forced 1s, restore to C.delay_seconds * 1000
+          setTimeout(_triggerOnce, C.delay_seconds * 1000);
         }}
         if (C.scroll_pct > 0) {{
           window.addEventListener('scroll', function _sh() {{
