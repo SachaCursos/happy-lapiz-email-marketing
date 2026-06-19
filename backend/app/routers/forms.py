@@ -512,8 +512,8 @@ def _build_embed_js(cfg: dict) -> str:
           lbl = '<label class="hb-label">Email *</label>';
           inp = '<input class="hb-input" type="email" name="email" placeholder="tu@email.com" required />';
         }} else if (key === 'name') {{
-          lbl = '<label class="hb-label">Nombre</label>';
-          inp = '<input class="hb-input" type="text" name="name" placeholder="Tu nombre" />';
+          lbl = '<label class="hb-label">Nombre *</label>';
+          inp = '<input class="hb-input" type="text" name="name" placeholder="Tu nombre" required />';
         }} else if (key === 'phone') {{
           lbl = '<label class="hb-label">Teléfono</label>';
           inp = '<input class="hb-input" type="tel" name="phone" placeholder="+56 9 xxxx xxxx" />';
@@ -530,7 +530,7 @@ def _build_embed_js(cfg: dict) -> str:
               if (o.toLowerCase() === 'otro' || o.toLowerCase() === 'otra') hasOtro = true;
             }});
             var otroInput = hasOtro
-              ? '<input class="hb-input hb-otro-inp" type="text" name="' + key + '_otro" placeholder="¿Cuál?" style="display:none;margin-top:-4px" />'
+              ? '<input class="hb-input hb-otro-inp" type="text" name="' + key + '_otro" placeholder="' + (cf.label||'¿Cuál?') + '" style="display:none;margin-top:-4px" />'
               : '';
             inp = '<select class="hb-input' + (hasOtro?' hb-otro-sel':'') + '" name="' + key + '"' + (cf.required?' required':'') + '>' + opts + '</select>' + otroInput;
           }} else if (cf.type === 'textarea') {{
