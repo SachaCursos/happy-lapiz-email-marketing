@@ -345,7 +345,7 @@ def _fetch_cross_sell_from_db(
     history_rows = session.execute(text("""
         SELECT payload FROM shopify_events
         WHERE LOWER(email) = LOWER(:email)
-          AND event_type = 'placed_order'
+          AND topic = 'orders/create'
           AND payload IS NOT NULL
     """), {"email": customer_email}).fetchall()
 
@@ -414,7 +414,7 @@ def _get_purchase_history_items(session: Session, customer_email: str) -> list[d
     rows = session.execute(text("""
         SELECT payload FROM shopify_events
         WHERE LOWER(email) = LOWER(:email)
-          AND event_type = 'placed_order'
+          AND topic = 'orders/create'
           AND payload IS NOT NULL
         ORDER BY created_at DESC
     """), {"email": customer_email}).fetchall()
@@ -493,7 +493,7 @@ def _fetch_age_recommended_products(
     history_rows = session.execute(text("""
         SELECT payload FROM shopify_events
         WHERE LOWER(email) = LOWER(:email)
-          AND event_type = 'placed_order'
+          AND topic = 'orders/create'
           AND payload IS NOT NULL
     """), {"email": customer_email}).fetchall()
 
