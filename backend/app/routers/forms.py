@@ -408,8 +408,10 @@ def _build_embed_js(cfg: dict) -> str:
     (function() {{
       var C = {cfg_json};
       var STORE_KEY = 'hb_form_' + C.id;
-      // localStorage persists across sessions — popup never shows again after submit or dismiss
-      if (localStorage.getItem(STORE_KEY)) return;
+      // Never show again if already submitted
+      if (localStorage.getItem(STORE_KEY) === 'submitted') return;
+      // Don't show again in this browser session if already dismissed
+      if (sessionStorage.getItem(STORE_KEY + '_d')) return;
 
       // ── A/B variant selection ─────────────────────────────────────────────
       var _abVariant = null;
@@ -794,7 +796,7 @@ def _build_embed_js(cfg: dict) -> str:
       function closePopup() {{
         var el = document.getElementById('hb-popup-overlay');
         if (el) el.parentNode.removeChild(el);
-        localStorage.setItem(STORE_KEY, '1');
+        sessionStorage.setItem(STORE_KEY + '_d', '1');
       }}
 
       // Triggers: activate delay AND/OR scroll (whichever fires first shows the popup)
