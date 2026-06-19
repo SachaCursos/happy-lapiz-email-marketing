@@ -7,7 +7,7 @@ import sys, psycopg2
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-DB = "postgresql://postgres:mcxQvhpGaatBzcZNCbVqnGWGBjQpCNYJ@turntable.proxy.rlwy.net:48129/railway"
+DB = "postgresql://postgres:nfKjyKqezPIGMgmneHgxdscnCFXypQQq@switchyard.proxy.rlwy.net:22708/railway"
 conn = psycopg2.connect(DB)
 cur = conn.cursor()
 
@@ -27,8 +27,11 @@ migrations = [
     "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS custom_form_fields JSONB",
     "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS html_override TEXT",
     "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS coupon_code VARCHAR",
-    # form_submissions — extra data from custom fields
+    # form_submissions — extra data from custom fields + dedicated columns
     "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS extra_data JSONB",
+    "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS relacion_regalado VARCHAR",
+    "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS nombre_regalado VARCHAR",
+    "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS fecha_nacimiento_regalado VARCHAR",
     # automations + automation_runs (new tables — create if not exist)
     """CREATE TABLE IF NOT EXISTS automations (
         id SERIAL PRIMARY KEY,

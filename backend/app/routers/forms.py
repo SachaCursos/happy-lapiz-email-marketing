@@ -242,15 +242,19 @@ def submit_form(
     elif f.coupon_code:
         coupon_code = f.coupon_code
 
+    _ed = payload.extra_data or {}
     session.add(FormSubmission(
         form_id=form_id,
         email=email,
         name=(payload.name or "").strip() or None,
         phone=(payload.phone or "").strip() or None,
         source_url=payload.source_url,
-        extra_data=payload.extra_data or None,
+        extra_data=_ed or None,
         coupon_code=coupon_code,
         ab_variant=payload.ab_variant or None,
+        relacion_regalado=_ed.get("para_quien") or None,
+        nombre_regalado=_ed.get("destinatario_nombre") or None,
+        fecha_nacimiento_regalado=_ed.get("cual_es_su_fecha_de_nacimiento") or None,
     ))
     session.commit()
 

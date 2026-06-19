@@ -54,6 +54,9 @@ class FormSubmission(SQLModel, table=True):
     extra_data: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     coupon_code: Optional[str] = Field(default=None)
     ab_variant: Optional[str] = Field(default=None)
+    relacion_regalado: Optional[str] = Field(default=None)
+    nombre_regalado: Optional[str] = Field(default=None)
+    fecha_nacimiento_regalado: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
