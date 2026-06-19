@@ -324,7 +324,7 @@ def embed_js(form_id: int, session: Session = Depends(get_session)):
     return PlainTextResponse(
         js,
         media_type="application/javascript",
-        headers={**_cors_headers(), "Cache-Control": "no-cache"},
+        headers={**_cors_headers(), "Cache-Control": "public, max-age=60"},
     )
 
 
@@ -408,16 +408,19 @@ def _build_embed_js(cfg: dict) -> str:
     (function() {{
       var C = {cfg_json};
       var STORE_KEY = 'hb_form_' + C.id;
+      // localStorage/sessionStorage can throw in Safari private mode — wrap in try/catch
+      var _ls = (function(){{ try {{ return localStorage; }} catch(e) {{ return {{getItem:function(){{return null;}},setItem:function(){{}}}}; }} }})();
+      var _ss = (function(){{ try {{ return sessionStorage; }} catch(e) {{ return {{getItem:function(){{return null;}},setItem:function(){{}}}}; }} }})();
       // Never show again if already submitted
-      if (localStorage.getItem(STORE_KEY) === 'submitted') return;
+      if (_ls.getItem(STORE_KEY) === 'submitted') return;
       // Don't show again in this browser session if already dismissed
-      if (sessionStorage.getItem(STORE_KEY + '_d')) return;
+      if (_ss.getItem(STORE_KEY + '_d')) return;
 
       // ── A/B variant selection ─────────────────────────────────────────────
       var _abVariant = null;
       if (C.ab_variants && C.ab_variants.length >= 2) {{
         var _abKey = 'hb_ab_' + C.id;
-        var _stored = sessionStorage.getItem(_abKey);
+        var _stored = _ss.getItem(_abKey);
         if (_stored) {{
           // Use previously assigned variant (consistent per session)
           for (var _i = 0; _i < C.ab_variants.length; _i++) {{
@@ -433,7 +436,7 @@ def _build_embed_js(cfg: dict) -> str:
             if (_rand <= _cum) {{ _abVariant = C.ab_variants[_i]; break; }}
           }}
           if (!_abVariant) _abVariant = C.ab_variants[C.ab_variants.length - 1];
-          sessionStorage.setItem(_abKey, String(_abVariant.id));
+          _ss.setItem(_abKey, String(_abVariant.id));
         }}
         // Override content with variant's values
         if (_abVariant.title)       C.title       = _abVariant.title;
@@ -782,7 +785,7 @@ def _build_embed_js(cfg: dict) -> str:
                 if (codeEl2) codeEl2.textContent = code;
               }}
             }}
-            localStorage.setItem(STORE_KEY, 'submitted');
+            _ls.setItem(STORE_KEY, 'submitted');
             setTimeout(closePopup, 10000);
           }})
           .catch(function() {{
@@ -796,7 +799,7 @@ def _build_embed_js(cfg: dict) -> str:
       function closePopup() {{
         var el = document.getElementById('hb-popup-overlay');
         if (el) el.parentNode.removeChild(el);
-        sessionStorage.setItem(STORE_KEY + '_d', '1');
+        _ss.setItem(STORE_KEY + '_d', '1');
       }}
 
       // Triggers: activate delay AND/OR scroll (whichever fires first shows the popup)
