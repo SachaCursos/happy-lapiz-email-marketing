@@ -301,5 +301,33 @@ def run_automations_now_public(key: str = Query(...)):
     """Public endpoint to trigger automation engine — requires secret key."""
     if key != "hl-admin-run-2024":
         raise HTTPException(status_code=403, detail="Forbidden")
-    automation_engine.run_automations()
-    return {"ok": True}
+    import traceback
+    from datetime import datetime as _dt
+    from sqlmodel import Session as _Session
+    from app.database import engine as _engine
+    from app.models.automation import AutomationEnrollment as _AE, Automation as _Auto, AutomationRun as _AR
+    from app.models.contact import Contact as _Contact
+    from sqlmodel import select as _select
+    errors = []
+    results = []
+    now = _dt.utcnow()
+    try:
+        with _Session(_engine) as session:
+            ready = session.exec(
+                _select(_AE).where(_AE.status == "active").where(_AE.next_send_at <= now)
+            ).all()
+            results.append(f"Ready enrollments: {[e.id for e in ready]}")
+            for enr in ready:
+                try:
+                    auto = session.get(_Auto, enr.automation_id)
+                    contact = session.exec(_select(_Contact).where(_Contact.email == enr.contact_email.lower())).first()
+                    results.append(f"Enrollment {enr.id}: auto={auto.id if auto else None} contact={contact.id if contact else None}")
+                    automation_engine._process_enrollments(session)
+                    break
+                except Exception as e:
+                    errors.append(f"Enrollment {enr.id}: {traceback.format_exc()[-500:]}")
+                    try: session.rollback()
+                    except: pass
+    except Exception as e:
+        errors.append(f"Outer: {traceback.format_exc()[-500:]}")
+    return {"ok": True, "results": results, "errors": errors}
