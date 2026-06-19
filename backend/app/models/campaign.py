@@ -11,7 +11,7 @@ class Campaign(SQLModel, table=True):
     name: str = Field(index=True)
     subject: str
     preview_text: Optional[str] = None
-    template_id: int = Field(foreign_key="templates.id")
+    template_id: Optional[int] = Field(default=None, foreign_key="templates.id")
     segment_id: int = Field(foreign_key="segments.id")
     exclude_segment_ids: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     # draft | scheduled | sending | sent | cancelled
@@ -46,6 +46,7 @@ class CampaignCreate(SQLModel):
     segment_id: int
     exclude_segment_ids: Optional[List[int]] = None
     scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
 
 
 class CampaignUpdate(SQLModel):
@@ -64,7 +65,7 @@ class CampaignRead(SQLModel):
     name: str
     subject: str
     preview_text: Optional[str]
-    template_id: int
+    template_id: Optional[int]
     segment_id: int
     exclude_segment_ids: Optional[List[int]] = None
     status: str

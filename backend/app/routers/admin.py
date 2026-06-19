@@ -1,9 +1,13 @@
 import re
+import logging
 import httpx
+import mimetypes
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlmodel import Session, select, text
-from app.database import get_session
+from app.database import get_session, engine as db_engine
+
+logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.core.deps import get_current_user, require_admin
 from app.models.user import User
@@ -300,42 +304,76 @@ def fix_logo(
     return {"ok": True, "fixed": fixed, "logo_url": HL_LOGO}
 
 
-def _ensure_shopify_products_table(session: Session) -> None:
-    """Drop and recreate shopify_products if the shopify_id column is missing.
-    Uses its own nested commit so the schema fix is independent of the caller's transaction.
-    """
-    try:
-        has_col = session.execute(text(
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_name = 'shopify_products' AND column_name = 'shopify_id'"
-        )).scalar()
-        session.commit()
-    except Exception:
-        session.rollback()
-        has_col = 1  # assume table is fine if we can't check
+_SHOPIFY_PRODUCTS_CREATE = """
+    CREATE TABLE shopify_products (
+        id SERIAL PRIMARY KEY,
+        shopify_id BIGINT UNIQUE NOT NULL,
+        title VARCHAR NOT NULL,
+        handle VARCHAR,
+        product_type VARCHAR,
+        tags TEXT,
+        vendor VARCHAR,
+        image_url TEXT,
+        price NUMERIC(10,2),
+        status VARCHAR NOT NULL DEFAULT 'active',
+        synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        edad_recomendada VARCHAR
+    )
+"""
 
-    if has_col == 0:
-        try:
-            session.execute(text("DROP TABLE IF EXISTS shopify_products"))
-            session.execute(text("""
-                CREATE TABLE shopify_products (
-                    id SERIAL PRIMARY KEY,
-                    shopify_id BIGINT UNIQUE NOT NULL,
-                    title VARCHAR NOT NULL,
-                    handle VARCHAR,
-                    product_type VARCHAR,
-                    tags TEXT,
-                    vendor VARCHAR,
-                    image_url TEXT,
-                    price NUMERIC(10,2),
-                    status VARCHAR NOT NULL DEFAULT 'active',
-                    synced_at TIMESTAMP NOT NULL DEFAULT NOW()
-                )
-            """))
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise RuntimeError("No se pudo recrear la tabla shopify_products con el esquema correcto.")
+def _ensure_shopify_products_table() -> None:
+    """Ensure shopify_products exists with the correct schema.
+    Uses AUTOCOMMIT so DDL can never be blocked by an open transaction.
+    Adds missing columns in-place to preserve any dependent views.
+    """
+    with db_engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+
+        # Create table from scratch if it doesn't exist at all
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_name = 'shopify_products'"
+        )).scalar()
+        if not table_exists:
+            logger.warning("shopify_products does not exist — creating table")
+            conn.execute(text(_SHOPIFY_PRODUCTS_CREATE))
+            return
+
+        # Table exists — add any missing columns in-place (preserves dependent views)
+        existing_cols = {
+            row[0] for row in conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'shopify_products'"
+            ))
+        }
+        needed = {
+            "shopify_id":       "BIGINT",
+            "title":            "VARCHAR",
+            "handle":           "VARCHAR",
+            "product_type":     "VARCHAR",
+            "tags":             "TEXT",
+            "vendor":           "VARCHAR",
+            "image_url":        "TEXT",
+            "price":            "NUMERIC(10,2)",
+            "status":           "VARCHAR NOT NULL DEFAULT 'active'",
+            "synced_at":        "TIMESTAMP NOT NULL DEFAULT NOW()",
+            "edad_recomendada": "VARCHAR",
+        }
+        for col, col_type in needed.items():
+            if col not in existing_cols:
+                logger.warning("shopify_products: adding missing column %s", col)
+                conn.execute(text(f"ALTER TABLE shopify_products ADD COLUMN {col} {col_type}"))
+
+        # Ensure unique index on shopify_id exists
+        idx_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM pg_indexes "
+            "WHERE tablename = 'shopify_products' AND indexname = 'shopify_products_shopify_id_key'"
+        )).scalar()
+        if not idx_exists:
+            conn.execute(text(
+                "ALTER TABLE shopify_products ADD CONSTRAINT shopify_products_shopify_id_key "
+                "UNIQUE (shopify_id)"
+            ))
 
 
 @router.post("/sync-products")
@@ -377,9 +415,10 @@ def sync_shopify_products(
             params = {"limit": 250, "page_info": m.group(1)}
 
     try:
-        _ensure_shopify_products_table(session)
-    except RuntimeError as exc:
-        return {"ok": False, "error": str(exc)}
+        _ensure_shopify_products_table()
+    except Exception as exc:
+        logger.error("_ensure_shopify_products_table failed: %s", exc, exc_info=True)
+        return {"ok": False, "error": f"Error preparando tabla: {exc}"}
 
     now = datetime.utcnow()
     upserted = 0
@@ -430,17 +469,36 @@ def sync_shopify_products(
     }
 
 
+_SORT_COLUMNS = {
+    "title": "title",
+    "product_type": "product_type",
+    "tags": "tags",
+    "price": "price",
+    "status": "status",
+    "edad_recomendada": "edad_recomendada",
+}
+
 @router.get("/products")
 def list_synced_products(
     search: str = "",
     product_type: str = "",
     page: int = 1,
     per_page: int = 50,
+    sort_by: str = "title",
+    sort_dir: str = "asc",
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
 ):
     """Devuelve los productos sincronizados desde Shopify."""
-    _ensure_shopify_products_table(session)
+    try:
+        _ensure_shopify_products_table()
+    except Exception as exc:
+        logger.error("_ensure_shopify_products_table failed: %s", exc, exc_info=True)
+        return {"total": 0, "page": page, "per_page": per_page, "products": [], "product_types": [], "error": str(exc)}
+
+    col = _SORT_COLUMNS.get(sort_by, "title")
+    direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+
     where_clauses = ["1=1"]
     params: dict = {}
     if search:
@@ -458,9 +516,9 @@ def list_synced_products(
     params["limit"] = per_page
     rows = session.execute(
         text(f"""
-            SELECT shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at
+            SELECT shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at, edad_recomendada
             FROM shopify_products WHERE {where}
-            ORDER BY title ASC
+            ORDER BY {col} {direction} NULLS LAST
             LIMIT :limit OFFSET :offset
         """),
         params,
@@ -476,6 +534,7 @@ def list_synced_products(
             "product_type": r[3], "tags": r[4], "vendor": r[5],
             "image_url": r[6], "price": float(r[7] or 0),
             "status": r[8], "synced_at": str(r[9]) if r[9] else None,
+            "edad_recomendada": r[10],
         }
         for r in rows
     ]
@@ -567,6 +626,146 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
         tag = r.json().get("script_tag", {})
         return {"ok": True, "id": tag.get("id"), "src": script_url}
     return {"ok": False, "error": r.text[:200]}
+
+
+@router.post("/upload-image")
+async def upload_image_to_shopify(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+):
+    """
+    Sube una imagen a Shopify Files y devuelve la URL cdn.shopify.com.
+    Flujo: stagedUploadsCreate → PUT al S3 presignado → fileCreate.
+    """
+    token  = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+
+    content   = await file.read()
+    mime_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    filename  = file.filename or "image.jpg"
+    file_size = len(content)
+
+    gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
+    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+
+    # 1. Request a staged upload target from Shopify
+    stage_query = """
+    mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets {
+          url
+          resourceUrl
+          parameters { name value }
+        }
+        userErrors { field message }
+      }
+    }
+    """
+    stage_vars = {"input": [{
+        "filename":   filename,
+        "mimeType":   mime_type,
+        "resource":   "FILE",
+        "fileSize":   str(file_size),
+        "httpMethod": "POST",
+    }]}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(gql_url, headers=headers, json={"query": stage_query, "variables": stage_vars})
+
+    data = r.json()
+    targets = data.get("data", {}).get("stagedUploadsCreate", {}).get("stagedTargets", [])
+    errors  = data.get("data", {}).get("stagedUploadsCreate", {}).get("userErrors", [])
+    if errors or not targets:
+        raise HTTPException(status_code=500, detail=f"Shopify staged upload error: {errors or data}")
+
+    target       = targets[0]
+    upload_url   = target["url"]
+    resource_url = target["resourceUrl"]
+    params       = {p["name"]: p["value"] for p in target["parameters"]}
+
+    # 2. POST the file to the presigned S3 URL
+    async with httpx.AsyncClient(timeout=60) as client:
+        r2 = await client.post(
+            upload_url,
+            data=params,
+            files={"file": (filename, content, mime_type)},
+        )
+    if r2.status_code not in (200, 201, 204):
+        raise HTTPException(status_code=500, detail=f"S3 upload failed: {r2.status_code} {r2.text[:200]}")
+
+    # 3. Register the file in Shopify Files
+    create_query = """
+    mutation fileCreate($files: [FileCreateInput!]!) {
+      fileCreate(files: $files) {
+        files {
+          ... on MediaImage { image { url } }
+          ... on GenericFile  { url }
+        }
+        userErrors { field message }
+      }
+    }
+    """
+    create_vars = {"files": [{"originalSource": resource_url, "contentType": "IMAGE"}]}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r3 = await client.post(gql_url, headers=headers, json={"query": create_query, "variables": create_vars})
+
+    data3  = r3.json()
+    files  = data3.get("data", {}).get("fileCreate", {}).get("files", [])
+    errors3 = data3.get("data", {}).get("fileCreate", {}).get("userErrors", [])
+
+    cdn_url = None
+    if files:
+        f = files[0]
+        cdn_url = f.get("image", {}).get("url") or f.get("url")
+
+    if not cdn_url:
+        # Shopify sometimes takes a moment to process — return the resource_url as fallback
+        cdn_url = resource_url
+
+    return {"ok": True, "url": cdn_url}
+
+
+@router.get("/shopify-images")
+def list_shopify_images(
+    after: str = None,
+    _: User = Depends(get_current_user),
+):
+    """List images from Shopify Files for the in-editor image picker."""
+    token  = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
+
+    gql = """
+    query getImages($after: String) {
+      files(first: 30, after: $after, sortKey: CREATED_AT, reverse: true, query: "media_type:IMAGE") {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          ... on MediaImage {
+            image { url width height altText }
+          }
+        }
+      }
+    }"""
+    variables = {"after": after} if after else {}
+    resp = httpx.post(
+        f"https://{domain}/admin/api/2024-01/graphql.json",
+        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+        json={"query": gql, "variables": variables},
+        timeout=20,
+    )
+    data   = resp.json().get("data", {}).get("files", {})
+    nodes  = [n for n in data.get("nodes", []) if n]
+    images = []
+    for n in nodes:
+        img = n.get("image") or {}
+        url = img.get("url", "")
+        if url:
+            images.append({"url": url, "width": img.get("width"), "height": img.get("height"), "alt": img.get("altText") or ""})
+    return {"images": images, "pageInfo": data.get("pageInfo", {})}
 
 
 @router.get("/brand")

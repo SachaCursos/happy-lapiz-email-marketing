@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from typing import List
 from datetime import datetime
@@ -51,10 +52,36 @@ def replace_unsub_tag(html: str, email: str) -> str:
     return html.replace("{% unsubscribe %}", link)
 
 
+_HOTBOAT_FOOTER_RE = re.compile(
+    r'(<(?:div|table|p)[^>]*>(?:(?!<(?:div|table|p))[^<]|<(?!(?:div|table|p)))*?)?'
+    r'HotBoat(?:[^<\n]*(?:\n|<[^>]+>))*?'
+    r'(?:Experiencias en el agua[^\n<]*(?:\n|<[^>]+>))*?'
+    r'(?:[^\n<]*[Cc]ancelar\s+suscripci[óo]n[^\n<]*)?'
+    r'(?:</(?:div|table|p)>\s*)*',
+    re.DOTALL | re.IGNORECASE,
+)
+
+_HOTBOAT_PLAIN_RE = re.compile(
+    r'\n{0,3}HotBoat[^\n]*\nExperiencias en el agua[^\n]*\n.*',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_hotboat_footer(html: str) -> str:
+    """Remove any residual HotBoat-branded footer from template content."""
+    result = _HOTBOAT_PLAIN_RE.sub("", html)
+    result = _HOTBOAT_FOOTER_RE.sub("", result)
+    return result.rstrip()
+
+
 def _inject_footer(html: str, email: str) -> str:
     url = unsub_url(email)
     if "##unsub##" in html:
         return html.replace("##unsub##", url)
+    # Strip any leftover HotBoat footer before deciding what to inject
+    lower_check = html.lower()
+    if "hotboat" in lower_check or "experiencias en el agua" in lower_check:
+        html = _strip_hotboat_footer(html)
     lower = html.lower()
     # Don't inject if the template already has an unsubscribe block.
     # Check for the link text OR the /unsubscribe path in the URL.

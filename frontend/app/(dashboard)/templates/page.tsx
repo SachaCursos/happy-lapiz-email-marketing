@@ -44,7 +44,14 @@ function PreviewModal({ tpl, onClose }: { tpl: Template; onClose: () => void }) 
             sandbox="allow-same-origin"
             title={tpl.name}
             className="w-full rounded-lg border border-gray-100"
-            style={{ height: "900px" }}
+            style={{ minHeight: "300px", height: "900px" }}
+            onLoad={(e) => {
+              const f = e.currentTarget;
+              try {
+                const h = f.contentDocument?.documentElement?.scrollHeight;
+                if (h && h > 0) f.style.height = h + "px";
+              } catch {}
+            }}
           />
         </div>
       </div>
@@ -111,6 +118,7 @@ export default function TemplatesPage() {
   const qc = useQueryClient();
   const [preview, setPreview] = useState<Template | null>(null);
   const [search, setSearch]   = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const { data: templates = [], isLoading, isError } = useQuery<Template[]>({
     queryKey: ["templates"],
@@ -125,12 +133,28 @@ export default function TemplatesPage() {
 
   const delMutation = useMutation({
     mutationFn: (id: number) => templatesApi.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["templates"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["templates"] });
+      setDeleteError(null);
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        ?? "No se pudo eliminar la plantilla.";
+      setDeleteError(msg);
+    },
   });
 
   return (
     <div className="p-8">
       {preview && <PreviewModal tpl={preview} onClose={() => setPreview(null)} />}
+
+      {deleteError && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 flex items-start gap-2">
+          <span className="flex-1">{deleteError}</span>
+          <button onClick={() => setDeleteError(null)} className="text-red-400 hover:text-red-600 shrink-0"><X size={14} /></button>
+        </div>
+      )}
 
       <CuponesPanel />
 

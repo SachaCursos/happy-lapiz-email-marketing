@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlmodel import Session, select, func
 from jinja2 import Template as JTemplate
 import resend
@@ -35,7 +35,10 @@ def create_campaign(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
 ):
-    campaign = Campaign(**payload.model_dump(), created_by=current_user.id)
+    data = payload.model_dump()
+    if not data.get("status"):
+        data["status"] = "scheduled" if data.get("scheduled_at") else "draft"
+    campaign = Campaign(**data, created_by=current_user.id)
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
@@ -257,26 +260,22 @@ def campaign_conversions(
     if not emails:
         return empty
 
-    src_url = settings.HOTBOAT_DATABASE_URL or settings.DATABASE_URL
     try:
-        src_engine = create_engine(src_url)
-        with src_engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT
-                    email,
-                    COUNT(*)                              AS bookings,
-                    COALESCE(SUM(ingreso_total), 0)       AS revenue
-                FROM all_appointments
-                WHERE email = ANY(:emails)
-                  AND fecha >= :start_date
-                  AND fecha <= :end_date
-                  AND status NOT IN ('cancelled', 'no_show', 'pending')
-                GROUP BY email
-            """), {
-                "emails": emails,
-                "start_date": campaign.sent_at,
-                "end_date": campaign.sent_at + timedelta(days=days),
-            }).fetchall()
+        rows = session.execute(text("""
+            SELECT
+                LOWER(email)                          AS email,
+                COUNT(*)                              AS bookings,
+                COALESCE(SUM(total_price), 0)         AS revenue
+            FROM shopify_orders
+            WHERE LOWER(email) = ANY(:emails)
+              AND created_at >= :start_date
+              AND created_at <= :end_date
+            GROUP BY LOWER(email)
+        """), {
+            "emails": [e.lower() for e in emails],
+            "start_date": campaign.sent_at,
+            "end_date": campaign.sent_at + timedelta(days=days),
+        }).fetchall()
     except Exception:
         return empty
 

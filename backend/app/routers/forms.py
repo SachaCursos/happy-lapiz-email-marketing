@@ -290,7 +290,68 @@ def submit_form(
                 session.add(enrollment)
                 session.commit()
 
+    # Trigger form_submitted automations for this specific form
+    _trigger_form_submitted_automations(session, form_id, email, payload, coupon_code, payload.extra_data or {})
+
     return {"ok": True, "coupon_code": coupon_code}
+
+
+def _trigger_form_submitted_automations(
+    session: Session,
+    form_id: int,
+    email: str,
+    payload,
+    coupon_code: str | None,
+    extra_data: dict,
+) -> None:
+    """Enroll contact in any active automations with trigger_type=form_submitted for this form."""
+    from app.models.automation import Automation
+    from app.services.automation_engine import _get_steps
+    from datetime import timedelta
+
+    automations = session.exec(
+        select(Automation).where(
+            Automation.trigger_type == "form_submitted",
+            Automation.status == "active",
+        )
+    ).all()
+
+    for auto in automations:
+        cfg = auto.trigger_config or {}
+        if str(cfg.get("form_id", "")) != str(form_id):
+            continue
+        trigger_key = f"form_submitted:{form_id}:{email}"
+        existing = session.exec(
+            select(AutomationEnrollment).where(
+                AutomationEnrollment.automation_id == auto.id,
+                AutomationEnrollment.trigger_key == trigger_key,
+            )
+        ).first()
+        if existing:
+            continue
+        steps = _get_steps(auto)
+        first_delay = float(steps[0].get("delay_hours", 0)) if steps else 0
+        extra = {
+            "nombre": (payload.name or "").strip() or email,
+            "first_name": ((payload.name or "").strip() or email).split()[0],
+            "email": email,
+            "coupon_code": coupon_code or "",
+            "nombre_regalado": extra_data.get("destinatario_nombre", ""),
+            "cual_es_su_fecha_de_nacimiento": extra_data.get("cual_es_su_fecha_de_nacimiento", ""),
+            **{k: v for k, v in extra_data.items()},
+        }
+        enrollment = AutomationEnrollment(
+            automation_id=auto.id,
+            contact_email=email,
+            trigger_key=trigger_key,
+            enrolled_at=datetime.utcnow(),
+            next_send_at=datetime.utcnow() + timedelta(hours=first_delay),
+            next_step=1,
+            status="active",
+            extra_vars_json=json.dumps(extra),
+        )
+        session.add(enrollment)
+    session.commit()
 
 
 @router.get("/{form_id}/embed.js", response_class=PlainTextResponse)
@@ -324,7 +385,7 @@ def embed_js(form_id: int, session: Session = Depends(get_session)):
     return PlainTextResponse(
         js,
         media_type="application/javascript",
-        headers={**_cors_headers(), "Cache-Control": "no-cache"},
+        headers={**_cors_headers(), "Cache-Control": "public, max-age=60"},
     )
 
 
@@ -408,13 +469,19 @@ def _build_embed_js(cfg: dict) -> str:
     (function() {{
       var C = {cfg_json};
       var STORE_KEY = 'hb_form_' + C.id;
-      if (sessionStorage.getItem(STORE_KEY)) return;
+      // localStorage/sessionStorage can throw in Safari private mode — wrap in try/catch
+      var _ls = (function(){{ try {{ return localStorage; }} catch(e) {{ return {{getItem:function(){{return null;}},setItem:function(){{}}}}; }} }})();
+      var _ss = (function(){{ try {{ return sessionStorage; }} catch(e) {{ return {{getItem:function(){{return null;}},setItem:function(){{}}}}; }} }})();
+      // Never show again if already submitted
+      if (_ls.getItem(STORE_KEY) === 'submitted') return;
+      // Don't show again in this browser session if already dismissed
+      if (_ss.getItem(STORE_KEY + '_d')) return;
 
       // ── A/B variant selection ─────────────────────────────────────────────
       var _abVariant = null;
       if (C.ab_variants && C.ab_variants.length >= 2) {{
         var _abKey = 'hb_ab_' + C.id;
-        var _stored = sessionStorage.getItem(_abKey);
+        var _stored = _ss.getItem(_abKey);
         if (_stored) {{
           // Use previously assigned variant (consistent per session)
           for (var _i = 0; _i < C.ab_variants.length; _i++) {{
@@ -430,7 +497,7 @@ def _build_embed_js(cfg: dict) -> str:
             if (_rand <= _cum) {{ _abVariant = C.ab_variants[_i]; break; }}
           }}
           if (!_abVariant) _abVariant = C.ab_variants[C.ab_variants.length - 1];
-          sessionStorage.setItem(_abKey, String(_abVariant.id));
+          _ss.setItem(_abKey, String(_abVariant.id));
         }}
         // Override content with variant's values
         if (_abVariant.title)       C.title       = _abVariant.title;
@@ -476,23 +543,25 @@ def _build_embed_js(cfg: dict) -> str:
         '#hb-popup-desc{{margin:0 0 16px;color:#64748b;font-size:14px;line-height:1.5;}}',
         '#hb-popup-progress{{display:flex;gap:4px;margin-bottom:16px;}}',
         '.hb-progress-dot{{flex:1;height:4px;border-radius:2px;background:#e2e8f0;transition:background .3s;}}',
-        '.hb-progress-dot.hb-done{{background:' + btn_bg + ';}}',
+        '.hb-progress-dot.hb-done{{background:' + btnBg + ';}}',
         '.hb-step{{display:none;}}',
         '.hb-step.hb-active{{display:block;}}',
         '.hb-input{{width:100%;padding:10px 14px;border:1.5px solid ' + inpBdr + ';border-radius:8px;font-size:14px;color:#1e293b;margin-bottom:10px;box-sizing:border-box;outline:none;transition:border-color .2s;font-family:inherit;background:#fff;}}',
-        '.hb-input:focus{{border-color:' + btn_bg + ';}}',
+        '.hb-input:focus{{border-color:' + btnBg + ';}}',
         '.hb-label{{display:block;font-size:12px;color:#64748b;margin-bottom:4px;}}',
         '#hb-popup-btn{{width:100%;padding:12px;background:linear-gradient(135deg,' + btnBg + ',' + btnBg2 + ');color:' + btnTxt + ';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .2s;margin-top:4px;font-family:inherit;}}',
         '#hb-popup-btn:hover{{opacity:0.88;}}',
         '#hb-popup-btn:disabled{{opacity:0.5;cursor:not-allowed;}}',
         '#hb-popup-success{{display:none;text-align:center;padding:8px 0 4px;}}',
-        '.hb-coupon-box{{margin:4px 0 12px;padding:14px 20px;background:#f0f9ff;border:2px dashed ' + btn_bg + ';border-radius:12px;text-align:center;}}',
+        '.hb-coupon-box{{margin:4px 0 12px;padding:14px 20px;background:#f0f9ff;border:2px dashed ' + btnBg + ';border-radius:12px;text-align:center;}}',
         '#hb-popup-fine{{margin:12px 0 0;color:#94a3b8;font-size:11px;text-align:center;}}',
       ].join('\\n');
 
-      var style = document.createElement('style');
-      style.textContent = STYLES;
-      document.head.appendChild(style);
+      try {{
+        var style = document.createElement('style');
+        style.textContent = STYLES;
+        (document.head || document.documentElement).appendChild(style);
+      }} catch(e) {{}}
 
       // ── Field renderer ──────────────────────────────────────────────────────
       var CF_MAP = {{}};
@@ -504,8 +573,8 @@ def _build_embed_js(cfg: dict) -> str:
           lbl = '<label class="hb-label">Email *</label>';
           inp = '<input class="hb-input" type="email" name="email" placeholder="tu@email.com" required />';
         }} else if (key === 'name') {{
-          lbl = '<label class="hb-label">Nombre</label>';
-          inp = '<input class="hb-input" type="text" name="name" placeholder="Tu nombre" />';
+          lbl = '<label class="hb-label">Nombre *</label>';
+          inp = '<input class="hb-input" type="text" name="name" placeholder="Tu nombre" required />';
         }} else if (key === 'phone') {{
           lbl = '<label class="hb-label">Teléfono</label>';
           inp = '<input class="hb-input" type="tel" name="phone" placeholder="+56 9 xxxx xxxx" />';
@@ -516,8 +585,15 @@ def _build_embed_js(cfg: dict) -> str:
           lbl = '<label class="hb-label">' + cf.label + req + '</label>';
           if (cf.type === 'select') {{
             var opts = '<option value="">' + (cf.placeholder||'Seleccionar…') + '</option>';
-            (cf.options||[]).forEach(function(o){{ opts += '<option value="'+o+'">'+o+'</option>'; }});
-            inp = '<select class="hb-input" name="' + key + '"' + (cf.required?' required':'') + '>' + opts + '</select>';
+            var hasOtro = false;
+            (cf.options||[]).forEach(function(o){{
+              opts += '<option value="'+o+'">'+o+'</option>';
+              if (o.toLowerCase() === 'otro' || o.toLowerCase() === 'otra') hasOtro = true;
+            }});
+            var otroInput = hasOtro
+              ? '<input class="hb-input hb-otro-inp" type="text" name="' + key + '_otro" placeholder="' + (cf.label||'¿Cuál?') + '" style="display:none;margin-top:-4px" />'
+              : '';
+            inp = '<select class="hb-input' + (hasOtro?' hb-otro-sel':'') + '" name="' + key + '"' + (cf.required?' required':'') + '>' + opts + '</select>' + otroInput;
           }} else if (cf.type === 'textarea') {{
             inp = '<textarea class="hb-input" name="' + key + '" placeholder="' + (cf.placeholder||'') + '" rows="2"' + (cf.required?' required':'') + ' style="resize:none"></textarea>';
           }} else {{
@@ -550,21 +626,51 @@ def _build_embed_js(cfg: dict) -> str:
           progressHtml += '</div>';
         }}
 
+        // Determine which is the last submit step (coupon step is shown after submit, not submitted)
+        var lastSubmitIdx = steps.length - 1;
+        for (var _si = steps.length - 1; _si >= 0; _si--) {{
+          if (!steps[_si].coupon_step) {{ lastSubmitIdx = _si; break; }}
+        }}
+
         var stepsHtml = '';
         steps.forEach(function(s,idx){{
+          var isCouponStep = !!s.coupon_step;
           var fieldsHtml = '';
-          (s.fields||[]).forEach(function(k){{ fieldsHtml += renderField(k); }});
-          var btnText = s.button_text || (idx === steps.length-1 ? C.button_text : 'Continuar →');
-          stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
-            fieldsHtml +
-            '<button id="hb-popup-btn" type="button" data-step="'+idx+'" data-final="'+(idx===steps.length-1?'1':'0')+'">' + btnText + '</button>' +
-            '</div>';
+          if (!isCouponStep) {{
+            (s.fields||[]).forEach(function(k){{ fieldsHtml += renderField(k); }});
+          }}
+          var isFinal = (idx === lastSubmitIdx);
+          var btnText = s.button_text || (isFinal && !isCouponStep ? C.button_text : isCouponStep ? 'Ir a la tienda →' : 'Continuar →');
+
+          if (isCouponStep) {{
+            // Coupon step: shown after submit, not a real form step
+            stepsHtml += '<div class="hb-step" id="hb-step-'+idx+'" style="text-align:center;padding-top:4px">' +
+              '<div style="font-size:36px;margin-bottom:8px">🎉</div>' +
+              '<div class="hb-coupon-box" id="hb-coupon-box">' +
+              '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+              '<div style="display:flex;align-items:center;justify-content:center;gap:10px">' +
+              '<p style="margin:0;font-size:26px;font-weight:900;color:'+btnBg+';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
+              '<button id="hb-copy-btn" type="button" style="background:none;border:1.5px solid '+btnBg+';border-radius:6px;padding:5px 10px;cursor:pointer;color:'+btnBg+';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">Copiar</button>' +
+              '</div>' +
+              (s.description ? '<p style="margin:8px 0 0;font-size:13px;color:#475569">'+s.description+'</p>' : '') +
+              '</div>' +
+              '<a href="https://happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
+              '</div>';
+          }} else {{
+            stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
+              fieldsHtml +
+              '<button id="hb-popup-btn" type="button" data-step="'+idx+'" data-final="'+(isFinal?'1':'0')+'">' + btnText + '</button>' +
+              '</div>';
+          }}
         }});
 
         var couponPlaceholder = (C.coupon_code || C.has_dynamic_coupon)
           ? '<div class="hb-coupon-box" id="hb-coupon-box" style="display:none">' +
-            '<p style="margin:0 0 6px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+            '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+            '<div style="display:flex;align-items:center;justify-content:center;gap:10px">' +
             '<p style="margin:0;font-size:26px;font-weight:900;color:' + btnBg + ';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
+            '<button id="hb-copy-btn" type="button" style="background:none;border:1.5px solid ' + btnBg + ';border-radius:6px;padding:5px 10px;cursor:pointer;color:' + btnBg + ';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">Copiar</button>' +
+            '</div>' +
             '<p style="margin:8px 0 0;font-size:12px;color:#64748b">Úsalo en tu próxima compra</p>' +
             '</div>'
           : '';
@@ -608,6 +714,18 @@ def _build_embed_js(cfg: dict) -> str:
         overlay.appendChild(box);
         document.body.appendChild(overlay);
 
+        // Wire "Otro/Otra" select fields: show text input when selected
+        box.querySelectorAll('select.hb-otro-sel').forEach(function(sel) {{
+          var inp = sel.parentNode ? sel.parentNode.querySelector('.hb-otro-inp') : null;
+          if (!inp) return;
+          function _chk() {{
+            var isOtro = sel.value.toLowerCase() === 'otro' || sel.value.toLowerCase() === 'otra';
+            inp.style.display = isOtro ? 'block' : 'none';
+            inp.required = isOtro;
+          }}
+          sel.addEventListener('change', _chk);
+        }});
+
         var closeBtn = document.getElementById('hb-popup-close');
         if (closeBtn) closeBtn.addEventListener('click', closePopup);
 
@@ -616,8 +734,19 @@ def _build_embed_js(cfg: dict) -> str:
 
         function collectStep(stepEl) {{
           var inputs = stepEl.querySelectorAll('input[name],select[name],textarea[name]');
+          var otroValues = {{}};
+          // First pass: collect _otro fields
+          inputs.forEach(function(el) {{
+            if (el.name && el.name.endsWith('_otro') && el.value.trim()) {{
+              var baseKey = el.name.slice(0, -5);
+              otroValues[baseKey] = el.value.trim();
+            }}
+          }});
+          // Second pass: collect main fields, replacing "Otro/Otra" with the typed value
           inputs.forEach(function(el) {{
             var n = el.name, v = el.value;
+            if (n.endsWith('_otro')) return; // handled above
+            if ((v.toLowerCase() === 'otro' || v.toLowerCase() === 'otra') && otroValues[n]) v = otroValues[n];
             if (n === 'email')     collectedData.email = v;
             else if (n === 'name') collectedData.name  = v;
             else if (n === 'phone')collectedData.phone = v;
@@ -645,6 +774,40 @@ def _build_embed_js(cfg: dict) -> str:
         }}
 
         document.addEventListener('click', function handler(e) {{
+          // Copy coupon button
+          var copyBtn = e.target.closest('#hb-copy-btn');
+          if (copyBtn) {{
+            var codeEl = document.getElementById('hb-coupon-code');
+            var code = codeEl ? codeEl.textContent.trim() : '';
+            if (code) {{
+              var done = function() {{
+                copyBtn.textContent = '¡Copiado!';
+                copyBtn.style.background = '#16a34a';
+                copyBtn.style.borderColor = '#16a34a';
+                copyBtn.style.color = '#fff';
+                setTimeout(function() {{
+                  copyBtn.textContent = 'Copiar';
+                  copyBtn.style.background = 'none';
+                  copyBtn.style.borderColor = '';
+                  copyBtn.style.color = '';
+                }}, 2000);
+              }};
+              if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(code).then(done).catch(done);
+              }} else {{
+                try {{
+                  var ta = document.createElement('textarea');
+                  ta.value = code; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                  document.body.appendChild(ta); ta.focus(); ta.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(ta);
+                }} catch(err) {{}}
+                done();
+              }}
+            }}
+            return;
+          }}
+
           var btn = e.target.closest('#hb-popup-btn');
           if (!btn) return;
 
@@ -685,20 +848,37 @@ def _build_embed_js(cfg: dict) -> str:
           }})
           .then(function(r) {{ return r.json(); }})
           .then(function(res) {{
-            document.getElementById('hb-popup-form').style.display = 'none';
-            if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
-            var suc = document.getElementById('hb-popup-success');
-            if (suc) suc.style.display = 'block';
-            // Show coupon if returned
             var code = res.coupon_code || C.coupon_code || '';
-            if (code) {{
-              var box2 = document.getElementById('hb-coupon-box');
-              var codeEl = document.getElementById('hb-coupon-code');
-              if (box2) box2.style.display = 'block';
-              if (codeEl) codeEl.textContent = code;
+            // Check if there's a coupon step to advance to
+            var couponStepIdx = -1;
+            if (C.steps && C.steps.length > 0) {{
+              for (var _ci = 0; _ci < C.steps.length; _ci++) {{
+                if (C.steps[_ci].coupon_step) {{ couponStepIdx = _ci; break; }}
+              }}
             }}
-            sessionStorage.setItem(STORE_KEY, 'submitted');
-            setTimeout(closePopup, 8000);
+            if (couponStepIdx >= 0) {{
+              // Advance to coupon step (step is inside the form — do NOT hide the form)
+              advanceStep(couponStepIdx);
+              if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
+              if (code) {{
+                var codeEl = document.getElementById('hb-coupon-code');
+                if (codeEl) codeEl.textContent = code;
+              }}
+            }} else {{
+              // No coupon step: show regular success screen
+              document.getElementById('hb-popup-form').style.display = 'none';
+              if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
+              var suc = document.getElementById('hb-popup-success');
+              if (suc) suc.style.display = 'block';
+              if (code) {{
+                var box2 = document.getElementById('hb-coupon-box');
+                var codeEl2 = document.getElementById('hb-coupon-code');
+                if (box2) box2.style.display = 'block';
+                if (codeEl2) codeEl2.textContent = code;
+              }}
+            }}
+            _ls.setItem(STORE_KEY, 'submitted');
+            setTimeout(closePopup, 10000);
           }})
           .catch(function() {{
             btn.disabled = false;
@@ -711,20 +891,29 @@ def _build_embed_js(cfg: dict) -> str:
       function closePopup() {{
         var el = document.getElementById('hb-popup-overlay');
         if (el) el.parentNode.removeChild(el);
-        sessionStorage.setItem(STORE_KEY, '1');
+        _ss.setItem(STORE_KEY + '_d', '1');
       }}
 
-      if (C.trigger === 'delay') {{
-        setTimeout(showPopup, C.delay_seconds * 1000);
-      }} else if (C.trigger === 'exit_intent') {{
+      // Triggers: activate delay AND/OR scroll (whichever fires first shows the popup)
+      if (C.trigger === 'exit_intent') {{
         document.addEventListener('mouseleave', function h(e) {{
           if (e.clientY <= 0) {{ showPopup(); document.removeEventListener('mouseleave', h); }}
         }});
-      }} else if (C.trigger === 'scroll') {{
-        window.addEventListener('scroll', function h() {{
-          var pct = (window.scrollY / Math.max(1, document.body.scrollHeight - window.innerHeight)) * 100;
-          if (pct >= C.scroll_pct) {{ showPopup(); window.removeEventListener('scroll', h); }}
-        }});
+      }} else {{
+        var _triggered = false;
+        function _triggerOnce() {{ if (!_triggered) {{ _triggered = true; showPopup(); }} }}
+        if (C.delay_seconds > 0) {{
+          setTimeout(_triggerOnce, C.delay_seconds * 1000);
+        }}
+        if (C.scroll_pct > 0) {{
+          window.addEventListener('scroll', function _sh() {{
+            var pct = (window.scrollY / Math.max(1, document.body.scrollHeight - window.innerHeight)) * 100;
+            if (pct >= C.scroll_pct) {{ _triggerOnce(); window.removeEventListener('scroll', _sh); }}
+          }});
+        }}
+        if (C.delay_seconds <= 0 && C.scroll_pct <= 0) {{
+          setTimeout(_triggerOnce, 5000);
+        }}
       }}
     }})();
     """).strip()

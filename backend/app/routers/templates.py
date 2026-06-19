@@ -7,6 +7,8 @@ from app.database import get_session
 from app.core.deps import get_current_user, require_editor
 from app.models.user import User
 from app.models.template import Template, TemplateCreate, TemplateRead, TemplateUpdate
+from app.models.campaign import Campaign
+from app.models.automation import Automation
 
 router = APIRouter()
 
@@ -65,6 +67,15 @@ def delete_template(
     tpl = session.get(Template, template_id)
     if not tpl:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+
+    # Nullify FK references so deletion doesn't fail on constraints
+    for c in session.exec(select(Campaign).where(Campaign.template_id == template_id)).all():
+        c.template_id = None
+        session.add(c)
+    for a in session.exec(select(Automation).where(Automation.template_id == template_id)).all():
+        a.template_id = None
+        session.add(a)
+
     session.delete(tpl)
     session.commit()
 

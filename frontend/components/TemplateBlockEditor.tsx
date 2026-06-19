@@ -4,17 +4,19 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronUp, ChevronDown, Trash2, Plus, Eye, Layout, Code,
   Star, X, Monitor, Smartphone, Search, Link as LinkIcon,
-  AlignLeft, Send,
+  AlignLeft, AlignCenter, AlignRight, Send,
 } from "lucide-react";
-import { shopifyApi, ShopifyProduct, api } from "@/lib/api";
+import { shopifyApi, ShopifyProduct, api, adminApi } from "@/lib/api";
+import { Upload } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-type BlockType = "header" | "text" | "image" | "button" | "product" | "coupon" | "divider" | "spacer";
+type BlockType = "header" | "text" | "image" | "button" | "product" | "product_grid" | "coupon" | "divider" | "spacer";
 
 export interface Block {
   id: string;
   type: BlockType;
   props: Record<string, string | number | boolean>;
+  _favName?: string;
 }
 
 // ── Defaults ───────────────────────────────────────────────────────────────────
@@ -37,6 +39,66 @@ const FONT_OPTIONS = [
   { label: "Georgia (Serif)", value: "Georgia, 'Times New Roman', serif" },
   { label: "Verdana", value: "Verdana, Geneva, Tahoma, sans-serif" },
   { label: "Courier New (Monospace)", value: "'Courier New', Courier, monospace" },
+];
+
+const TEMPLATE_VARS: { group: string; vars: { key: string; desc: string; raw?: boolean }[] }[] = [
+  {
+    group: "Siempre disponibles",
+    vars: [
+      { key: "nombre",        desc: "Nombre del contacto (ej: Juan)" },
+      { key: "first_name",    desc: "Primer nombre" },
+      { key: "email",         desc: "Email del contacto" },
+      { key: "orders_count",  desc: "Número de pedidos en Shopify" },
+      { key: "total_spent",   desc: "Total gastado en la tienda" },
+      { key: "ticket_medio",  desc: "Ticket promedio por pedido" },
+      { key: "shipping_city", desc: "Ciudad de envío" },
+      { key: "coupon_code",   desc: "Código de cupón dinámico" },
+      { key: "{% unsubscribe %}", desc: "Enlace para darse de baja", raw: true },
+    ],
+  },
+  {
+    group: "Carrito abandonado",
+    vars: [
+      { key: "cart_total",                    desc: "Total del carrito (ej: $29.990)" },
+      { key: "first_product",                 desc: "Nombre del primer producto" },
+      { key: "cart_url",                      desc: "URL del carrito" },
+      { key: "event.extra.checkout_url",      desc: "URL de checkout directo" },
+      { key: "event.extra.checkout_url_with_coupon", desc: "Checkout con cupón pre-aplicado" },
+    ],
+  },
+  {
+    group: "Pedidos",
+    vars: [
+      { key: "order_number",    desc: "Número de pedido (ej: #1234)" },
+      { key: "order_total",     desc: "Total del pedido" },
+      { key: "tracking_number", desc: "Número de seguimiento (fulfilled_order)" },
+    ],
+  },
+  {
+    group: "Historial de compras",
+    vars: [
+      { key: "producto_comprado_html",   desc: "HTML del producto comprado (solo cuando el cliente hizo 1 pedido)" },
+      { key: "producto_comprado",        desc: "Nombre del producto comprado (1 pedido)" },
+      { key: "productos_comprados_html", desc: "HTML lista de todos los productos comprados (más de 1 pedido)" },
+      { key: "primer_producto_comprado", desc: "Nombre del primer producto en su historial (más de 1 pedido)" },
+    ],
+  },
+  {
+    group: "Cumpleaños / Regalón",
+    vars: [
+      { key: "nombre_regalado",               desc: "Nombre del niño/destinatario del regalo (custom_fields)" },
+      { key: "dias_para_cumpleanos",           desc: "Días que faltan para el cumpleaños" },
+      { key: "fecha_cumpleanos",              desc: "Fecha del próximo cumpleaños" },
+      { key: "edad_regalon",                  desc: "Edad del regalón (custom_fields.edad_regalon)" },
+      { key: "productos_recomendados_edad_html", desc: "Grilla HTML de productos para la edad del regalón, sin los ya comprados" },
+    ],
+  },
+  {
+    group: "Cross-sell (con configuración)",
+    vars: [
+      { key: "recommended_products_html", desc: "Grilla HTML de productos recomendados (requiere cross_sell_config en la automatización)" },
+    ],
+  },
 ];
 
 const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
@@ -102,6 +164,13 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     height: "32",
     bg_color: "#ffffff",
   },
+  product_grid: {
+    variable: "productos_recomendados_edad_html",
+    bg_color: "#ffffff",
+    btn_color: "#f97316",
+    padding_y: "16",
+    padding_x: "0",
+  },
 };
 
 const PALETTE: { type: BlockType; label: string; sub: string }[] = [
@@ -111,6 +180,7 @@ const PALETTE: { type: BlockType; label: string; sub: string }[] = [
   { type: "button",  label: "Botón CTA",    sub: "Llamada a acción" },
   { type: "product", label: "Producto",     sub: "Imagen + precio" },
   { type: "coupon",  label: "Cupón",        sub: "Código descuento" },
+  { type: "product_grid", label: "Grilla productos", sub: "Recomendados / historial" },
   { type: "divider", label: "Divisor",      sub: "Línea separadora" },
   { type: "spacer",  label: "Espaciado",    sub: "Espacio en blanco" },
 ];
@@ -553,6 +623,20 @@ export function htmlToBlocks(htmlStr: string): Block[] {
       }
 
       sections.forEach(classifySection);
+
+      // Last-resort fallback: wrap the entire body content as a single text block.
+      // Covers plain-text HTML (only <p> tags, no block structure recognised above).
+      if (blocks.length === 0) {
+        const bodyContent = container.innerHTML.trim();
+        if (bodyContent) {
+          blocks.push({
+            id: uid("text"),
+            type: "text",
+            props: { ...DEFAULTS.text, content: bodyContent, bg_color: "#ffffff" },
+          });
+        }
+      }
+
       return blocks;
     }
   } catch {
@@ -653,6 +737,9 @@ function blockHtml(block: Block): string {
 
     case "spacer":
       return `<div style="height:${p.height}px;background:${p.bg_color};line-height:${p.height}px;font-size:1px;">&nbsp;</div>`;
+
+    case "product_grid":
+      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;">{{ ${p.variable} }}</div>`;
 
     default:
       return "";
@@ -874,12 +961,46 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
           <span style={{ fontSize: 11, color: "#d1d5db" }}>↕ {p.height}px</span>
         </div>
       );
+
+    case "product_grid": {
+      const varLabel: Record<string, string> = {
+        "productos_recomendados_edad_html": "Recomendados por edad",
+        "recommended_products_html": "Recomendados por compra",
+        "productos_comprados_html": "Historial de compras",
+      };
+      const label = varLabel[p.variable as string] || String(p.variable);
+      const placeholders = [
+        { name: "Marcadores Happy Lápiz Set 12 colores", price: "$12.990" },
+        { name: "Kit Lettering Completo Principiantes", price: "$24.990" },
+        { name: "Cuaderno Bocetos A5", price: "$8.490" },
+        { name: "Acuarelas 24 colores Premium", price: "$18.990" },
+      ];
+      return (
+        <div style={{ background: (p.bg_color as string) || "#fff", padding: `${p.padding_y || 16}px ${p.padding_x || 0}px` }}>
+          <div style={{ fontSize: 10, color: "#9ca3af", textAlign: "center", marginBottom: 10, fontFamily: "monospace" }}>
+            {"{{ "}{p.variable as string}{" }}"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {placeholders.map((prod, i) => (
+              <div key={i} style={{ textAlign: "center", padding: 10, border: "1px dashed #e5e7eb", borderRadius: 10 }}>
+                <div style={{ width: "100%", height: 90, backgroundColor: "#f3f4f6", borderRadius: 8, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#d1d5db", fontSize: 11 }}>imagen</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#111", lineHeight: 1.3, maxHeight: "3.9em", overflow: "hidden", marginBottom: 4 }}>{prod.name}</div>
+                <div style={{ fontSize: 13, color: "#e85d04", fontWeight: 700, marginBottom: 6 }}>{prod.price}</div>
+                <div style={{ display: "inline-block", background: "#f97316", color: "#fff", fontSize: 11, padding: "5px 12px", borderRadius: 12 }}>Ver producto →</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: "#c4b5fd", textAlign: "center", marginTop: 8 }}>{label} · vista previa con productos de ejemplo</div>
+        </div>
+      );
+    }
+
     default:
       return null;
   }
 }
 
-// ── Inline text editor (contentEditable) ──────────────────────────────────────
+// ── Inline text editor (contentEditable) with rich-text toolbar ───────────────
 function InlineTextEditor({
   content,
   style,
@@ -890,6 +1011,7 @@ function InlineTextEditor({
   onCommit: (html: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [, rerender] = useState(0);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -904,19 +1026,128 @@ function InlineTextEditor({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function execFmt(cmd: string, value?: string) {
+    ref.current?.focus();
+    try { document.execCommand("styleWithCSS", false, "true"); } catch { /* noop */ }
+    document.execCommand(cmd, false, value);
+    rerender((n) => n + 1);
+  }
+
+  function applyInlineStyle(prop: string, value: string) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) {
+      // No selection: apply to whole editor via execCommand fallback
+      if (prop === "color") execFmt("foreColor", value);
+      return;
+    }
+    try {
+      const span = document.createElement("span");
+      (span.style as unknown as Record<string, string>)[prop] = value;
+      range.surroundContents(span);
+    } catch { /* partial element selection — skip */ }
+    rerender((n) => n + 1);
+  }
+
+  function isActive(cmd: string) {
+    try { return document.queryCommandState(cmd); } catch { return false; }
+  }
+
+  const tb = "flex items-center justify-center w-7 h-7 rounded text-xs transition-colors select-none";
+  const off = "text-gray-600 hover:bg-gray-100";
+  const on  = "bg-brand-600 text-white";
+
   return (
-    <div
-      ref={ref}
-      contentEditable
-      suppressContentEditableWarning
-      style={{ ...style, outline: "2px solid #6366f1", outlineOffset: "-2px", cursor: "text", minHeight: 40 }}
-      onBlur={(e) => onCommit(e.currentTarget.innerHTML)}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        e.stopPropagation();
-        if (e.key === "Escape") e.currentTarget.blur();
-      }}
-    />
+    <div className="border-2 border-brand-400 rounded overflow-hidden">
+      {/* Formatting toolbar */}
+      <div
+        className="flex items-center gap-0.5 px-2 py-1.5 bg-white border-b border-gray-200 flex-wrap"
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        {/* B / I / U */}
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("bold"); }}
+          className={`${tb} font-bold ${isActive("bold") ? on : off}`} title="Negrita (Ctrl+B)">B</button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("italic"); }}
+          className={`${tb} italic ${isActive("italic") ? on : off}`} title="Cursiva (Ctrl+I)">I</button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("underline"); }}
+          className={`${tb} underline ${isActive("underline") ? on : off}`} title="Subrayado (Ctrl+U)">U</button>
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Font sizes */}
+        {[12, 14, 16, 18, 24, 32].map((sz) => (
+          <button key={sz}
+            onMouseDown={(e) => { e.preventDefault(); applyInlineStyle("fontSize", `${sz}px`); }}
+            className={`px-1.5 h-6 rounded text-xs font-medium ${off}`} title={`Tamaño ${sz}px`}>
+            {sz}
+          </button>
+        ))}
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Color swatches */}
+        {BRAND_PALETTE.map((c) => (
+          <button key={c}
+            onMouseDown={(e) => { e.preventDefault(); applyInlineStyle("color", c); }}
+            title={c}
+            style={{ background: c }}
+            className="w-5 h-5 rounded-full border border-gray-300 hover:scale-110 transition-transform shrink-0"
+          />
+        ))}
+        <input type="color" defaultValue="#222222"
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => { ref.current?.focus(); applyInlineStyle("color", e.target.value); }}
+          className="w-6 h-6 rounded border border-gray-300 cursor-pointer p-0 shrink-0" title="Color personalizado"
+        />
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Alignment */}
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("justifyLeft"); }}
+          className={`${tb} ${isActive("justifyLeft") ? on : off}`} title="Alinear izquierda">
+          <AlignLeft size={13} />
+        </button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("justifyCenter"); }}
+          className={`${tb} ${isActive("justifyCenter") ? on : off}`} title="Centrar">
+          <AlignCenter size={13} />
+        </button>
+        <button onMouseDown={(e) => { e.preventDefault(); execFmt("justifyRight"); }}
+          className={`${tb} ${isActive("justifyRight") ? on : off}`} title="Alinear derecha">
+          <AlignRight size={13} />
+        </button>
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        {/* Font family */}
+        <select
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => { ref.current?.focus(); applyInlineStyle("fontFamily", e.target.value); }}
+          defaultValue={FONT_OPTIONS[0].value}
+          className="h-6 text-xs border border-gray-200 rounded px-1 text-gray-700 max-w-[130px]"
+        >
+          {FONT_OPTIONS.map((f) => (
+            <option key={f.value} value={f.value}>{f.label.split(" (")[0]}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Editable area */}
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        style={{ ...style, outline: "none", cursor: "text", minHeight: 40 }}
+        onBlur={(e) => onCommit(e.currentTarget.innerHTML)}
+        onClick={(e) => e.stopPropagation()}
+        onKeyUp={() => rerender((n) => n + 1)}
+        onMouseUp={() => rerender((n) => n + 1)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Escape") e.currentTarget.blur();
+        }}
+      />
+    </div>
   );
 }
 
@@ -1053,12 +1284,18 @@ function PropsPanel({
   onChange,
   onPickProduct,
   onSaveToFavorites,
+  onUploadImage,
+  onPickShopifyImage,
+  imgUploading,
   isEditing = false,
 }: {
   block: Block;
   onChange: (p: Block["props"]) => void;
   onPickProduct: () => void;
   onSaveToFavorites: () => void;
+  onUploadImage: () => void;
+  onPickShopifyImage: () => void;
+  imgUploading: string | null;
   isEditing?: boolean;
 }) {
   const p = block.props;
@@ -1101,7 +1338,28 @@ function PropsPanel({
       </>}
 
       {block.type === "image" && <>
-        <Field label="URL de la imagen"><TI value={p.src as string} onChange={(v) => set("src", v)} placeholder="https://cdn.shopify.com/..." /></Field>
+        <Field label="URL de la imagen">
+          <TI value={p.src as string} onChange={(v) => set("src", v)} placeholder="https://cdn.shopify.com/..." />
+          <div className="flex gap-3 mt-1.5">
+            <button
+              type="button"
+              disabled={imgUploading === block.id}
+              onClick={onUploadImage}
+              className="flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-800 disabled:opacity-50"
+            >
+              <Upload size={13} />
+              {imgUploading === block.id ? "Subiendo..." : "Subir desde PC"}
+            </button>
+            <button
+              type="button"
+              onClick={onPickShopifyImage}
+              className="flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-800"
+            >
+              <Upload size={13} className="rotate-180" />
+              Elegir de Shopify
+            </button>
+          </div>
+        </Field>
         <Field label="Texto alternativo"><TI value={p.alt as string} onChange={(v) => set("alt", v)} placeholder="Descripción de la imagen" /></Field>
         <Field label="Enlace al hacer clic"><TI value={p.link as string} onChange={(v) => set("link", v)} placeholder="https://..." /></Field>
         <Field label="Ancho (px) — 0 = ancho completo">
@@ -1197,12 +1455,98 @@ function PropsPanel({
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
       </>}
 
+      {block.type === "product_grid" && <>
+        <Field label="Variable a usar">
+          <select
+            value={p.variable as string}
+            onChange={(e) => set("variable", e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            <option value="productos_recomendados_edad_html">Recomendados por edad del regalón</option>
+            <option value="recommended_products_html">Recomendados por última compra</option>
+            <option value="productos_comprados_html">Historial de compras</option>
+          </select>
+        </Field>
+        <Field label="Color botones"><CI value={p.btn_color as string ?? "#f97316"} onChange={(v) => set("btn_color", v)} /></Field>
+        <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
+        <Field label="Padding vertical (px)"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} min={0} max={80} /></Field>
+        <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3 leading-relaxed">
+          Este bloque inserta <code className="font-mono bg-gray-100 px-1 rounded">{"{{ variable }}"}</code> en el HTML. Los productos reales se inyectan automáticamente en cada automatización. La vista previa del editor usa productos de ejemplo.
+        </div>
+      </>}
+
       {/* Save to favorites */}
       <div className="pt-2 border-t border-gray-100">
         <button onClick={onSaveToFavorites}
           className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors">
           <Star size={12} /> Guardar como favorito
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Shopify Image Picker Modal ────────────────────────────────────────────────
+function ShopifyImagePickerModal({ onSelect, onClose }: { onSelect: (url: string) => void; onClose: () => void }) {
+  const [images, setImages] = React.useState<{ url: string; alt: string }[]>([]);
+  const [cursor, setCursor] = React.useState<string | undefined>(undefined);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+
+  const fetchImages = async (after?: string) => {
+    setLoading(true);
+    try {
+      const res = await adminApi.shopifyImages(after);
+      const data = res.data;
+      setImages((prev) => after ? [...prev, ...data.images] : data.images);
+      setHasMore(data.pageInfo.hasNextPage);
+      setCursor(data.pageInfo.endCursor);
+    } catch { /* noop */ }
+    finally { setLoading(false); }
+  };
+
+  React.useEffect(() => { fetchImages(); }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 flex flex-col" style={{ maxHeight: "85vh" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <h3 className="font-semibold text-gray-900">Imágenes de Shopify</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X size={20} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading && images.length === 0 ? (
+            <div className="grid grid-cols-4 gap-3">
+              {[...Array(12)].map((_, i) => <div key={i} className="aspect-square bg-gray-100 rounded-lg animate-pulse" />)}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-4 gap-3">
+                {images.map((img, i) => (
+                  <button
+                    key={i}
+                    onClick={() => onSelect(img.url)}
+                    className="aspect-square rounded-lg overflow-hidden border-2 border-transparent hover:border-brand-500 transition-colors focus:outline-none focus:border-brand-500"
+                  >
+                    <img src={img.url} alt={img.alt} className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+              {hasMore && (
+                <div className="text-center mt-4">
+                  <button
+                    onClick={() => fetchImages(cursor)}
+                    disabled={loading}
+                    className="px-4 py-2 text-sm text-brand-600 border border-brand-200 rounded-lg hover:bg-brand-50 disabled:opacity-50"
+                  >
+                    {loading ? "Cargando..." : "Cargar más"}
+                  </button>
+                </div>
+              )}
+              {images.length === 0 && <p className="text-center text-gray-400 py-12">No hay imágenes en Shopify Files.</p>}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1314,13 +1658,19 @@ export function TemplateBlockEditor({
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; cartFound?: boolean; checkoutUrl?: string } | null>(null);
   const [tab, setTab] = useState<"editor" | "preview" | "html" | "plain">(
-    initialMode === "plain" ? "plain" : initialHtmlOverride ? "editor" : "editor"
+    initialMode === "plain" ? "plain" : "editor"
   );
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [favorites, setFavorites] = useState<Block[]>(() => loadFavorites());
+  const [varsOpen, setVarsOpen] = useState(false);
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
   const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
   const [convertMsg, setConvertMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [imgUploading, setImgUploading] = useState<string | null>(null);
+  const [shopifyPickerOpen, setShopifyPickerOpen] = useState(false);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const imgUploadTargetRef = useRef<string | null>(null);
+  const shopifyPickerTargetRef = useRef<string | null>(null);
 
   // When the editor tab is active and there's a pending HTML override with no blocks,
   // auto-convert so the user lands directly in the editable canvas instead of a dead screen.
@@ -1356,10 +1706,33 @@ export function TemplateBlockEditor({
 
   function saveToFavorites() {
     if (!selected) return;
-    const fav: Block = { ...selected, id: `fav_${Date.now()}` };
+    const defaultName = PALETTE.find((x) => x.type === selected.type)?.label ?? selected.type;
+    const name = window.prompt("Nombre para este favorito:", defaultName);
+    if (name === null) return;
+    const fav: Block = { ...selected, id: `fav_${Date.now()}`, _favName: name.trim() || defaultName };
     const next = [...favorites, fav];
     setFavorites(next);
     saveFavorites(next);
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const blockId = imgUploadTargetRef.current;
+    if (!file || !blockId) return;
+    e.target.value = "";
+    setImgUploading(blockId);
+    try {
+      const res = await adminApi.uploadImage(file);
+      const url = res.data.url;
+      setBlocks((prev) =>
+        prev.map((b) => b.id === blockId ? { ...b, props: { ...b.props, src: url } } : b)
+      );
+    } catch {
+      alert("No se pudo subir la imagen. Revisa la consola o intenta de nuevo.");
+    } finally {
+      setImgUploading(null);
+      imgUploadTargetRef.current = null;
+    }
   }
 
   function handleConvertToBlocks() {
@@ -1442,10 +1815,30 @@ export function TemplateBlockEditor({
 
   return (
     <>
+      <input
+        ref={imgInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageUpload}
+      />
       {productPickerBlockId && (
         <ProductPickerModal
           onSelect={handleSelectProduct}
           onClose={() => setProductPickerBlockId(null)}
+        />
+      )}
+      {shopifyPickerOpen && (
+        <ShopifyImagePickerModal
+          onSelect={(url) => {
+            const blockId = shopifyPickerTargetRef.current;
+            if (blockId) {
+              setBlocks((prev) => prev.map((b) => b.id === blockId ? { ...b, props: { ...b.props, src: url } } : b));
+            }
+            setShopifyPickerOpen(false);
+            shopifyPickerTargetRef.current = null;
+          }}
+          onClose={() => { setShopifyPickerOpen(false); shopifyPickerTargetRef.current = null; }}
         />
       )}
 
@@ -1557,7 +1950,8 @@ export function TemplateBlockEditor({
 
           {/* Left: palette (hidden in plain text mode) */}
           {!isPlainMode && (
-            <div className="w-44 border-r border-gray-200 bg-gray-50 flex flex-col shrink-0 overflow-y-auto">
+            <div className="w-44 border-r border-gray-200 bg-gray-50 flex flex-col shrink-0">
+              <div className="flex-1 overflow-y-auto">
               <p className="text-xs font-bold text-gray-400 uppercase tracking-widest px-4 pt-4 pb-2">Bloques</p>
               <div className="px-2 space-y-0.5">
                 {PALETTE.map(({ type, label, sub }) => (
@@ -1579,13 +1973,17 @@ export function TemplateBlockEditor({
                   </p>
                   <div className="px-2 pb-4 space-y-0.5">
                     {favorites.map((fav) => {
-                      const label = PALETTE.find((x) => x.type === fav.type)?.label ?? fav.type;
+                      const label = fav._favName || PALETTE.find((x) => x.type === fav.type)?.label || fav.type;
+                      const typeSub = PALETTE.find((x) => x.type === fav.type)?.sub ?? "";
                       return (
                         <div key={fav.id} className="flex items-center gap-1 group">
                           <button onClick={() => addFavorite(fav)}
                             className="flex-1 flex items-start gap-2 px-3 py-2 rounded-lg text-left hover:bg-white hover:shadow-sm border border-transparent hover:border-amber-200 transition-all">
                             <Star size={11} className="text-amber-400 shrink-0 mt-0.5" />
-                            <p className="text-xs font-semibold text-gray-700 truncate">{label}</p>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-gray-700 truncate">{label}</p>
+                              {typeSub && <p className="text-xs text-gray-400 truncate">{typeSub}</p>}
+                            </div>
                           </button>
                           <button onClick={() => removeFavorite(fav.id)}
                             className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center text-gray-400 hover:text-red-500 transition-all shrink-0">
@@ -1597,6 +1995,58 @@ export function TemplateBlockEditor({
                   </div>
                 </>
               )}
+              </div>{/* end scrollable blocks */}
+
+              {/* Variables panel — sticky at bottom, dropdown opens upward */}
+              <div className="relative border-t border-gray-200 bg-gray-50 shrink-0">
+                {varsOpen && (
+                  <div className="absolute bottom-full left-0 right-0 z-50 bg-white border border-gray-200 shadow-xl rounded-t-xl overflow-y-auto"
+                    style={{ maxHeight: "min(65vh, 520px)" }}>
+                    <div className="px-2 py-3 space-y-3">
+                      {TEMPLATE_VARS.map((group) => (
+                        <div key={group.group}>
+                          <p className="text-xs font-semibold text-gray-400 px-2 mb-1 uppercase tracking-wider">{group.group}</p>
+                          <div className="space-y-0.5">
+                            {group.vars.map((v) => {
+                              const tag = v.raw ? v.key : `{{ ${v.key} }}`;
+                              return (
+                                <button
+                                  key={v.key}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => {
+                                    const active = document.activeElement;
+                                    const isEditable =
+                                      active?.getAttribute("contenteditable") === "true" ||
+                                      active?.tagName === "TEXTAREA";
+                                    if (isEditable) {
+                                      document.execCommand("insertText", false, tag);
+                                    } else {
+                                      navigator.clipboard.writeText(tag).catch(() => {});
+                                    }
+                                  }}
+                                  className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-brand-50 border border-transparent hover:border-brand-200 transition-all group"
+                                  title="Clic para insertar en el editor activo"
+                                >
+                                  <span className="text-xs font-mono text-brand-700 block truncate">{tag}</span>
+                                  <span className="text-xs text-gray-400 group-hover:text-gray-600 leading-tight block">{v.desc}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <button
+                  onClick={() => setVarsOpen((v) => !v)}
+                  className="w-full flex items-center gap-1.5 px-4 py-3 text-left hover:bg-gray-100 transition-colors"
+                >
+                  <span className="text-xs font-bold text-brand-500 uppercase tracking-widest">{"{{ }}"}</span>
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest flex-1">Variables</span>
+                  <span className="text-xs text-gray-400">{varsOpen ? "▾" : "▴"}</span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -1771,7 +2221,14 @@ export function TemplateBlockEditor({
                   )}
                   <iframe srcDoc={previewHtml} className="w-full border-0 bg-white"
                     style={{ minHeight: 500, borderRadius: previewDevice === "mobile" ? "0 0 16px 16px" : 0 }}
-                    title="Preview email" />
+                    title="Preview email"
+                    onLoad={(e) => {
+                      const f = e.currentTarget;
+                      try {
+                        const h = f.contentDocument?.documentElement?.scrollHeight;
+                        if (h && h > 0) f.style.height = h + "px";
+                      } catch {}
+                    }} />
                 </div>
               </div>
             )}
@@ -1836,6 +2293,9 @@ export function TemplateBlockEditor({
                     onChange={(props) => update(selected.id, props)}
                     onPickProduct={() => setProductPickerBlockId(selected.id)}
                     onSaveToFavorites={saveToFavorites}
+                    onUploadImage={() => { imgUploadTargetRef.current = selected.id; imgInputRef.current?.click(); }}
+                    onPickShopifyImage={() => { shopifyPickerTargetRef.current = selected.id; setShopifyPickerOpen(true); }}
+                    imgUploading={imgUploading}
                     isEditing={editingId === selected.id}
                   />
                 ) : (

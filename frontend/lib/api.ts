@@ -151,10 +151,22 @@ export const syncApi = {
 export const adminApi = {
   syncProducts: () => api.post("/admin/sync-products"),
   seedTemplates: () => api.post("/admin/seed-templates"),
-  getProducts: (params?: { search?: string; product_type?: string; page?: number }) =>
+  getProducts: (params?: { search?: string; product_type?: string; page?: number; sort_by?: string; sort_dir?: string }) =>
     api.get<{ total: number; page: number; per_page: number; products: SyncedProduct[]; product_types: string[] }>(
       "/admin/products",
       { params }
+    ),
+  uploadImage: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<{ ok: boolean; url: string }>("/admin/upload-image", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  shopifyImages: (after?: string) =>
+    api.get<{ images: { url: string; width?: number; height?: number; alt: string }[]; pageInfo: { hasNextPage: boolean; endCursor?: string } }>(
+      "/admin/shopify-images",
+      { params: after ? { after } : {} }
     ),
 };
 
@@ -190,4 +202,5 @@ export interface SyncedProduct {
   price: number;
   status: string;
   synced_at: string | null;
+  edad_recomendada: string | null;
 }
