@@ -586,8 +586,11 @@ def _build_embed_js(cfg: dict) -> str:
             stepsHtml += '<div class="hb-step" id="hb-step-'+idx+'" style="text-align:center;padding-top:4px">' +
               '<div style="font-size:36px;margin-bottom:8px">🎉</div>' +
               '<div class="hb-coupon-box" id="hb-coupon-box">' +
-              '<p style="margin:0 0 6px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+              '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+              '<div style="display:flex;align-items:center;justify-content:center;gap:10px">' +
               '<p style="margin:0;font-size:26px;font-weight:900;color:'+btnBg+';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
+              '<button id="hb-copy-btn" type="button" style="background:none;border:1.5px solid '+btnBg+';border-radius:6px;padding:5px 10px;cursor:pointer;color:'+btnBg+';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">Copiar</button>' +
+              '</div>' +
               (s.description ? '<p style="margin:8px 0 0;font-size:13px;color:#475569">'+s.description+'</p>' : '') +
               '</div>' +
               '<a href="https://happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
@@ -602,8 +605,11 @@ def _build_embed_js(cfg: dict) -> str:
 
         var couponPlaceholder = (C.coupon_code || C.has_dynamic_coupon)
           ? '<div class="hb-coupon-box" id="hb-coupon-box" style="display:none">' +
-            '<p style="margin:0 0 6px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+            '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+            '<div style="display:flex;align-items:center;justify-content:center;gap:10px">' +
             '<p style="margin:0;font-size:26px;font-weight:900;color:' + btnBg + ';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
+            '<button id="hb-copy-btn" type="button" style="background:none;border:1.5px solid ' + btnBg + ';border-radius:6px;padding:5px 10px;cursor:pointer;color:' + btnBg + ';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">Copiar</button>' +
+            '</div>' +
             '<p style="margin:8px 0 0;font-size:12px;color:#64748b">Úsalo en tu próxima compra</p>' +
             '</div>'
           : '';
@@ -707,6 +713,40 @@ def _build_embed_js(cfg: dict) -> str:
         }}
 
         document.addEventListener('click', function handler(e) {{
+          // Copy coupon button
+          var copyBtn = e.target.closest('#hb-copy-btn');
+          if (copyBtn) {{
+            var codeEl = document.getElementById('hb-coupon-code');
+            var code = codeEl ? codeEl.textContent.trim() : '';
+            if (code) {{
+              var done = function() {{
+                copyBtn.textContent = '¡Copiado!';
+                copyBtn.style.background = '#16a34a';
+                copyBtn.style.borderColor = '#16a34a';
+                copyBtn.style.color = '#fff';
+                setTimeout(function() {{
+                  copyBtn.textContent = 'Copiar';
+                  copyBtn.style.background = 'none';
+                  copyBtn.style.borderColor = '';
+                  copyBtn.style.color = '';
+                }}, 2000);
+              }};
+              if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(code).then(done).catch(done);
+              }} else {{
+                try {{
+                  var ta = document.createElement('textarea');
+                  ta.value = code; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                  document.body.appendChild(ta); ta.focus(); ta.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(ta);
+                }} catch(err) {{}}
+                done();
+              }}
+            }}
+            return;
+          }}
+
           var btn = e.target.closest('#hb-popup-btn');
           if (!btn) return;
 
