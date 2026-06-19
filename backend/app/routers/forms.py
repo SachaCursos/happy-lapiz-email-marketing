@@ -496,9 +496,21 @@ def _build_embed_js(cfg: dict) -> str:
         '#hb-popup-fine{{margin:12px 0 0;color:#94a3b8;font-size:11px;text-align:center;}}',
       ].join('\\n');
 
-      var style = document.createElement('style');
-      style.textContent = STYLES;
-      document.head.appendChild(style);
+      try {{
+        var style = document.createElement('style');
+        style.textContent = STYLES;
+        (document.head || document.documentElement).appendChild(style);
+      }} catch(e) {{}}
+
+      // ── Debug indicator (shows embed.js loaded) ─────────────────────────────
+      try {{
+        var _dbg = document.createElement('div');
+        _dbg.id = 'hb-debug-ok';
+        _dbg.style.cssText = 'position:fixed;bottom:4px;right:4px;background:#16a34a;color:#fff;padding:4px 8px;font-size:11px;border-radius:4px;z-index:2147483647;font-family:sans-serif';
+        _dbg.textContent = 'Popup OK';
+        (document.body || document.documentElement).appendChild(_dbg);
+        setTimeout(function(){{ if (_dbg.parentNode) _dbg.parentNode.removeChild(_dbg); }}, 5000);
+      }} catch(e) {{}}
 
       // ── Field renderer ──────────────────────────────────────────────────────
       var CF_MAP = {{}};
