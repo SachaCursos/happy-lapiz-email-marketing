@@ -516,8 +516,18 @@ def _build_embed_js(cfg: dict) -> str:
           lbl = '<label class="hb-label">' + cf.label + req + '</label>';
           if (cf.type === 'select') {{
             var opts = '<option value="">' + (cf.placeholder||'Seleccionar…') + '</option>';
-            (cf.options||[]).forEach(function(o){{ opts += '<option value="'+o+'">'+o+'</option>'; }});
-            inp = '<select class="hb-input" name="' + key + '"' + (cf.required?' required':'') + '>' + opts + '</select>';
+            var hasOtro = false;
+            (cf.options||[]).forEach(function(o){{
+              opts += '<option value="'+o+'">'+o+'</option>';
+              if (o.toLowerCase() === 'otro' || o.toLowerCase() === 'otra') hasOtro = true;
+            }});
+            var otroInput = hasOtro
+              ? '<input class="hb-input" type="text" name="' + key + '_otro" placeholder="¿Cuál?" style="display:none;margin-top:-4px" />'
+              : '';
+            var onchange = hasOtro
+              ? ' onchange="(function(s){{var n=s.parentNode.querySelector(\'input[name=\\''+key+'_otro\\']\');if(n){{n.style.display=(s.value.toLowerCase()==\'otro\'||s.value.toLowerCase()==\'otra\')?\'block\':\'none\';n.required=(s.value.toLowerCase()==\'otro\'||s.value.toLowerCase()==\'otra\');}}}}})(this)"'
+              : '';
+            inp = '<select class="hb-input" name="' + key + '"' + (cf.required?' required':'') + onchange + '>' + opts + '</select>' + otroInput;
           }} else if (cf.type === 'textarea') {{
             inp = '<textarea class="hb-input" name="' + key + '" placeholder="' + (cf.placeholder||'') + '" rows="2"' + (cf.required?' required':'') + ' style="resize:none"></textarea>';
           }} else {{
@@ -640,8 +650,19 @@ def _build_embed_js(cfg: dict) -> str:
 
         function collectStep(stepEl) {{
           var inputs = stepEl.querySelectorAll('input[name],select[name],textarea[name]');
+          var otroValues = {{}};
+          // First pass: collect _otro fields
+          inputs.forEach(function(el) {{
+            if (el.name && el.name.endsWith('_otro') && el.value.trim()) {{
+              var baseKey = el.name.slice(0, -5);
+              otroValues[baseKey] = el.value.trim();
+            }}
+          }});
+          // Second pass: collect main fields, replacing "Otro/Otra" with the typed value
           inputs.forEach(function(el) {{
             var n = el.name, v = el.value;
+            if (n.endsWith('_otro')) return; // handled above
+            if ((v.toLowerCase() === 'otro' || v.toLowerCase() === 'otra') && otroValues[n]) v = otroValues[n];
             if (n === 'email')     collectedData.email = v;
             else if (n === 'name') collectedData.name  = v;
             else if (n === 'phone')collectedData.phone = v;
