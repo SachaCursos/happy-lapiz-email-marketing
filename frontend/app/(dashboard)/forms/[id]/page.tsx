@@ -135,7 +135,9 @@ function PopupPreview({
   const btnText = activeStep?.button_text ||
     (steps && previewStep < steps.length - 1 ? "Continuar →" : form.button_text);
 
+  // Merge saved fields (from DB) + local unsaved changes so preview always shows all fields
   const fieldMap: Record<string, FormField> = {};
+  (form.custom_form_fields ?? []).forEach((f) => { fieldMap[f.key] = f; });
   currentFields.forEach((f) => { fieldMap[f.key] = f; });
 
   function renderFieldPreview(key: string) {
@@ -143,7 +145,7 @@ function PopupPreview({
     if (key === "name") return <div key={key} style={{ ...inputStyle, color: "#94a3b8" }}>Tu nombre</div>;
     if (key === "phone") return <div key={key} style={{ ...inputStyle, color: "#94a3b8" }}>Tu teléfono</div>;
     const cf = fieldMap[key];
-    if (!cf) return null;
+    if (!cf) return <div key={key} style={{ ...inputStyle, color: "#94a3b8" }}>{key}</div>;
     return <div key={key} style={{ ...inputStyle, color: "#94a3b8", height: cf.type === "textarea" ? 64 : 42 }}>{cf.label}{cf.required ? " *" : ""}</div>;
   }
 
