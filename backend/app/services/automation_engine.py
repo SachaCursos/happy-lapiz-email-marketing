@@ -782,64 +782,72 @@ def _process_enrollments(session: Session) -> None:
     ).all()
 
     for enrollment in ready:
-        auto = session.get(Automation, enrollment.automation_id)
-        if not auto or auto.status != "active":
-            enrollment.status = "cancelled"
+        try:
+            auto = session.get(Automation, enrollment.automation_id)
+            if not auto or auto.status != "active":
+                enrollment.status = "cancelled"
+                session.add(enrollment)
+                session.commit()
+                continue
+
+            steps = _get_steps(auto)
+            step_idx = enrollment.next_step - 1  # 0-indexed
+
+            if step_idx >= len(steps):
+                enrollment.status = "completed"
+                session.add(enrollment)
+                session.commit()
+                continue
+
+            step = steps[step_idx]
+
+            # Check condition — if it fails, the contact converted/shouldn't receive
+            if not _passes_condition(step.get("condition"), enrollment, session):
+                enrollment.status = "converted"
+                logger.info("Enrollment %d: condition '%s' failed, marking converted", enrollment.id, step.get("condition"))
+                session.add(enrollment)
+                session.commit()
+                continue
+
+            # Guard against double-send (e.g. if engine ran twice concurrently)
+            if _already_sent_step(session, auto.id, enrollment.trigger_key, enrollment.next_step):
+                logger.warning("Enrollment %d step %d already sent, advancing", enrollment.id, enrollment.next_step)
+            else:
+                contact = session.exec(
+                    select(Contact).where(Contact.email == enrollment.contact_email.lower())
+                ).first()
+                if not contact:
+                    extra = json.loads(enrollment.extra_vars_json or "{}")
+                    contact = Contact(
+                        email=enrollment.contact_email,
+                        name=extra.get("nombre", enrollment.contact_email),
+                        opted_in=True,
+                        orders_count=0,
+                    )
+
+                extra_vars = json.loads(enrollment.extra_vars_json or "{}")
+                effective_step, variant_label = _pick_variant(step)
+                _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
+
+            # Advance to next step
+            next_step_num = enrollment.next_step + 1
+            if next_step_num > len(steps):
+                enrollment.status = "completed"
+            else:
+                next_step = steps[next_step_num - 1]
+                delay = float(next_step.get("delay_hours", 24))
+                enrollment.next_step = next_step_num
+                enrollment.next_send_at = now + timedelta(hours=delay)
+
             session.add(enrollment)
             session.commit()
-            continue
-
-        steps = _get_steps(auto)
-        step_idx = enrollment.next_step - 1  # 0-indexed
-
-        if step_idx >= len(steps):
-            enrollment.status = "completed"
-            session.add(enrollment)
-            session.commit()
-            continue
-
-        step = steps[step_idx]
-
-        # Check condition — if it fails, the contact converted/shouldn't receive
-        if not _passes_condition(step.get("condition"), enrollment, session):
-            enrollment.status = "converted"
-            logger.info("Enrollment %d: condition '%s' failed, marking converted", enrollment.id, step.get("condition"))
-            session.add(enrollment)
-            session.commit()
-            continue
-
-        # Guard against double-send (e.g. if engine ran twice concurrently)
-        if _already_sent_step(session, auto.id, enrollment.trigger_key, enrollment.next_step):
-            logger.warning("Enrollment %d step %d already sent, advancing", enrollment.id, enrollment.next_step)
-        else:
-            contact = session.exec(
-                select(Contact).where(Contact.email == enrollment.contact_email.lower())
-            ).first()
-            if not contact:
-                extra = json.loads(enrollment.extra_vars_json or "{}")
-                contact = Contact(
-                    email=enrollment.contact_email,
-                    name=extra.get("nombre", enrollment.contact_email),
-                    opted_in=True,
-                    orders_count=0,
-                )
-
-            extra_vars = json.loads(enrollment.extra_vars_json or "{}")
-            effective_step, variant_label = _pick_variant(step)
-            _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
-
-        # Advance to next step
-        next_step_num = enrollment.next_step + 1
-        if next_step_num > len(steps):
-            enrollment.status = "completed"
-        else:
-            next_step = steps[next_step_num - 1]
-            delay = float(next_step.get("delay_hours", 24))
-            enrollment.next_step = next_step_num
-            enrollment.next_send_at = now + timedelta(hours=delay)
-
-        session.add(enrollment)
-        session.commit()
+        except Exception as exc:
+            logger.exception("Enrollment %d (auto %d, %s) processing error: %s",
+                             enrollment.id, enrollment.automation_id, enrollment.contact_email, exc)
+            try:
+                session.rollback()
+            except Exception:
+                pass
 
 
 # ── Trigger handlers (Phase 1 — enroll only, don't send) ─────────────────────
