@@ -1307,14 +1307,23 @@ def run_automations() -> None:
             logger.exception("Enrollment processing error: %s", exc)
 
 
+def _run_with_timeout(fn, timeout_sec: int, label: str) -> None:
+    """Run fn in a thread; log a warning if it exceeds timeout_sec."""
+    t = threading.Thread(target=fn, daemon=True, name=f"sched-{label}")
+    t.start()
+    t.join(timeout=timeout_sec)
+    if t.is_alive():
+        logger.error("Scheduler task '%s' timed out after %ds — skipping", label, timeout_sec)
+
+
 def start_scheduler() -> None:
     def loop():
         time.sleep(10)
         while True:
             try:
-                run_automations()
-                run_scheduled_campaigns()
-                sync_contacts_from_shopify_orders()
+                _run_with_timeout(run_automations, 120, "run_automations")
+                _run_with_timeout(run_scheduled_campaigns, 120, "run_scheduled_campaigns")
+                _run_with_timeout(sync_contacts_from_shopify_orders, 90, "sync_shopify")
             except Exception as exc:
                 logger.exception("Automation scheduler error: %s", exc)
             time.sleep(60)

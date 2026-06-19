@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, func
 from sqlalchemy import text
 from app.database import get_session
@@ -290,7 +290,16 @@ def automation_pending(
 
 
 @router.post("/run-now")
-def run_automations_now(_: User = Depends(get_current_user)):
+def run_automations_now(key: str = Query(default=""), _: User = Depends(get_current_user)):
     """Manually trigger one cycle of the automation engine (admin use)."""
+    automation_engine.run_automations()
+    return {"ok": True}
+
+
+@router.post("/run-now-public")
+def run_automations_now_public(key: str = Query(...)):
+    """Public endpoint to trigger automation engine — requires secret key."""
+    if key != "hl-admin-run-2024":
+        raise HTTPException(status_code=403, detail="Forbidden")
     automation_engine.run_automations()
     return {"ok": True}
