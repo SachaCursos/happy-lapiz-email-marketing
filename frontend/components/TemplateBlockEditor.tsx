@@ -1948,7 +1948,8 @@ export function TemplateBlockEditor({
 
           {/* Left: palette (hidden in plain text mode) */}
           {!isPlainMode && (
-            <div className="w-44 border-r border-gray-200 bg-gray-50 flex flex-col shrink-0 overflow-y-auto">
+            <div className="w-44 border-r border-gray-200 bg-gray-50 flex flex-col shrink-0">
+              <div className="flex-1 overflow-y-auto">
               <p className="text-xs font-bold text-gray-400 uppercase tracking-widest px-4 pt-4 pb-2">Bloques</p>
               <div className="px-2 space-y-0.5">
                 {PALETTE.map(({ type, label, sub }) => (
@@ -1992,51 +1993,58 @@ export function TemplateBlockEditor({
                   </div>
                 </>
               )}
-              {/* Variables panel */}
-              <button
-                onClick={() => setVarsOpen((v) => !v)}
-                className="w-full flex items-center gap-1.5 px-4 pt-4 pb-2 text-left"
-              >
-                <span className="text-xs font-bold text-brand-500 uppercase tracking-widest">{"{{ }}"}</span>
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest flex-1">Variables</span>
-                <span className="text-xs text-gray-400">{varsOpen ? "▴" : "▾"}</span>
-              </button>
-              {varsOpen && (
-                <div className="px-2 pb-4 space-y-3 overflow-y-auto max-h-80">
-                  {TEMPLATE_VARS.map((group) => (
-                    <div key={group.group}>
-                      <p className="text-xs font-semibold text-gray-400 px-2 mb-1 uppercase tracking-wider">{group.group}</p>
-                      <div className="space-y-0.5">
-                        {group.vars.map((v) => {
-                          const tag = v.raw ? v.key : `{{ ${v.key} }}`;
-                          return (
-                            <button
-                              key={v.key}
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => {
-                                const active = document.activeElement;
-                                const isEditable =
-                                  active?.getAttribute("contenteditable") === "true" ||
-                                  active?.tagName === "TEXTAREA";
-                                if (isEditable) {
-                                  document.execCommand("insertText", false, tag);
-                                } else {
-                                  navigator.clipboard.writeText(tag).catch(() => {});
-                                }
-                              }}
-                              className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-brand-50 border border-transparent hover:border-brand-200 transition-all group"
-                              title="Clic para insertar en el editor activo"
-                            >
-                              <span className="text-xs font-mono text-brand-700 block truncate">{tag}</span>
-                              <span className="text-xs text-gray-400 group-hover:text-gray-600 leading-tight block">{v.desc}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
+              </div>{/* end scrollable blocks */}
+
+              {/* Variables panel — sticky at bottom, dropdown opens upward */}
+              <div className="relative border-t border-gray-200 bg-gray-50 shrink-0">
+                {varsOpen && (
+                  <div className="absolute bottom-full left-0 right-0 z-50 bg-white border border-gray-200 shadow-xl rounded-t-xl overflow-y-auto"
+                    style={{ maxHeight: "min(65vh, 520px)" }}>
+                    <div className="px-2 py-3 space-y-3">
+                      {TEMPLATE_VARS.map((group) => (
+                        <div key={group.group}>
+                          <p className="text-xs font-semibold text-gray-400 px-2 mb-1 uppercase tracking-wider">{group.group}</p>
+                          <div className="space-y-0.5">
+                            {group.vars.map((v) => {
+                              const tag = v.raw ? v.key : `{{ ${v.key} }}`;
+                              return (
+                                <button
+                                  key={v.key}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => {
+                                    const active = document.activeElement;
+                                    const isEditable =
+                                      active?.getAttribute("contenteditable") === "true" ||
+                                      active?.tagName === "TEXTAREA";
+                                    if (isEditable) {
+                                      document.execCommand("insertText", false, tag);
+                                    } else {
+                                      navigator.clipboard.writeText(tag).catch(() => {});
+                                    }
+                                  }}
+                                  className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-brand-50 border border-transparent hover:border-brand-200 transition-all group"
+                                  title="Clic para insertar en el editor activo"
+                                >
+                                  <span className="text-xs font-mono text-brand-700 block truncate">{tag}</span>
+                                  <span className="text-xs text-gray-400 group-hover:text-gray-600 leading-tight block">{v.desc}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                )}
+                <button
+                  onClick={() => setVarsOpen((v) => !v)}
+                  className="w-full flex items-center gap-1.5 px-4 py-3 text-left hover:bg-gray-100 transition-colors"
+                >
+                  <span className="text-xs font-bold text-brand-500 uppercase tracking-widest">{"{{ }}"}</span>
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest flex-1">Variables</span>
+                  <span className="text-xs text-gray-400">{varsOpen ? "▾" : "▴"}</span>
+                </button>
+              </div>
             </div>
           )}
 
