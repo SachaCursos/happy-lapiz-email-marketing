@@ -756,23 +756,12 @@ def _build_embed_js(cfg: dict) -> str:
               }}
             }}
             if (couponStepIdx >= 0) {{
-              // Advance to coupon step
+              // Advance to coupon step (step is inside the form — do NOT hide the form)
               advanceStep(couponStepIdx);
-              document.getElementById('hb-popup-form').style.display = 'none';
               if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
-              var couponStepEl = document.getElementById('hb-step-' + couponStepIdx);
-              if (couponStepEl) couponStepEl.style.display = 'block';
               if (code) {{
                 var codeEl = document.getElementById('hb-coupon-code');
                 if (codeEl) codeEl.textContent = code;
-              }}
-              // Update header for coupon step
-              var cs = C.steps[couponStepIdx];
-              if (cs) {{
-                var t = document.getElementById('hb-popup-title');
-                var s2 = document.getElementById('hb-popup-subtitle');
-                if (t && cs.title) t.textContent = cs.title;
-                if (s2) s2.textContent = cs.description || '';
               }}
             }} else {{
               // No coupon step: show regular success screen
