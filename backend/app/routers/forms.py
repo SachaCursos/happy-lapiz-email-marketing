@@ -1026,8 +1026,6 @@ def _build_embed_js(cfg: dict) -> str:
           setTimeout(_triggerOnce, 5000);
         }}
       }}
-    }}
-
     }})();
     """).strip()
 
