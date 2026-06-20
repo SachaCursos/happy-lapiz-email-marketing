@@ -402,7 +402,7 @@ def embed_js(form_id: int, session: Session = Depends(get_session)):
     return PlainTextResponse(
         js,
         media_type="application/javascript",
-        headers={**_cors_headers(), "Cache-Control": "public, max-age=60"},
+        headers={**_cors_headers(), "Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 
 
@@ -491,7 +491,9 @@ def _build_embed_js(cfg: dict) -> str:
       var _ss = (function(){{ try {{ return sessionStorage; }} catch(e) {{ return {{getItem:function(){{return null;}},setItem:function(){{}}}}; }} }})();
       // Coupon activated popup — runs before early-return guards so it always shows
       (function() {{
-        var _active = (new URLSearchParams(window.location.search).get('hb_coupon') === '1') ||
+        var _qs = window.location.search || '';
+        var _active = (_qs.indexOf('hb_coupon=1') !== -1) ||
+          (_qs.indexOf('hb_coupon') !== -1) ||
           (window.location.hash === '#hb_coupon') ||
           (function(){{ try {{ return localStorage.getItem('hb_coupon_activated')==='1'; }} catch(e){{ return false; }} }})();
         if (!_active) return;
