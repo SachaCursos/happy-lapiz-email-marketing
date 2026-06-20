@@ -10,7 +10,7 @@ import { shopifyApi, ShopifyProduct, api, adminApi } from "@/lib/api";
 import { Upload } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-type BlockType = "header" | "text" | "image" | "button" | "product" | "product_grid" | "coupon" | "divider" | "spacer";
+type BlockType = "header" | "text" | "image" | "button" | "product" | "product_grid" | "coupon" | "divider" | "spacer" | "timer";
 
 export interface Block {
   id: string;
@@ -171,6 +171,20 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     padding_y: "16",
     padding_x: "0",
   },
+  timer: {
+    target_date: "",
+    title: "¡La oferta termina en!",
+    subtitle: "Aprovecha antes de que sea tarde",
+    design: "clasico",
+    bg_color: "#111111",
+    accent_color: "#682ae7",
+    text_color: "#ffffff",
+    show_seconds: true,
+    label_days: "DÍAS",
+    label_hours: "HRS",
+    label_minutes: "MIN",
+    label_seconds: "SEG",
+  },
 };
 
 const PALETTE: { type: BlockType; label: string; sub: string }[] = [
@@ -183,6 +197,7 @@ const PALETTE: { type: BlockType; label: string; sub: string }[] = [
   { type: "product_grid", label: "Grilla productos", sub: "Recomendados / historial" },
   { type: "divider", label: "Divisor",      sub: "Línea separadora" },
   { type: "spacer",  label: "Espaciado",    sub: "Espacio en blanco" },
+  { type: "timer",   label: "Timer",        sub: "Cuenta regresiva" },
 ];
 
 const FAV_KEY = "hl_template_favorites";
@@ -741,6 +756,72 @@ function blockHtml(block: Block): string {
     case "product_grid":
       return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;">{{ ${p.variable} }}</div>`;
 
+    case "timer": {
+      const tf = "'Helvetica Neue', Arial, sans-serif";
+      const target = p.target_date ? new Date(p.target_date as string) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      const diff = Math.max(0, target.getTime() - Date.now());
+      const pad2 = (n: number) => String(n).padStart(2, "0");
+      const tDays = pad2(Math.floor(diff / 86400000));
+      const tHrs  = pad2(Math.floor((diff % 86400000) / 3600000));
+      const tMins = pad2(Math.floor((diff % 3600000) / 60000));
+      const tSecs = pad2(Math.floor((diff % 60000) / 1000));
+      const tbg     = (p.bg_color     as string) || "#111111";
+      const tacc    = (p.accent_color as string) || "#682ae7";
+      const ttc     = (p.text_color   as string) || "#ffffff";
+      const tdesign = (p.design       as string) || "clasico";
+      const ttitle  = (p.title        as string) || "";
+      const tsub    = (p.subtitle     as string) || "";
+      const tUnits  = [
+        { val: tDays, label: (p.label_days    as string) || "DÍAS" },
+        { val: tHrs,  label: (p.label_hours   as string) || "HRS"  },
+        { val: tMins, label: (p.label_minutes as string) || "MIN"  },
+        ...(p.show_seconds !== false ? [{ val: tSecs, label: (p.label_seconds as string) || "SEG" }] : []),
+      ];
+
+      if (tdesign === "clasico") {
+        const cells = tUnits.map((u, i) =>
+          `${i > 0 ? `<td style="padding:0 6px;vertical-align:middle;"><span style="font-size:28px;color:rgba(255,255,255,0.3);font-weight:300;font-family:${tf};">:</span></td>` : ""}<td style="text-align:center;padding:0 4px;"><div style="background:${tacc};border-radius:10px;padding:14px 10px;min-width:58px;display:inline-block;"><div style="font-size:38px;font-weight:900;color:${ttc};line-height:1;font-family:${tf};letter-spacing:-1px;">${u.val}</div><div style="font-size:10px;color:rgba(255,255,255,0.65);margin-top:6px;letter-spacing:2px;font-family:${tf};">${u.label}</div></div></td>`
+        ).join("");
+        return `<div style="background:${tbg};padding:32px 24px;text-align:center;">
+  ${ttitle ? `<p style="margin:0 0 20px;font-size:18px;font-weight:700;color:${ttc};font-family:${tf};">${ttitle}</p>` : ""}
+  <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
+  ${tsub ? `<p style="margin:20px 0 0;font-size:13px;color:rgba(255,255,255,0.5);font-family:${tf};">${tsub}</p>` : ""}
+</div>`;
+      }
+
+      if (tdesign === "minimal") {
+        const cells = tUnits.map((u, i) =>
+          `${i > 0 ? `<td style="padding:0 4px;vertical-align:top;padding-top:6px;"><span style="font-size:36px;color:${tacc};font-weight:300;font-family:${tf};opacity:0.4;">:</span></td>` : ""}<td style="text-align:center;padding:0 12px;"><div style="font-size:52px;font-weight:900;color:${tacc};line-height:1;font-family:${tf};">${u.val}</div><div style="font-size:11px;color:#9ca3af;margin-top:6px;letter-spacing:2px;font-family:${tf};">${u.label}</div></td>`
+        ).join("");
+        return `<div style="background:${tbg};padding:32px 24px;text-align:center;border-top:3px solid ${tacc};">
+  ${ttitle ? `<p style="margin:0 0 24px;font-size:16px;font-weight:600;color:#222;font-family:${tf};">${ttitle}</p>` : ""}
+  <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
+  ${tsub ? `<p style="margin:24px 0 0;font-size:13px;color:#6b7280;font-family:${tf};">${tsub}</p>` : ""}
+</div>`;
+      }
+
+      if (tdesign === "urgencia") {
+        const cells = tUnits.map((u, i) =>
+          `${i > 0 ? `<td style="padding:0 5px;vertical-align:middle;"><span style="font-size:28px;color:rgba(255,255,255,0.4);font-family:${tf};">:</span></td>` : ""}<td style="text-align:center;padding:0 5px;"><div style="background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.3);border-radius:8px;padding:12px 8px;min-width:56px;display:inline-block;"><div style="font-size:40px;font-weight:900;color:#ffffff;line-height:1;font-family:${tf};">${u.val}</div><div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:5px;letter-spacing:2px;font-family:${tf};">${u.label}</div></div></td>`
+        ).join("");
+        return `<div style="background:${tbg};padding:32px 24px;text-align:center;">
+  ${ttitle ? `<p style="margin:0 0 16px;font-size:12px;font-weight:700;color:rgba(255,255,255,0.85);letter-spacing:3px;text-transform:uppercase;font-family:${tf};">&#9889; ${ttitle} &#9889;</p>` : ""}
+  <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
+  ${tsub ? `<p style="margin:20px 0 0;font-size:13px;color:rgba(255,255,255,0.7);font-family:${tf};">${tsub}</p>` : ""}
+</div>`;
+      }
+
+      // elegante
+      const cells = tUnits.map((u, i) =>
+        `${i > 0 ? `<td style="padding:0 8px;vertical-align:top;padding-top:6px;"><span style="font-size:30px;color:${tacc};font-weight:200;font-family:${tf};opacity:0.4;">:</span></td>` : ""}<td style="text-align:center;padding:0 6px;"><div style="border:2px solid ${tacc};border-radius:12px;padding:14px 10px;min-width:62px;display:inline-block;background:#ffffff;"><div style="font-size:38px;font-weight:900;color:${tacc};line-height:1;font-family:${tf};">${u.val}</div><div style="font-size:10px;color:#9ca3af;margin-top:6px;letter-spacing:2px;font-family:${tf};">${u.label}</div></div></td>`
+      ).join("");
+      return `<div style="background:${tbg};padding:36px 24px;text-align:center;">
+  ${ttitle ? `<p style="margin:0 0 6px;font-size:12px;font-weight:600;color:${tacc};letter-spacing:3px;text-transform:uppercase;font-family:${tf};">${ttitle}</p><div style="width:48px;height:2px;background:${tacc};margin:0 auto 20px;"></div>` : ""}
+  <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
+  ${tsub ? `<p style="margin:24px 0 0;font-size:13px;color:#6b7280;font-family:${tf};">${tsub}</p>` : ""}
+</div>`;
+    }
+
     default:
       return "";
   }
@@ -862,9 +943,27 @@ export function parseJsonBlocks(raw: unknown): Block[] {
 function BlockPreview({ block, compact = false }: { block: Block; compact?: boolean }) {
   const p = block.props;
   const [imgError, setImgError] = useState(false);
-  // Reset error when logo URL changes so a corrected/new URL is retried immediately
   const logoUrl = p.logo_url as string | undefined;
   useEffect(() => { setImgError(false); }, [logoUrl]);
+
+  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+  const timerTargetDate = block.type === "timer" ? (p.target_date as string) : "";
+  useEffect(() => {
+    if (block.type !== "timer") return;
+    const calc = () => {
+      const t = timerTargetDate ? new Date(timerTargetDate) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      const diff = Math.max(0, t.getTime() - Date.now());
+      return {
+        days: Math.floor(diff / 86400000),
+        hours: Math.floor((diff % 86400000) / 3600000),
+        minutes: Math.floor((diff % 3600000) / 60000),
+        seconds: Math.floor((diff % 60000) / 1000),
+      };
+    };
+    setTimeLeft(calc());
+    const id = setInterval(() => setTimeLeft(calc()), 1000);
+    return () => clearInterval(id);
+  }, [block.type, timerTargetDate]);
 
   switch (block.type) {
     case "header":
@@ -991,6 +1090,105 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
             ))}
           </div>
           <div style={{ fontSize: 10, color: "#c4b5fd", textAlign: "center", marginTop: 8 }}>{label} · vista previa con productos de ejemplo</div>
+        </div>
+      );
+    }
+
+    case "timer": {
+      const tdesign  = (p.design       as string) || "clasico";
+      const tbg      = (p.bg_color     as string) || "#111111";
+      const tacc     = (p.accent_color as string) || "#682ae7";
+      const ttc      = (p.text_color   as string) || "#ffffff";
+      const ttitle   = (p.title        as string) || "";
+      const tsub     = (p.subtitle     as string) || "";
+      const showSec  = p.show_seconds !== false;
+      const pad2     = (n: number) => String(n).padStart(2, "0");
+      const tUnits   = [
+        { val: pad2(timeLeft.days),    label: (p.label_days    as string) || "DÍAS" },
+        { val: pad2(timeLeft.hours),   label: (p.label_hours   as string) || "HRS"  },
+        { val: pad2(timeLeft.minutes), label: (p.label_minutes as string) || "MIN"  },
+        ...(showSec ? [{ val: pad2(timeLeft.seconds), label: (p.label_seconds as string) || "SEG" }] : []),
+      ];
+
+      const sepColor = tdesign === "clasico"
+        ? "rgba(255,255,255,0.3)"
+        : tdesign === "urgencia"
+        ? "rgba(255,255,255,0.4)"
+        : tacc;
+
+      if (tdesign === "clasico") return (
+        <div style={{ background: tbg, padding: "24px", textAlign: "center" }}>
+          {ttitle && <p style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: ttc, fontFamily: "'Helvetica Neue',sans-serif" }}>{ttitle}</p>}
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6 }}>
+            {tUnits.map((u, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span style={{ fontSize: 24, color: sepColor, fontWeight: 300 }}>:</span>}
+                <div style={{ background: tacc, borderRadius: 8, padding: "12px 10px", minWidth: 52, textAlign: "center" }}>
+                  <div style={{ fontSize: 32, fontWeight: 900, color: ttc, lineHeight: 1 }}>{u.val}</div>
+                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.65)", marginTop: 5, letterSpacing: 2 }}>{u.label}</div>
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+          {tsub && <p style={{ margin: "16px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{tsub}</p>}
+        </div>
+      );
+
+      if (tdesign === "minimal") return (
+        <div style={{ background: tbg, padding: "24px", textAlign: "center", borderTop: `3px solid ${tacc}` }}>
+          {ttitle && <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#222", fontFamily: "'Helvetica Neue',sans-serif" }}>{ttitle}</p>}
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", gap: 4 }}>
+            {tUnits.map((u, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span style={{ fontSize: 32, color: tacc, fontWeight: 300, opacity: 0.4, paddingTop: 2 }}>:</span>}
+                <div style={{ textAlign: "center", padding: "0 8px" }}>
+                  <div style={{ fontSize: 44, fontWeight: 900, color: tacc, lineHeight: 1 }}>{u.val}</div>
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 4, letterSpacing: 2 }}>{u.label}</div>
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+          {tsub && <p style={{ margin: "16px 0 0", fontSize: 12, color: "#6b7280" }}>{tsub}</p>}
+        </div>
+      );
+
+      if (tdesign === "urgencia") return (
+        <div style={{ background: tbg, padding: "24px", textAlign: "center" }}>
+          {ttitle && <p style={{ margin: "0 0 12px", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.85)", letterSpacing: 3, textTransform: "uppercase" }}>⚡ {ttitle} ⚡</p>}
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6 }}>
+            {tUnits.map((u, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span style={{ fontSize: 22, color: sepColor }}>:</span>}
+                <div style={{ background: "rgba(255,255,255,0.15)", border: "2px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "10px 8px", minWidth: 52, textAlign: "center" }}>
+                  <div style={{ fontSize: 34, fontWeight: 900, color: "#ffffff", lineHeight: 1 }}>{u.val}</div>
+                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.7)", marginTop: 4, letterSpacing: 2 }}>{u.label}</div>
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+          {tsub && <p style={{ margin: "14px 0 0", fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{tsub}</p>}
+        </div>
+      );
+
+      // elegante
+      return (
+        <div style={{ background: tbg, padding: "24px", textAlign: "center" }}>
+          {ttitle && <>
+            <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 600, color: tacc, letterSpacing: 3, textTransform: "uppercase" }}>{ttitle}</p>
+            <div style={{ width: 40, height: 2, background: tacc, margin: "0 auto 16px" }} />
+          </>}
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", gap: 8 }}>
+            {tUnits.map((u, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span style={{ fontSize: 28, color: tacc, fontWeight: 200, opacity: 0.4, paddingTop: 4 }}>:</span>}
+                <div style={{ border: `2px solid ${tacc}`, borderRadius: 10, padding: "12px 10px", minWidth: 54, textAlign: "center", background: "#fff" }}>
+                  <div style={{ fontSize: 32, fontWeight: 900, color: tacc, lineHeight: 1 }}>{u.val}</div>
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 4, letterSpacing: 2 }}>{u.label}</div>
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+          {tsub && <p style={{ margin: "16px 0 0", fontSize: 12, color: "#6b7280" }}>{tsub}</p>}
         </div>
       );
     }
@@ -1503,6 +1701,67 @@ function PropsPanel({
           Este bloque inserta <code className="font-mono bg-gray-100 px-1 rounded">{"{{ variable }}"}</code> en el HTML. Los productos reales se inyectan automáticamente en cada automatización. La vista previa del editor usa productos de ejemplo.
         </div>
       </>}
+
+      {block.type === "timer" && (() => {
+        const designPresets: Record<string, { bg_color: string; accent_color: string; text_color: string }> = {
+          clasico:  { bg_color: "#111111", accent_color: "#682ae7", text_color: "#ffffff" },
+          minimal:  { bg_color: "#f9fafb", accent_color: "#682ae7", text_color: "#222222" },
+          urgencia: { bg_color: "#dc2626", accent_color: "#f97316", text_color: "#ffffff" },
+          elegante: { bg_color: "#ffffff", accent_color: "#682ae7", text_color: "#111111" },
+        };
+        return (
+          <>
+            <Field label="Diseño">
+              <div className="grid grid-cols-2 gap-2">
+                {([["clasico", "Clásico"], ["minimal", "Minimal"], ["urgencia", "Urgencia"], ["elegante", "Elegante"]] as [string, string][]).map(([val, lbl]) => {
+                  const active = ((p.design as string) || "clasico") === val;
+                  return (
+                    <button key={val} type="button"
+                      onClick={() => onChange({ ...p, design: val, ...designPresets[val] })}
+                      className={`py-2 rounded-lg text-xs font-medium border transition-colors ${active ? "bg-brand-600 text-white border-brand-600" : "bg-white text-gray-600 border-gray-200 hover:border-brand-400"}`}>
+                      {lbl}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="Fecha y hora objetivo">
+              <input type="datetime-local" value={(p.target_date as string) || ""}
+                onChange={(e) => set("target_date", e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+              <p className="text-xs text-gray-400 mt-1">El timer cuenta hacia esta fecha/hora</p>
+            </Field>
+            <Field label="Título"><TI value={p.title as string} onChange={(v) => set("title", v)} placeholder="¡La oferta termina en!" /></Field>
+            <Field label="Subtítulo"><TI value={p.subtitle as string} onChange={(v) => set("subtitle", v)} placeholder="Aprovecha antes de que sea tarde" /></Field>
+            <Field label="Color de fondo"><CI value={(p.bg_color as string) || "#111111"} onChange={(v) => set("bg_color", v)} /></Field>
+            <Field label="Color de acento"><CI value={(p.accent_color as string) || "#682ae7"} onChange={(v) => set("accent_color", v)} /></Field>
+            <Field label="Color del texto"><CI value={(p.text_color as string) || "#ffffff"} onChange={(v) => set("text_color", v)} /></Field>
+            <Field label="Etiquetas">
+              <div className="grid grid-cols-4 gap-1">
+                {([
+                  ["label_days", "Días", "DÍAS"],
+                  ["label_hours", "Horas", "HRS"],
+                  ["label_minutes", "Min", "MIN"],
+                  ["label_seconds", "Seg", "SEG"],
+                ] as [string, string, string][]).map(([key, caption, ph]) => (
+                  <div key={key}>
+                    <p className="text-xs text-gray-400 mb-1">{caption}</p>
+                    <input value={(p[key] as string) || ph} onChange={(e) => set(key, e.target.value)}
+                      className="w-full border border-gray-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                  </div>
+                ))}
+              </div>
+            </Field>
+            <Field label="Opciones">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={p.show_seconds !== false} onChange={(e) => set("show_seconds", e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500" />
+                <span className="text-sm text-gray-700">Mostrar segundos</span>
+              </label>
+            </Field>
+          </>
+        );
+      })()}
 
       {/* Save to favorites */}
       <div className="pt-2 border-t border-gray-100">
