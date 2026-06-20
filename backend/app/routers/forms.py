@@ -210,7 +210,9 @@ def submit_form(
 
     origin = payload.source_url or f"Formulario #{form_id}"
 
+    from app.services.automation_engine import _detect_name_gender
     contact = session.exec(select(Contact).where(Contact.email == email)).first()
+    contact_gender = _detect_name_gender(payload.name or "")
     if contact:
         if not contact.opted_in:
             contact.opted_in = True
@@ -222,6 +224,8 @@ def submit_form(
             contact.phone = payload.phone.strip() or None
         if not contact.origin_utm:
             contact.origin_utm = origin
+        if contact_gender and not contact.gender:
+            contact.gender = contact_gender
         contact.updated_at = datetime.utcnow()
         session.add(contact)
     else:
@@ -232,6 +236,7 @@ def submit_form(
             origin_utm=origin,
             opted_in=True,
             opted_in_at=datetime.utcnow(),
+            gender=contact_gender,
         )
         session.add(contact)
 
@@ -310,7 +315,7 @@ def _trigger_form_submitted_automations(
 ) -> None:
     """Enroll contact in any active automations with trigger_type=form_submitted for this form."""
     from app.models.automation import Automation
-    from app.services.automation_engine import _get_steps
+    from app.services.automation_engine import _get_steps, _detect_name_gender, _detect_gender_from_para_quien
     from datetime import timedelta
 
     automations = session.exec(
@@ -335,13 +340,21 @@ def _trigger_form_submitted_automations(
             continue
         steps = _get_steps(auto)
         first_delay = float(steps[0].get("delay_hours", 0)) if steps else 0
+        # Detect recipient gender from relationship field, then fall back to recipient name
+        para_quien = extra_data.get("para_quien", "")
+        nombre_regalado = extra_data.get("destinatario_nombre", "")
+        genero_regalado = (
+            _detect_gender_from_para_quien(para_quien)
+            or _detect_name_gender(nombre_regalado)
+        )
         extra = {
             "nombre": (payload.name or "").strip() or email,
             "first_name": ((payload.name or "").strip() or email).split()[0],
             "email": email,
             "coupon_code": coupon_code or "",
-            "nombre_regalado": extra_data.get("destinatario_nombre", ""),
+            "nombre_regalado": nombre_regalado,
             "cual_es_su_fecha_de_nacimiento": extra_data.get("cual_es_su_fecha_de_nacimiento", ""),
+            "genero_regalado": genero_regalado or "",
             **{k: v for k, v in extra_data.items()},
         }
         enrollment = AutomationEnrollment(

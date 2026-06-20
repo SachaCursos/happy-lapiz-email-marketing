@@ -45,6 +45,9 @@ class Contact(SQLModel, table=True):
     ultima_visita_web: Optional[datetime] = None
     accepts_marketing: Optional[bool] = None
     expected_next_order: Optional[date] = None
+    gender: Optional[str] = Field(default=None)  # 'M' | 'F' | None
+    birthday: Optional[date] = None
+    notes: Optional[str] = None
 
 
 class ContactCreate(SQLModel):

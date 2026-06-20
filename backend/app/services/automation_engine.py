@@ -463,6 +463,71 @@ def _build_products_list_html(items: list[dict]) -> str:
     return "".join(parts)
 
 
+_FEMALE_NAMES = {
+    'maria','ana','valentina','sofia','isabella','catalina','camila','gabriela','natalia',
+    'paula','andrea','carolina','fernanda','alejandra','jessica','daniela','claudia',
+    'patricia','veronica','monica','laura','isabel','carmen','rosa','elena','teresa',
+    'marcela','viviana','lorena','beatriz','silvia','susana','magdalena','pilar','luz',
+    'gloria','alicia','ines','esperanza','mercedes','antonia','cecilia','adriana','liliana',
+    'paola','vanessa','priscila','fabiola','macarena','javiera','karla','barbara',
+    'constanza','isidora','trinidad','florencia','martina','emilia','renata','antonieta',
+    'ximena','francisca','nicole','tamara','pamela','stephanie','karen','sandra','irene',
+    'rebeca','rachel','sara','nathaly','nataly','rocio','piedad','yolanda','melanie',
+    'victoria','valeria','ignacia','josefina','montserrat','bernardita','violeta',
+    'amanda','lisbeth','marisol','miriam','milagros','giuliana','fernanda','lucia',
+    'luca',  # exception: luca can be male (handled by first-name list)
+}
+_MALE_NAMES = {
+    'carlos','juan','pedro','jose','luis','miguel','francisco','antonio','manuel',
+    'jorge','roberto','sergio','diego','pablo','alvaro','nicolas','andres','cristian',
+    'sebastian','alejandro','rodrigo','victor','mario','raul','hector','jaime','gabriel',
+    'ignacio','matias','benjamin','tomas','maximiliano','felipe','enrique','david',
+    'daniel','renzo','richard','claudio','marcelo','hugo','hernan','patricio','gonzalo',
+    'gustavo','ernesto','alfredo','fernando','martin','emilio','leandro','fabian',
+    'christian','alberto','alan','alex','alexis','angelo','arturo','augusto','braulio',
+    'camilo','cesar','dante','dario','esteban','eugenio','ezequiel','federico','franco',
+    'freddy','fredy','gerardo','gilberto','guillermo','ivan','joaquin','jonathan','julian',
+    'kevin','lautaro','lazaro','leonardo','lucas','marco','marcos','mauro','maximo',
+    'mauricio','nicolas','omar','oscar','oswaldo','rafael','ramon','reinaldo','renato',
+    'ricardo','rolando','ruben','samuel','santiago','saul','simon','stefan','tiago',
+    'valentin','walter','wilmer','xavier','yerlan','luka',
+}
+
+def _detect_name_gender(full_name: str) -> str | None:
+    """Return 'M' or 'F' based on the first name. Returns None if unknown."""
+    if not full_name:
+        return None
+    first = full_name.strip().split()[0].lower()
+    # Remove accents for matching
+    import unicodedata
+    first_norm = ''.join(c for c in unicodedata.normalize('NFD', first) if unicodedata.category(c) != 'Mn')
+    if first_norm in _FEMALE_NAMES:
+        return 'F'
+    if first_norm in _MALE_NAMES:
+        return 'M'
+    # Suffix heuristic for Spanish names
+    if first_norm.endswith('a') and not first_norm.endswith('oa'):
+        return 'F'
+    if first_norm.endswith(('o', 'el', 'er', 'on', 'an', 'in', 'os')):
+        return 'M'
+    return None
+
+
+def _detect_gender_from_para_quien(para_quien: str) -> str | None:
+    """Infer recipient gender from the relationship field in the popup form."""
+    s = (para_quien or '').lower()
+    if any(k in s for k in ['hija', 'nieta', 'sobrina', 'para mí', 'para mi ']):
+        # 'para mi' alone is ambiguous but feminine options are hija/nieta/sobrina
+        pass
+    female = ['hija', 'nieta', 'sobrina']
+    male   = ['hijo', 'nieto', 'sobrino']
+    if any(k in s for k in female):
+        return 'F'
+    if any(k in s for k in male):
+        return 'M'
+    return None
+
+
 def _age_matches(edad_rec: str, age: int) -> bool:
     """Check if an edad_recomendada string (e.g. '3-5 años', '+6 años', '4') contains the given age."""
     import re as _re
@@ -497,8 +562,9 @@ def _fetch_age_recommended_products(
     customer_email: str,
     edad_regalon: int,
     max_products: int = 4,
+    gender: str | None = None,
 ) -> list[dict]:
-    """Returns active products whose edad_recomendada matches the gift age, excluding already bought."""
+    """Returns active products matching age (and optionally gender), sorted by best sellers, excluding already bought."""
     history_rows = session.execute(text("""
         SELECT payload FROM shopify_events
         WHERE LOWER(email) = LOWER(:email)
@@ -517,40 +583,68 @@ def _fetch_age_recommended_products(
         except Exception:
             pass
 
-    excl_clause = "AND shopify_id != ALL(:excl)" if ever_bought else ""
+    excl_clause = "AND sp.shopify_id != ALL(:excl)" if ever_bought else ""
     params: dict = {}
     if ever_bought:
         params["excl"] = list(ever_bought)
 
     try:
         all_rows = session.execute(text(f"""
-            SELECT shopify_id, title, handle, image_url, price, edad_recomendada
-            FROM shopify_products
-            WHERE status = 'active'
-              AND edad_recomendada IS NOT NULL
-              AND edad_recomendada <> ''
+            WITH order_counts AS (
+                SELECT (item->>'product_id')::bigint AS product_id, COUNT(*) AS n
+                FROM shopify_events,
+                     jsonb_array_elements(payload->'line_items') AS item
+                WHERE topic = 'orders/create'
+                  AND jsonb_typeof(payload->'line_items') = 'array'
+                GROUP BY 1
+            )
+            SELECT
+                sp.shopify_id,
+                sp.title,
+                sp.handle,
+                COALESCE(sp.imagen_url, sp.image_url) AS img,
+                COALESCE(
+                    sp.price,
+                    sp.precio_min,
+                    (sp.raw->'variants'->0->>'price')::numeric
+                ) AS price,
+                sp.edad_recomendada,
+                sp.gender,
+                COALESCE(oc.n, 0) AS sales
+            FROM shopify_products sp
+            LEFT JOIN order_counts oc ON oc.product_id = sp.shopify_id
+            WHERE sp.status = 'active'
+              AND sp.edad_recomendada IS NOT NULL
+              AND sp.edad_recomendada <> ''
               {excl_clause}
+            ORDER BY sales DESC
         """), params).fetchall()
     except Exception as exc:
         logger.warning("age_recommended: query failed: %s", exc)
         return []
 
-    matched = [
-        {
+    result = []
+    for r in all_rows:
+        if not _age_matches(r[5] or "", edad_regalon):
+            continue
+        prod_gender = r[6]  # 'M', 'F', or None
+        # Gender filter: skip male products for female recipients and vice versa
+        if gender and prod_gender and prod_gender != gender:
+            continue
+        price_val = float(r[4]) if r[4] else 0
+        result.append({
             "shopify_id": r[0],
             "title": r[1],
             "handle": r[2],
             "image_url": r[3],
-            "price": float(r[4]) if r[4] else 0,
+            "price": f"${price_val:,.0f}".replace(",", ".") if price_val else "",
             "url": f"https://www.happylapiz.cl/products/{r[2] or ''}",
-        }
-        for r in all_rows
-        if _age_matches(r[5] or "", edad_regalon)
-    ]
+            "sales": int(r[7]),
+        })
+        if len(result) >= max_products:
+            break
 
-    import random
-    random.shuffle(matched)
-    return matched[:max_products]
+    return result
 
 
 def _trunc_title(title: str, max_chars: int = 55) -> str:
@@ -737,7 +831,8 @@ def _send_email_step(
                             break
                 except Exception:
                     pass
-                age_rec = _fetch_age_recommended_products(session, contact.email, edad_int)
+                genero_regalado = (extra_vars or {}).get("genero_regalado") or contact.gender
+                age_rec = _fetch_age_recommended_products(session, contact.email, edad_int, gender=genero_regalado)
                 vars_["productos_recomendados_edad"] = age_rec
                 vars_["productos_recomendados_edad_html"] = _build_cross_sell_html(age_rec, btn_color)
             except (ValueError, TypeError):
