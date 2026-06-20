@@ -722,6 +722,13 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     return undefined;
   }
 
+  const { data: existingAuto } = useQuery<Automation>({
+    queryKey: ["automation", editId],
+    queryFn: () => automationsApi.get(editId!).then((r) => r.data),
+    enabled: !!editId,
+    staleTime: 0,
+  });
+
   // Reset defaults when trigger type changes (skip when populating from existing automation)
   useEffect(() => {
     if (skipNextTriggerEffect.current) {
@@ -767,8 +774,8 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     // Steps
     if (existingAuto.steps?.length) {
       setSteps(existingAuto.steps.map((s) => {
-        const { delayValue, delayUnit } = fromHours(Number((s as Record<string, unknown>).delay_hours ?? 0));
-        const raw = s as Record<string, unknown>;
+        const raw = s as unknown as Record<string, unknown>;
+        const { delayValue, delayUnit } = fromHours(Number(raw.delay_hours ?? 0));
         const rawVariants = (raw.variants as Record<string, unknown>[] | undefined) ?? [];
         const variants: VariantState[] = rawVariants.map((v) => ({
           variant: String(v.variant ?? "A"),
@@ -820,13 +827,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     queryFn: () => shopifyApi.collections().then((r) => r.data),
     staleTime: 10 * 60_000,
     enabled: crossSellEnabled && crossSellMode === "collection" && PRODUCT_FILTER_TRIGGERS.has(triggerType),
-  });
-
-  const { data: existingAuto } = useQuery<Automation>({
-    queryKey: ["automation", editId],
-    queryFn: () => automationsApi.get(editId!).then((r) => r.data),
-    enabled: !!editId,
-    staleTime: 0,
   });
 
   const [couponCampaignId, setCouponCampaignId] = useState<number | null>(null);
