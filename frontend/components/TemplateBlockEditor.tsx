@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronUp, ChevronDown, Trash2, Plus, Eye, Layout, Code,
   Star, X, Monitor, Smartphone, Search, Link as LinkIcon,
-  AlignLeft, AlignCenter, AlignRight, Send,
+  AlignLeft, AlignCenter, AlignRight, Send, Copy,
 } from "lucide-react";
 import { shopifyApi, ShopifyProduct, api, adminApi } from "@/lib/api";
 import { Upload } from "lucide-react";
@@ -1787,6 +1787,17 @@ export function TemplateBlockEditor({
     if (selectedId === id) setSelectedId(null);
   }
 
+  function duplicate(id: string) {
+    setBlocks((prev) => {
+      const i = prev.findIndex((b) => b.id === id);
+      if (i < 0) return prev;
+      const copy = { ...prev[i], props: { ...prev[i].props }, id: `block_${Date.now()}` };
+      const next = [...prev];
+      next.splice(i + 1, 0, copy);
+      return next;
+    });
+  }
+
   function move(id: string, dir: "up" | "down") {
     setBlocks((prev) => {
       const i = prev.findIndex((b) => b.id === id);
@@ -2202,6 +2213,7 @@ export function TemplateBlockEditor({
                             <div className={`absolute top-1 right-1 flex gap-1 z-10 ${selectedId === block.id && editingId !== block.id ? "flex" : "hidden group-hover:flex"}`}>
                               <button onClick={(e) => { e.stopPropagation(); move(block.id, "up"); }} disabled={idx === 0} className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronUp size={11} /></button>
                               <button onClick={(e) => { e.stopPropagation(); move(block.id, "down"); }} disabled={idx === blocks.length - 1} className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronDown size={11} /></button>
+                              <button onClick={(e) => { e.stopPropagation(); duplicate(block.id); }} title="Duplicar sección" className="w-6 h-6 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 flex items-center justify-center"><Copy size={11} /></button>
                               <button onClick={(e) => { e.stopPropagation(); remove(block.id); }} className="w-6 h-6 bg-white border border-red-200 rounded shadow text-red-400 hover:bg-red-50 flex items-center justify-center"><Trash2 size={11} /></button>
                             </div>
                             {selectedId === block.id && <div className="absolute top-1 left-1 text-xs bg-brand-600 text-white px-2 py-0.5 rounded font-medium z-10 pointer-events-none">{PALETTE.find((x) => x.type === block.type)?.label}</div>}
@@ -2221,6 +2233,7 @@ export function TemplateBlockEditor({
                               <div className={`absolute top-1 right-1 flex gap-1 z-10 ${selectedId === block.id ? "flex" : "hidden group-hover:flex"}`}>
                                 <button onClick={(e) => { e.stopPropagation(); move(block.id, "up"); }} disabled={idx === 0} className="w-5 h-5 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronUp size={9} /></button>
                                 <button onClick={(e) => { e.stopPropagation(); move(block.id, "down"); }} disabled={idx === blocks.length - 1} className="w-5 h-5 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center justify-center"><ChevronDown size={9} /></button>
+                                <button onClick={(e) => { e.stopPropagation(); duplicate(block.id); }} title="Duplicar sección" className="w-5 h-5 bg-white border border-gray-200 rounded shadow text-gray-600 hover:bg-gray-50 flex items-center justify-center"><Copy size={9} /></button>
                                 <button onClick={(e) => { e.stopPropagation(); remove(block.id); }} className="w-5 h-5 bg-white border border-red-200 rounded shadow text-red-400 hover:bg-red-50 flex items-center justify-center"><Trash2 size={9} /></button>
                               </div>
                               {selectedId === block.id && <div className="absolute top-1 left-1 text-xs bg-brand-600 text-white px-1.5 py-0.5 rounded font-medium z-10 pointer-events-none">Producto</div>}
