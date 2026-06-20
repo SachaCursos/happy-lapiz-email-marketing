@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi, api, shopifyApi, formsApi, ShopifyProduct, ShopifyCollection } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep, Automation } from "@/lib/types";
@@ -657,11 +657,9 @@ function StepCard({
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
-export default function AutomationFormClient() {
+export default function AutomationFormClient({ editId }: { editId?: number }) {
   const router = useRouter();
   const qc = useQueryClient();
-  const searchParams = useSearchParams();
-  const editId = searchParams.get("edit") ? Number(searchParams.get("edit")) : null;
   const skipNextTriggerEffect = useRef(false);
 
   const [name, setName] = useState("");

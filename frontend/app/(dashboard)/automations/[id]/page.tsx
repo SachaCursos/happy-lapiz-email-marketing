@@ -335,7 +335,7 @@ export default function AutomationDetailPage() {
             {isActive ? <><Pause size={13} /> Pausar</> : <><Play size={13} /> Activar</>}
           </button>
           <Link
-            href={`/automations/new?edit=${autoId}`}
+            href={`/automations/${autoId}/edit`}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
           >
             Editar
