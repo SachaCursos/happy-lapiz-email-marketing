@@ -918,7 +918,10 @@ def _build_embed_js(cfg: dict) -> str:
                 var codeEl = document.getElementById('hb-coupon-code');
                 if (codeEl) codeEl.textContent = code;
                 var linkEl = document.getElementById('hb-coupon-link');
-                if (linkEl) linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code) + '?hb_coupon=1';
+                if (linkEl) {{
+                  linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code);
+                  linkEl.addEventListener('click', function() {{ localStorage.setItem('hb_coupon_activated', '1'); }});
+                }}
               }}
             }} else {{
               // No coupon step: show regular success screen
@@ -1145,7 +1148,10 @@ def gift_embed_js():
   }}
 
   injectStyles();
-  if (new URLSearchParams(window.location.search).get('hb_coupon') === '1') showCouponBanner();
+  if (localStorage.getItem('hb_coupon_activated') === '1') {{
+    localStorage.removeItem('hb_coupon_activated');
+    showCouponBanner();
+  }}
   setTimeout(function(){{buildPopup();}},8000);
 }})();
 """
