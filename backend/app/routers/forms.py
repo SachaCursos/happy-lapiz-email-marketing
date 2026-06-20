@@ -918,7 +918,7 @@ def _build_embed_js(cfg: dict) -> str:
                 var codeEl = document.getElementById('hb-coupon-code');
                 if (codeEl) codeEl.textContent = code;
                 var linkEl = document.getElementById('hb-coupon-link');
-                if (linkEl) linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code);
+                if (linkEl) linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code) + '?hb_coupon=1';
               }}
             }} else {{
               // No coupon step: show regular success screen
@@ -1131,7 +1131,21 @@ def gift_embed_js():
     sessionStorage.setItem(STORE_KEY,'1');
   }}
 
+  function showCouponBanner() {{
+    if (document.getElementById('hb-coupon-banner')) return;
+    var banner = document.createElement('div');
+    banner.id = 'hb-coupon-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#22c55e;color:#fff;text-align:center;padding:14px 20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;';
+    banner.innerHTML = '<div style="font-size:17px;font-weight:700;margin-bottom:3px;">¡Tu cupón ya está activado! 🎉</div><div style="font-size:13px;opacity:0.92;">Cuando agregues tus productos al carrito, podrás ver tu descuento aplicado. ¡Válido para cualquier producto!</div><button onclick="document.getElementById(\'hb-coupon-banner\').remove()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;opacity:0.8;">×</button>';
+    document.body.appendChild(banner);
+    setTimeout(function() {{
+      var b = document.getElementById('hb-coupon-banner');
+      if (b) {{ b.style.transition = 'opacity 0.5s'; b.style.opacity = '0'; setTimeout(function(){{if(b)b.remove();}}, 500); }}
+    }}, 8000);
+  }}
+
   injectStyles();
+  if (new URLSearchParams(window.location.search).get('hb_coupon') === '1') showCouponBanner();
   setTimeout(function(){{buildPopup();}},8000);
 }})();
 """
