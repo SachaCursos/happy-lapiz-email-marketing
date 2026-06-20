@@ -314,8 +314,10 @@ export interface AutomationVariantStat {
   sent: number;
   opened: number;
   clicked: number;
+  conversions: number;
   open_rate: number;
   click_rate: number;
+  conversion_rate: number;
 }
 
 export interface AutomationStepStat {

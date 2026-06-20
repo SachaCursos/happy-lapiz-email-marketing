@@ -205,28 +205,36 @@ def automation_step_stats(
 
     variant_rows = session.execute(text("""
         SELECT
-            step_number,
-            variant_sent,
-            COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
-            COUNT(*) FILTER (WHERE opened_at IS NOT NULL)     AS opened,
-            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
-        FROM automation_runs
-        WHERE automation_id = :aid AND variant_sent IS NOT NULL
-        GROUP BY step_number, variant_sent
-        ORDER BY step_number, variant_sent
+            ar.step_number,
+            ar.variant_sent,
+            COUNT(*) FILTER (WHERE ar.status = 'sent')             AS sent,
+            COUNT(*) FILTER (WHERE ar.opened_at IS NOT NULL)       AS opened,
+            COUNT(*) FILTER (WHERE ar.clicked_at IS NOT NULL)      AS clicked,
+            COUNT(DISTINCT so.id) FILTER (WHERE so.id IS NOT NULL) AS conversions
+        FROM automation_runs ar
+        LEFT JOIN contacts c ON c.id = ar.contact_id
+        LEFT JOIN shopify_orders so ON so.email = c.email
+            AND so.created_at > ar.sent_at
+            AND so.created_at < ar.sent_at + INTERVAL '7 days'
+        WHERE ar.automation_id = :aid AND ar.variant_sent IS NOT NULL
+        GROUP BY ar.step_number, ar.variant_sent
+        ORDER BY ar.step_number, ar.variant_sent
     """), {"aid": auto_id}).fetchall()
 
-    # Group variant rows by step (r[0]=step_number, r[1]=variant_sent, r[2-4]=counts)
+    # Group variant rows by step
     from collections import defaultdict
     variants_by_step: dict = defaultdict(list)
     for r in variant_rows:
+        sent = int(r[2] or 0)
         variants_by_step[int(r[0])].append({
-            "variant":    r[1],
-            "sent":       int(r[2] or 0),
-            "opened":     int(r[3] or 0),
-            "clicked":    int(r[4] or 0),
-            "open_rate":  round(int(r[3] or 0) / int(r[2]) * 100, 1) if r[2] else 0.0,
-            "click_rate": round(int(r[4] or 0) / int(r[2]) * 100, 1) if r[2] else 0.0,
+            "variant":         r[1],
+            "sent":            sent,
+            "opened":          int(r[3] or 0),
+            "clicked":         int(r[4] or 0),
+            "conversions":     int(r[5] or 0),
+            "open_rate":       round(int(r[3] or 0) / sent * 100, 1) if sent else 0.0,
+            "click_rate":      round(int(r[4] or 0) / sent * 100, 1) if sent else 0.0,
+            "conversion_rate": round(int(r[5] or 0) / sent * 100, 1) if sent else 0.0,
         })
 
     return [

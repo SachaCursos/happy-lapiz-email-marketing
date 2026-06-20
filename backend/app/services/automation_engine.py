@@ -248,9 +248,15 @@ def _pick_variant(step: dict) -> tuple[dict, str | None]:
     for v in variants:
         cumulative += float(v.get("weight", 1))
         if rand <= cumulative:
-            return {**step, "template_id": v["template_id"], "subject": v["subject"]}, str(v["variant"])
+            merged = {**step, "template_id": v["template_id"], "subject": v["subject"]}
+            if "preview_text" in v:
+                merged["preview_text"] = v["preview_text"]
+            return merged, str(v["variant"])
     last = variants[-1]
-    return {**step, "template_id": last["template_id"], "subject": last["subject"]}, str(last["variant"])
+    merged = {**step, "template_id": last["template_id"], "subject": last["subject"]}
+    if "preview_text" in last:
+        merged["preview_text"] = last["preview_text"]
+    return merged, str(last["variant"])
 
 
 def _fetch_cross_sell_products(
@@ -842,7 +848,7 @@ def _send_email_step(
         raw_html = replace_unsub_tag(tpl.html_content, contact.email)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
 
-        preview_text = step.get("preview_text", "")
+        preview_text = _env.from_string(str(step.get("preview_text", ""))).render(**vars_)
         if preview_text:
             preheader = (
                 f'<span style="display:none;max-height:0;overflow:hidden;'

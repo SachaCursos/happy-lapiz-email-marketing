@@ -82,7 +82,7 @@ function VariantCard({ v, isWinner }: { v: AutomationVariantStat; isWinner: bool
           </span>
         )}
       </div>
-      <div className="grid grid-cols-3 gap-2 text-center">
+      <div className="grid grid-cols-4 gap-2 text-center">
         <div>
           <p className="text-sm font-bold text-gray-900">{v.sent.toLocaleString("es-CL")}</p>
           <p className="text-xs text-gray-400">enviados</p>
@@ -94,6 +94,10 @@ function VariantCard({ v, isWinner }: { v: AutomationVariantStat; isWinner: bool
         <div>
           <p className="text-sm font-bold text-gray-900">{v.click_rate}%</p>
           <p className="text-xs text-gray-400">clics</p>
+        </div>
+        <div>
+          <p className="text-sm font-bold text-green-700">{v.conversion_rate}%</p>
+          <p className="text-xs text-gray-400">compras</p>
         </div>
       </div>
     </div>

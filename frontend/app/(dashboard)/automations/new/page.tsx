@@ -360,6 +360,7 @@ const VARIANT_COLORS = [
 interface VariantState {
   variant: string;       // "A", "B", "C", "D"
   subject: string;
+  previewText: string;
   templateId: number | "";
   weight: number;
 }
@@ -399,7 +400,7 @@ function VariantEditor({
     const next = labels[variants.length] ?? String(variants.length + 1);
     const even = Math.floor(100 / (variants.length + 1));
     const updated = variants.map((v) => ({ ...v, weight: even }));
-    onChange([...updated, { variant: next, subject: "", templateId: "", weight: even }]);
+    onChange([...updated, { variant: next, subject: "", previewText: "", templateId: "", weight: even }]);
   }
 
   function removeVariant(idx: number) {
@@ -450,6 +451,12 @@ function VariantEditor({
               value={v.subject}
               onChange={(e) => updateVariant(i, { subject: e.target.value })}
               placeholder={`Asunto variante ${v.variant}...`}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <input
+              value={v.previewText}
+              onChange={(e) => updateVariant(i, { previewText: e.target.value })}
+              placeholder={`Preview text variante ${v.variant} (opcional)...`}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
@@ -531,8 +538,8 @@ function StepCard({
                 onChange({
                   ...step,
                   variants: [
-                    { variant: "A", subject: step.subject, templateId: step.templateId, weight: 50 },
-                    { variant: "B", subject: "",           templateId: step.templateId, weight: 50 },
+                    { variant: "A", subject: step.subject, previewText: step.previewText, templateId: step.templateId, weight: 50 },
+                    { variant: "B", subject: "",           previewText: "",               templateId: step.templateId, weight: 50 },
                   ],
                 });
               }
@@ -827,12 +834,14 @@ export default function NewAutomationPage() {
             variants: s.variants.map((v) => ({
               variant: v.variant,
               subject: v.subject,
+              preview_text: v.previewText || undefined,
               template_id: Number(v.templateId),
               weight: v.weight,
             })),
             // Legacy fallback from variant A
             template_id: Number(s.variants[0].templateId),
             subject: s.variants[0].subject,
+            preview_text: s.variants[0].previewText || undefined,
           };
         }
         return { ...base, template_id: Number(s.templateId), subject: s.subject, preview_text: s.previewText || undefined };
