@@ -489,6 +489,44 @@ def _build_embed_js(cfg: dict) -> str:
       // localStorage/sessionStorage can throw in Safari private mode — wrap in try/catch
       var _ls = (function(){{ try {{ return localStorage; }} catch(e) {{ return {{getItem:function(){{return null;}},setItem:function(){{}}}}; }} }})();
       var _ss = (function(){{ try {{ return sessionStorage; }} catch(e) {{ return {{getItem:function(){{return null;}},setItem:function(){{}}}}; }} }})();
+      // Coupon activated popup — runs before early-return guards so it always shows
+      (function() {{
+        var _active = (new URLSearchParams(window.location.search).get('hb_coupon') === '1') ||
+          (window.location.hash === '#hb_coupon') ||
+          (function(){{ try {{ return localStorage.getItem('hb_coupon_activated')==='1'; }} catch(e){{ return false; }} }})();
+        if (!_active) return;
+        try {{ localStorage.removeItem('hb_coupon_activated'); }} catch(e) {{}}
+        var _doShow = function() {{
+          if (document.getElementById('hb-coupon-popup')) return;
+          var ov = document.createElement('div');
+          ov.id = 'hb-coupon-popup';
+          ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(0,0,0,0.5);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;';
+          var box = document.createElement('div');
+          box.style.cssText = 'background:#fff;border-radius:20px;padding:36px 32px 32px;max-width:420px;width:100%;text-align:center;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+          box.innerHTML = '<div style="font-size:52px;margin-bottom:14px;">🎉</div>' +
+            '<div style="font-size:22px;font-weight:800;color:#16a34a;margin-bottom:12px;">¡Tu cupón ya está activado!</div>' +
+            '<div style="font-size:15px;color:#555;line-height:1.65;">Cuando agregues tus productos al carrito, podrás ver tu descuento aplicado.<br><br><strong style="color:#222;">¡Válido para cualquier producto!</strong></div>';
+          var closeBtn = document.createElement('button');
+          closeBtn.textContent = '¡Entendido, vamos a comprar!';
+          closeBtn.style.cssText = 'margin-top:24px;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:13px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;display:block;';
+          closeBtn.onclick = function() {{ ov.remove(); }};
+          var xBtn = document.createElement('button');
+          xBtn.textContent = '×';
+          xBtn.style.cssText = 'position:absolute;top:12px;right:16px;background:none;border:none;font-size:26px;cursor:pointer;color:#bbb;line-height:1;padding:0;';
+          xBtn.onclick = function() {{ ov.remove(); }};
+          box.appendChild(closeBtn);
+          box.appendChild(xBtn);
+          ov.appendChild(box);
+          ov.onclick = function(e) {{ if (e.target === ov) ov.remove(); }};
+          document.body.appendChild(ov);
+          setTimeout(function() {{
+            if (ov.parentNode) {{ ov.style.transition='opacity 0.4s'; ov.style.opacity='0'; setTimeout(function(){{if(ov.parentNode)ov.remove();}},400); }}
+          }}, 10000);
+        }};
+        if (document.body) {{ setTimeout(_doShow, 200); }}
+        else {{ document.addEventListener('DOMContentLoaded', function() {{ setTimeout(_doShow, 200); }}); }}
+      }})();
+
       // Never show again if already submitted
       if (_ls.getItem(STORE_KEY) === 'submitted') return;
       // Don't show again in this browser session if already dismissed
@@ -988,46 +1026,6 @@ def _build_embed_js(cfg: dict) -> str:
       }}
     }}
 
-    // Coupon activated popup
-    (function() {{
-      var _active = (new URLSearchParams(window.location.search).get('hb_coupon') === '1') ||
-        (window.location.hash === '#hb_coupon') ||
-        (function(){{ try {{ return localStorage.getItem('hb_coupon_activated')==='1'; }} catch(e){{ return false; }} }})();
-      if (!_active) return;
-      try {{ localStorage.removeItem('hb_coupon_activated'); }} catch(e) {{}}
-      var _doShow = function() {{
-        if (document.getElementById('hb-coupon-popup')) return;
-        var ov = document.createElement('div');
-        ov.id = 'hb-coupon-popup';
-        ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(0,0,0,0.5);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;';
-        var box = document.createElement('div');
-        box.style.cssText = 'background:#fff;border-radius:20px;padding:36px 32px 32px;max-width:420px;width:100%;text-align:center;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.3);';
-        box.innerHTML = '<div style="font-size:52px;margin-bottom:14px;">🎉</div>' +
-          '<div style="font-size:22px;font-weight:800;color:#16a34a;margin-bottom:12px;">¡Tu cupón ya está activado!</div>' +
-          '<div style="font-size:15px;color:#555;line-height:1.65;">Cuando agregues tus productos al carrito, podrás ver tu descuento aplicado.<br><br><strong style="color:#222;">¡Válido para cualquier producto!</strong></div>';
-        var closeBtn = document.createElement('button');
-        closeBtn.textContent = '¡Entendido, vamos a comprar!';
-        closeBtn.style.cssText = 'margin-top:24px;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:13px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;display:block;';
-        closeBtn.onclick = function() {{ ov.remove(); }};
-        var xBtn = document.createElement('button');
-        xBtn.textContent = '×';
-        xBtn.style.cssText = 'position:absolute;top:12px;right:16px;background:none;border:none;font-size:26px;cursor:pointer;color:#bbb;line-height:1;padding:0;';
-        xBtn.onclick = function() {{ ov.remove(); }};
-        box.appendChild(closeBtn);
-        box.appendChild(xBtn);
-        ov.appendChild(box);
-        ov.onclick = function(e) {{ if (e.target === ov) ov.remove(); }};
-        document.body.appendChild(ov);
-        setTimeout(function() {{
-          if (ov.parentNode) {{ ov.style.transition='opacity 0.4s'; ov.style.opacity='0'; setTimeout(function(){{if(ov.parentNode)ov.remove();}},400); }}
-        }}, 10000);
-      }};
-      if (document.body) {{
-        setTimeout(_doShow, 200);
-      }} else {{
-        document.addEventListener('DOMContentLoaded', function() {{ setTimeout(_doShow, 200); }});
-      }}
-    }})();
     }})();
     """).strip()
 
