@@ -1034,19 +1034,23 @@ function InlineTextEditor({
   }
 
   function applyInlineStyle(prop: string, value: string) {
+    ref.current?.focus();
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     const range = sel.getRangeAt(0);
     if (range.collapsed) {
-      // No selection: apply to whole editor via execCommand fallback
       if (prop === "color") execFmt("foreColor", value);
       return;
     }
-    try {
-      const span = document.createElement("span");
-      (span.style as unknown as Record<string, string>)[prop] = value;
-      range.surroundContents(span);
-    } catch { /* partial element selection — skip */ }
+    const span = document.createElement("span");
+    (span.style as unknown as Record<string, string>)[prop] = value;
+    // extractContents handles selections that cross element boundaries (unlike surroundContents)
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+    // Restore selection to cover the new span
+    range.selectNodeContents(span);
+    sel.removeAllRanges();
+    sel.addRange(range);
     rerender((n) => n + 1);
   }
 
