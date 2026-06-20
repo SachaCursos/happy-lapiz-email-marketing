@@ -919,8 +919,7 @@ def _build_embed_js(cfg: dict) -> str:
                 if (codeEl) codeEl.textContent = code;
                 var linkEl = document.getElementById('hb-coupon-link');
                 if (linkEl) {{
-                  linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code);
-                  linkEl.addEventListener('click', function() {{ localStorage.setItem('hb_coupon_activated', '1'); }});
+                  linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code) + '?redirect=%2F%3Fhb_coupon%3D1';
                 }}
               }}
             }} else {{
@@ -988,9 +987,9 @@ def _build_embed_js(cfg: dict) -> str:
       }}
     }}
 
-    // Coupon activated popup
-    if (localStorage.getItem('hb_coupon_activated') === '1') {{
-      localStorage.removeItem('hb_coupon_activated');
+    // Coupon activated popup — triggered via ?hb_coupon=1 in URL (set by Shopify redirect param)
+    var _hbCouponParam = new URLSearchParams(window.location.search).get('hb_coupon');
+    if (_hbCouponParam === '1') {{
       function _showCouponPopup() {{
         if (document.getElementById('hb-coupon-popup')) return;
         var overlay = document.createElement('div');
