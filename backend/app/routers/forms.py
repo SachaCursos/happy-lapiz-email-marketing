@@ -602,6 +602,21 @@ def _build_embed_js(cfg: dict) -> str:
             inp = '<select class="hb-input' + (hasOtro?' hb-otro-sel':'') + '" name="' + key + '"' + (cf.required?' required':'') + '>' + opts + '</select>' + otroInput;
           }} else if (cf.type === 'textarea') {{
             inp = '<textarea class="hb-input" name="' + key + '" placeholder="' + (cf.placeholder||'') + '" rows="2"' + (cf.required?' required':'') + ' style="resize:none"></textarea>';
+          }} else if (cf.type === 'date') {{
+            var _dOpts = '<option value="">Día</option>';
+            for (var _di=1;_di<=31;_di++) _dOpts += '<option value="'+(_di<10?'0':'')+_di+'">'+_di+'</option>';
+            var _mNames=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+            var _mOpts = '<option value="">Mes</option>';
+            for (var _mi=0;_mi<12;_mi++) _mOpts += '<option value="'+(_mi<9?'0':'')+(_mi+1)+'">'+_mNames[_mi]+'</option>';
+            var _yOpts = '<option value="">Año</option>';
+            var _cy = new Date().getFullYear();
+            for (var _yi=_cy;_yi>=1924;_yi--) _yOpts += '<option value="'+_yi+'">'+_yi+'</option>';
+            inp = '<div class="hb-date-wrap"' + (cf.required?' data-required="1"':'') + '>' +
+              '<select class="hb-input hb-date-sel" style="width:28%;display:inline-block;box-sizing:border-box;margin-right:3%">' + _dOpts + '</select>' +
+              '<select class="hb-input hb-date-sel" style="width:40%;display:inline-block;box-sizing:border-box;margin-right:3%">' + _mOpts + '</select>' +
+              '<select class="hb-input hb-date-sel" style="width:26%;display:inline-block;box-sizing:border-box">' + _yOpts + '</select>' +
+              '<input type="hidden" name="' + key + '" />' +
+              '</div>';
           }} else {{
             inp = '<input class="hb-input" type="' + cf.type + '" name="' + key + '" placeholder="' + (cf.placeholder||'') + '"' + (cf.required?' required':'') + ' />';
           }}
@@ -732,6 +747,18 @@ def _build_embed_js(cfg: dict) -> str:
           sel.addEventListener('change', _chk);
         }});
 
+        // Wire date combo fields: combine day/month/year selects into hidden YYYY-MM-DD input
+        box.querySelectorAll('.hb-date-wrap').forEach(function(wrap) {{
+          var hidden = wrap.querySelector('input[type="hidden"]');
+          var sels   = wrap.querySelectorAll('.hb-date-sel');
+          function _combineDate() {{
+            var d = sels[0].value, m = sels[1].value, y = sels[2].value;
+            hidden.value = (d && m && y) ? (y + '-' + m + '-' + d) : '';
+            wrap.querySelectorAll('.hb-date-sel').forEach(function(s) {{ s.style.borderColor = ''; }});
+          }}
+          sels.forEach(function(s) {{ s.addEventListener('change', _combineDate); }});
+        }});
+
         var closeBtn = document.getElementById('hb-popup-close');
         if (closeBtn) closeBtn.addEventListener('click', closePopup);
 
@@ -827,6 +854,14 @@ def _build_embed_js(cfg: dict) -> str:
             stepEl.querySelectorAll('input[required],select[required],textarea[required]').forEach(function(el) {{
               if (!el.value.trim()) {{ el.style.borderColor = '#dc2626'; invalid = true; }}
               else el.style.borderColor = '';
+            }});
+            // Validate date combo fields
+            stepEl.querySelectorAll('.hb-date-wrap[data-required]').forEach(function(wrap) {{
+              var hidden = wrap.querySelector('input[type="hidden"]');
+              if (!hidden || !hidden.value) {{
+                wrap.querySelectorAll('.hb-date-sel').forEach(function(s) {{ s.style.borderColor = '#dc2626'; }});
+                invalid = true;
+              }}
             }});
           }}
           if (invalid) return;
