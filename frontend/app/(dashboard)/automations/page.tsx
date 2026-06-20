@@ -224,7 +224,6 @@ function EditPanel({
 function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation; templates: Template[]; couponCampaigns: CouponCampaign[] }) {
   const qc = useQueryClient();
   const [showRuns, setShowRuns] = useState(false);
-  const [editing, setEditing] = useState(false);
 
   const { data: stats } = useQuery<AutomationStats>({
     queryKey: ["automation-stats", auto.id],
@@ -235,14 +234,6 @@ function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation;
   const toggleMutation = useMutation({
     mutationFn: () => automationsApi.toggle(auto.id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["automations"] }),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: (data: unknown) => automationsApi.update(auto.id, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["automations"] });
-      setEditing(false);
-    },
   });
 
   const deleteMutation = useMutation({
@@ -347,13 +338,13 @@ function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation;
           >
             <BarChart2 size={14} />
           </Link>
-          <button
-            onClick={() => { setEditing((v) => !v); setShowRuns(false); }}
+          <Link
+            href={`/automations/${auto.id}/edit`}
             title="Editar"
-            className={`p-2 rounded-lg border transition-colors ${editing ? "border-brand-400 bg-brand-50 text-brand-600" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}
+            className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
           >
             <Pencil size={14} />
-          </button>
+          </Link>
           <button
             onClick={() => toggleMutation.mutate()}
             disabled={toggleMutation.isPending}
@@ -376,7 +367,7 @@ function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation;
             <Trash2 size={14} />
           </button>
           <button
-            onClick={() => { setShowRuns((v) => !v); setEditing(false); }}
+            onClick={() => setShowRuns((v) => !v)}
             className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
             title="Ver historial"
           >
@@ -405,16 +396,6 @@ function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation;
         </div>
       )}
 
-      {editing && (
-        <EditPanel
-          auto={auto}
-          templates={templates}
-          couponCampaigns={couponCampaigns}
-          onSave={(data) => updateMutation.mutate(data)}
-          onCancel={() => setEditing(false)}
-          saving={updateMutation.isPending}
-        />
-      )}
       {showRuns && <ExpandedPanel automationId={auto.id} />}
     </div>
   );
