@@ -988,18 +988,37 @@ def _build_embed_js(cfg: dict) -> str:
       }}
     }}
 
-    // Coupon activated banner
+    // Coupon activated popup
     if (localStorage.getItem('hb_coupon_activated') === '1') {{
       localStorage.removeItem('hb_coupon_activated');
-      var _hbBanner = document.createElement('div');
-      _hbBanner.id = 'hb-coupon-banner';
-      _hbBanner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#22c55e;color:#fff;text-align:center;padding:14px 20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;';
-      _hbBanner.innerHTML = '<div style="font-size:17px;font-weight:700;margin-bottom:3px;">¡Tu cupón ya está activado! 🎉</div><div style="font-size:13px;opacity:0.92;">Cuando agregues tus productos al carrito, podrás ver tu descuento aplicado. ¡Válido para cualquier producto!</div><button onclick="this.parentNode.remove()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;opacity:0.8;">×</button>';
-      document.body.appendChild(_hbBanner);
-      setTimeout(function() {{
-        var _b = document.getElementById('hb-coupon-banner');
-        if (_b) {{ _b.style.transition='opacity 0.5s'; _b.style.opacity='0'; setTimeout(function(){{if(_b)_b.remove();}},500); }}
-      }}, 8000);
+      function _showCouponPopup() {{
+        if (document.getElementById('hb-coupon-popup')) return;
+        var overlay = document.createElement('div');
+        overlay.id = 'hb-coupon-popup';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(0,0,0,0.45);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;';
+        overlay.innerHTML = '<div style="background:#fff;border-radius:20px;padding:36px 32px 32px;max-width:420px;width:100%;text-align:center;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.25);">' +
+          '<div style="font-size:48px;margin-bottom:12px;">🎉</div>' +
+          '<div style="font-size:22px;font-weight:800;color:#16a34a;margin-bottom:10px;">¡Tu cupón ya está activado!</div>' +
+          '<div style="font-size:15px;color:#555;line-height:1.6;">Cuando agregues tus productos al carrito, podrás ver tu descuento aplicado.<br><br><strong>¡Válido para cualquier producto!</strong></div>' +
+          '<button id="hb-coupon-popup-close" style="margin-top:24px;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:12px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">¡Entendido, vamos a comprar!</button>' +
+          '<button onclick="document.getElementById(\'hb-coupon-popup\').remove()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:#aaa;line-height:1;">×</button>' +
+          '</div>';
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', function(e) {{ if (e.target === overlay) overlay.remove(); }});
+        document.getElementById('hb-coupon-popup-close').addEventListener('click', function() {{ overlay.remove(); }});
+        setTimeout(function() {{
+          if (document.getElementById('hb-coupon-popup')) {{
+            overlay.style.transition = 'opacity 0.4s';
+            overlay.style.opacity = '0';
+            setTimeout(function() {{ if (overlay.parentNode) overlay.remove(); }}, 400);
+          }}
+        }}, 10000);
+      }}
+      if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', _showCouponPopup);
+      }} else {{
+        setTimeout(_showCouponPopup, 300);
+      }}
     }}
     }})();
     """).strip()
