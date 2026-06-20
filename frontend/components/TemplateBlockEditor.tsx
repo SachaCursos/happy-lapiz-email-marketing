@@ -678,7 +678,7 @@ function blockHtml(block: Block): string {
       const rStr = p.border_radius && p.border_radius !== "0" ? `border-radius:${p.border_radius}px;` : "";
       const imgStyle = isFull
         ? `width:100%;height:auto;display:block;${rStr}`
-        : `width:${wPx}px;max-width:100%;height:auto;display:block;${rStr}`;
+        : `width:${wPx}px;max-width:100%;height:auto;display:inline-block;${rStr}`;
       const wrapStyle = isFull
         ? `background:${p.bg_color};`
         : `background:${p.bg_color};text-align:${p.align || "center"};`;
@@ -1305,7 +1305,21 @@ function PropsPanel({
     <div className="space-y-4">
       {block.type === "header" && <>
         <Field label="URL del Logo"><TI value={p.logo_url as string} onChange={(v) => set("logo_url", v)} placeholder="https://..." /></Field>
-        <Field label="Ancho del logo (px)"><NI value={p.logo_width as string} onChange={(v) => set("logo_width", v)} min={40} max={400} /></Field>
+        <Field label="Tamaño del logo">
+          <div className="flex gap-2 mb-2">
+            {([["Pequeño", "50"], ["Mediano", "100"], ["Grande", "160"], ["XL", "240"]] as [string, string][]).map(([label, val]) => {
+              const active = String(p.logo_width || "160") === val;
+              return (
+                <button key={label} type="button" onClick={() => set("logo_width", val)}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${active ? "bg-brand-600 text-white border-brand-600" : "bg-white text-gray-600 border-gray-200 hover:border-brand-400"}`}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <NI value={p.logo_width as string} onChange={(v) => set("logo_width", v)} min={40} max={400} />
+          <p className="text-xs text-gray-400 mt-1">O ingresa un valor exacto en px</p>
+        </Field>
         <Field label="Enlace del logo"><TI value={p.link as string} onChange={(v) => set("link", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
       </>}
@@ -1362,9 +1376,20 @@ function PropsPanel({
         </Field>
         <Field label="Texto alternativo"><TI value={p.alt as string} onChange={(v) => set("alt", v)} placeholder="Descripción de la imagen" /></Field>
         <Field label="Enlace al hacer clic"><TI value={p.link as string} onChange={(v) => set("link", v)} placeholder="https://..." /></Field>
-        <Field label="Ancho (px) — 0 = ancho completo">
+        <Field label="Tamaño de la imagen">
+          <div className="flex gap-2 mb-2">
+            {([["Completo", ""], ["75%", "450"], ["50%", "300"], ["25%", "150"]] as [string, string][]).map(([label, val]) => {
+              const active = (p.width as string || "") === val;
+              return (
+                <button key={label} type="button" onClick={() => set("width", val)}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${active ? "bg-brand-600 text-white border-brand-600" : "bg-white text-gray-600 border-gray-200 hover:border-brand-400"}`}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <NI value={(p.width as string) || "0"} onChange={(v) => set("width", v === "0" ? "" : v)} min={0} max={600} />
-          <p className="text-xs text-gray-400 mt-1">Klaviyo usa 564px para ancho completo (600px − padding)</p>
+          <p className="text-xs text-gray-400 mt-1">O ingresa un valor exacto en px (0 = ancho completo)</p>
         </Field>
         <Field label="Alineación">
           <select value={(p.align as string) || "center"} onChange={(e) => set("align", e.target.value)}
