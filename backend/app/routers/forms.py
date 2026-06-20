@@ -905,7 +905,7 @@ def _build_embed_js(cfg: dict) -> str:
                 var codeEl = document.getElementById('hb-coupon-code');
                 if (codeEl) codeEl.textContent = code;
                 var linkEl = document.getElementById('hb-coupon-link');
-                if (linkEl) linkEl.href = 'https://happylapiz.cl?discount=' + encodeURIComponent(code);
+                if (linkEl) linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code);
               }}
             }} else {{
               // No coupon step: show regular success screen
