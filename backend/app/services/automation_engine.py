@@ -29,7 +29,7 @@ from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
-from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre
+from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre, replace_unsub_tag
 from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment
 
@@ -839,11 +839,7 @@ def _send_email_step(
                 pass
 
         _env = Environment(undefined=ChainableUndefined)
-        _unsub_href = unsub_url(contact.email)
-        _unsub_link = (
-            f'<a href="{_unsub_href}" style="color:inherit;text-decoration:underline;">Unsubscribe</a>'
-        )
-        raw_html = tpl.html_content.replace("{% unsubscribe %}", _unsub_link)
+        raw_html = replace_unsub_tag(tpl.html_content, contact.email)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
 
         preview_text = step.get("preview_text", "")
