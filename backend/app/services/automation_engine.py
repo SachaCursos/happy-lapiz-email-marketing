@@ -464,17 +464,26 @@ def _build_products_list_html(items: list[dict]) -> str:
 
 
 def _age_matches(edad_rec: str, age: int) -> bool:
-    """Check if an edad_recomendada string (e.g. '3-5', '6+', '4') contains the given age."""
-    s = edad_rec.strip()
-    if "-" in s:
-        lo_s, hi_s = s.split("-", 1)
+    """Check if an edad_recomendada string (e.g. '3-5 años', '+6 años', '4') contains the given age."""
+    import re as _re
+    # Strip non-numeric chars except + and - so '0-2 años' → '0-2', '+3 años' → '+3'
+    s = _re.sub(r"[^\d+\-]", "", edad_rec.strip())
+    if not s:
+        return False
+    if s.startswith("+"):
         try:
-            return int(lo_s) <= age <= int(hi_s)
+            return age >= int(s[1:])
         except ValueError:
             return False
     if s.endswith("+"):
         try:
             return age >= int(s[:-1])
+        except ValueError:
+            return False
+    if "-" in s:
+        lo_s, hi_s = s.split("-", 1)
+        try:
+            return int(lo_s) <= age <= int(hi_s)
         except ValueError:
             return False
     try:
