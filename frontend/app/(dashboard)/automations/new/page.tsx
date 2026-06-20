@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi, api, shopifyApi, formsApi, ShopifyProduct, ShopifyCollection } from "@/lib/api";
-import { Template, AutomationTrigger, AutomationStep } from "@/lib/types";
+import { Template, AutomationTrigger, AutomationStep, Automation } from "@/lib/types";
 import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart, MapPin } from "lucide-react";
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
@@ -111,6 +111,13 @@ function toHours(value: number, unit: TimeUnit): number {
   if (unit === "minutos") return value / 60;
   if (unit === "dias") return value * 24;
   return value;
+}
+
+function fromHours(h: number): { delayValue: number; delayUnit: TimeUnit } {
+  if (h === 0) return { delayValue: 0, delayUnit: "horas" };
+  if (h < 1) return { delayValue: Math.round(h * 60), delayUnit: "minutos" };
+  if (h % 24 === 0) return { delayValue: h / 24, delayUnit: "dias" };
+  return { delayValue: h, delayUnit: "horas" };
 }
 
 const TRIGGER_DEFAULTS: Partial<Record<AutomationTrigger, { delay: number; unit: TimeUnit; lookback: number; lookbackUnit: "horas" | "dias" }>> = {
@@ -527,7 +534,6 @@ function StepCard({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            title={abEnabled ? "Desactivar A/B test" : "Activar A/B test"}
             onClick={() => {
               if (abEnabled) {
                 // Disable: restore from variant A (or clear)
@@ -544,9 +550,14 @@ function StepCard({
                 });
               }
             }}
-            className={`p-1.5 rounded-lg transition-colors ${abEnabled ? "bg-purple-100 text-purple-700 hover:bg-purple-200" : "text-gray-400 hover:text-purple-600 hover:bg-purple-50"}`}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              abEnabled
+                ? "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                : "border border-gray-200 text-gray-500 hover:text-purple-600 hover:bg-purple-50 hover:border-purple-200"
+            }`}
           >
-            <FlaskConical size={14} />
+            <FlaskConical size={12} />
+            {abEnabled ? "A/B activo" : "Test A/B"}
           </button>
           {total > 1 && (
             <button onClick={onRemove} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
@@ -649,6 +660,9 @@ function StepCard({
 export default function NewAutomationPage() {
   const router = useRouter();
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("edit") ? Number(searchParams.get("edit")) : null;
+  const skipNextTriggerEffect = useRef(false);
 
   const [name, setName] = useState("");
   const [triggerType, setTriggerType] = useState<AutomationTrigger>("abandoned_cart");
@@ -710,8 +724,12 @@ export default function NewAutomationPage() {
     return undefined;
   }
 
-  // Reset defaults when trigger type changes
+  // Reset defaults when trigger type changes (skip when populating from existing automation)
   useEffect(() => {
+    if (skipNextTriggerEffect.current) {
+      skipNextTriggerEffect.current = false;
+      return;
+    }
     const def = TRIGGER_DEFAULTS[triggerType];
     if (def) {
       setLookbackValue(def.lookback);
@@ -721,6 +739,58 @@ export default function NewAutomationPage() {
       ));
     }
   }, [triggerType]);
+
+  // Populate form when editing an existing automation
+  useEffect(() => {
+    if (!existingAuto) return;
+    setName(existingAuto.name);
+    const tc = (existingAuto.trigger_config ?? {}) as Record<string, unknown>;
+    // Set trigger type without triggering defaults reset
+    skipNextTriggerEffect.current = true;
+    setTriggerType(existingAuto.trigger_type as AutomationTrigger);
+    // Trigger-specific config
+    if (existingAuto.trigger_type === "reactivation") {
+      setInactivityDays(Number(tc.inactivity_days ?? 90));
+      setCooldownDays(Number(tc.cooldown_days ?? 180));
+    } else if (existingAuto.trigger_type === "post_visit") {
+      setPostVisitDays(Number(tc.delay_days ?? 3));
+    } else if (existingAuto.trigger_type === "birthday_reminder") {
+      setBirthdayDaysBefore(Number(tc.days_before ?? 30));
+      setBirthdayField(String(tc.birthday_field ?? "fecha_nacimiento"));
+      setBirthdayNameField(String(tc.name_field ?? "nombre_regalado"));
+    } else if (existingAuto.trigger_type === "form_submitted") {
+      setFormSubmittedFormId(String(tc.form_id ?? ""));
+    } else if (EVENT_TRIGGERS.has(existingAuto.trigger_type as AutomationTrigger)) {
+      const lh = Number(tc.lookback_hours ?? 24);
+      if (lh % 24 === 0) { setLookbackValue(lh / 24); setLookbackUnit("dias"); }
+      else { setLookbackValue(lh); setLookbackUnit("horas"); }
+    }
+    if (existingAuto.coupon_campaign_id) setCouponCampaignId(existingAuto.coupon_campaign_id);
+    // Steps
+    if (existingAuto.steps?.length) {
+      setSteps(existingAuto.steps.map((s) => {
+        const { delayValue, delayUnit } = fromHours(Number((s as Record<string, unknown>).delay_hours ?? 0));
+        const raw = s as Record<string, unknown>;
+        const rawVariants = (raw.variants as Record<string, unknown>[] | undefined) ?? [];
+        const variants: VariantState[] = rawVariants.map((v) => ({
+          variant: String(v.variant ?? "A"),
+          subject: String(v.subject ?? ""),
+          previewText: String(v.preview_text ?? ""),
+          templateId: Number(v.template_id) || ("" as const),
+          weight: Number(v.weight ?? 50),
+        }));
+        return {
+          delayValue,
+          delayUnit,
+          templateId: Number(raw.template_id) || ("" as const),
+          subject: String(raw.subject ?? ""),
+          previewText: String(raw.preview_text ?? ""),
+          condition: String(raw.condition ?? "not_recovered"),
+          variants,
+        };
+      }));
+    }
+  }, [existingAuto]);
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["templates"],
@@ -752,6 +822,13 @@ export default function NewAutomationPage() {
     queryFn: () => shopifyApi.collections().then((r) => r.data),
     staleTime: 10 * 60_000,
     enabled: crossSellEnabled && crossSellMode === "collection" && PRODUCT_FILTER_TRIGGERS.has(triggerType),
+  });
+
+  const { data: existingAuto } = useQuery<Automation>({
+    queryKey: ["automation", editId],
+    queryFn: () => automationsApi.get(editId!).then((r) => r.data),
+    enabled: !!editId,
+    staleTime: 0,
   });
 
   const [couponCampaignId, setCouponCampaignId] = useState<number | null>(null);
@@ -847,19 +924,21 @@ export default function NewAutomationPage() {
         return { ...base, template_id: Number(s.templateId), subject: s.subject, preview_text: s.previewText || undefined };
       });
 
-      return automationsApi.create({
+      const payload = {
         name,
         trigger_type: triggerType,
         trigger_config: triggerConfig,
         steps: stepsPayload,
-        // Keep legacy fields from step 1 for backwards compat
         template_id: Number(steps[0].templateId) || undefined,
         subject: steps[0].subject || undefined,
         coupon_campaign_id: couponCampaignId ?? undefined,
-      });
+      };
+      if (editId) return automationsApi.update(editId, payload);
+      return automationsApi.create(payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["automations"] });
+      qc.invalidateQueries({ queryKey: ["automation", editId] });
       router.push("/automations");
     },
   });
@@ -876,11 +955,13 @@ export default function NewAutomationPage() {
       <Link href="/automations" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 mb-6">
         <ArrowLeft size={15} /> Volver
       </Link>
-      <h1 className="text-2xl font-bold text-gray-900 mb-8">Nueva automatización</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-8">
+        {editId ? "Editar automatización" : "Nueva automatización"}
+      </h1>
 
       {mutation.isError && (
         <div className="mb-6 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
-          Error al crear. Intenta de nuevo.
+          {editId ? "Error al guardar. Intenta de nuevo." : "Error al crear. Intenta de nuevo."}
         </div>
       )}
 
@@ -1411,7 +1492,12 @@ export default function NewAutomationPage() {
           disabled={mutation.isPending || !isValid || !name}
           className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-semibold hover:bg-brand-700 disabled:opacity-60 transition-colors"
         >
-          {mutation.isPending ? "Creando..." : `Crear automatización${steps.length > 1 ? ` (${steps.length} pasos)` : ""}`}
+          {mutation.isPending
+            ? (editId ? "Guardando..." : "Creando...")
+            : editId
+              ? `Guardar cambios${steps.length > 1 ? ` (${steps.length} pasos)` : ""}`
+              : `Crear automatización${steps.length > 1 ? ` (${steps.length} pasos)` : ""}`
+          }
         </button>
       </div>
     </div>
