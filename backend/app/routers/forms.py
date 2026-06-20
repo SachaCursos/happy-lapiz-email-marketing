@@ -988,42 +988,46 @@ def _build_embed_js(cfg: dict) -> str:
       }}
     }}
 
-    // Coupon activated popup — detect via hash, URL param, or localStorage
-    var _hbCouponActive = (window.location.hash === '#hb_coupon') ||
-      (new URLSearchParams(window.location.search).get('hb_coupon') === '1') ||
-      (function(){{ try {{ return localStorage.getItem('hb_coupon_activated')==='1'; }} catch(e){{ return false; }} }})();
-    if (_hbCouponActive) {{
+    // Coupon activated popup
+    (function() {{
+      var _active = (new URLSearchParams(window.location.search).get('hb_coupon') === '1') ||
+        (window.location.hash === '#hb_coupon') ||
+        (function(){{ try {{ return localStorage.getItem('hb_coupon_activated')==='1'; }} catch(e){{ return false; }} }})();
+      if (!_active) return;
       try {{ localStorage.removeItem('hb_coupon_activated'); }} catch(e) {{}}
-      if (window.location.hash === '#hb_coupon') {{ history.replaceState(null,'',window.location.pathname+window.location.search); }}
-      function _showCouponPopup() {{
+      var _doShow = function() {{
         if (document.getElementById('hb-coupon-popup')) return;
-        var overlay = document.createElement('div');
-        overlay.id = 'hb-coupon-popup';
-        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(0,0,0,0.45);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;';
-        overlay.innerHTML = '<div style="background:#fff;border-radius:20px;padding:36px 32px 32px;max-width:420px;width:100%;text-align:center;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.25);">' +
-          '<div style="font-size:48px;margin-bottom:12px;">🎉</div>' +
-          '<div style="font-size:22px;font-weight:800;color:#16a34a;margin-bottom:10px;">¡Tu cupón ya está activado!</div>' +
-          '<div style="font-size:15px;color:#555;line-height:1.6;">Cuando agregues tus productos al carrito, podrás ver tu descuento aplicado.<br><br><strong>¡Válido para cualquier producto!</strong></div>' +
-          '<button id="hb-coupon-popup-close" style="margin-top:24px;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:12px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">¡Entendido, vamos a comprar!</button>' +
-          '<button onclick="document.getElementById(\'hb-coupon-popup\').remove()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:#aaa;line-height:1;">×</button>' +
-          '</div>';
-        document.body.appendChild(overlay);
-        overlay.addEventListener('click', function(e) {{ if (e.target === overlay) overlay.remove(); }});
-        document.getElementById('hb-coupon-popup-close').addEventListener('click', function() {{ overlay.remove(); }});
+        var ov = document.createElement('div');
+        ov.id = 'hb-coupon-popup';
+        ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(0,0,0,0.5);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;';
+        var box = document.createElement('div');
+        box.style.cssText = 'background:#fff;border-radius:20px;padding:36px 32px 32px;max-width:420px;width:100%;text-align:center;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+        box.innerHTML = '<div style="font-size:52px;margin-bottom:14px;">🎉</div>' +
+          '<div style="font-size:22px;font-weight:800;color:#16a34a;margin-bottom:12px;">¡Tu cupón ya está activado!</div>' +
+          '<div style="font-size:15px;color:#555;line-height:1.65;">Cuando agregues tus productos al carrito, podrás ver tu descuento aplicado.<br><br><strong style="color:#222;">¡Válido para cualquier producto!</strong></div>';
+        var closeBtn = document.createElement('button');
+        closeBtn.textContent = '¡Entendido, vamos a comprar!';
+        closeBtn.style.cssText = 'margin-top:24px;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:13px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;display:block;';
+        closeBtn.onclick = function() {{ ov.remove(); }};
+        var xBtn = document.createElement('button');
+        xBtn.textContent = '×';
+        xBtn.style.cssText = 'position:absolute;top:12px;right:16px;background:none;border:none;font-size:26px;cursor:pointer;color:#bbb;line-height:1;padding:0;';
+        xBtn.onclick = function() {{ ov.remove(); }};
+        box.appendChild(closeBtn);
+        box.appendChild(xBtn);
+        ov.appendChild(box);
+        ov.onclick = function(e) {{ if (e.target === ov) ov.remove(); }};
+        document.body.appendChild(ov);
         setTimeout(function() {{
-          if (document.getElementById('hb-coupon-popup')) {{
-            overlay.style.transition = 'opacity 0.4s';
-            overlay.style.opacity = '0';
-            setTimeout(function() {{ if (overlay.parentNode) overlay.remove(); }}, 400);
-          }}
+          if (ov.parentNode) {{ ov.style.transition='opacity 0.4s'; ov.style.opacity='0'; setTimeout(function(){{if(ov.parentNode)ov.remove();}},400); }}
         }}, 10000);
-      }}
-      if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', _showCouponPopup);
+      }};
+      if (document.body) {{
+        setTimeout(_doShow, 200);
       }} else {{
-        setTimeout(_showCouponPopup, 300);
+        document.addEventListener('DOMContentLoaded', function() {{ setTimeout(_doShow, 200); }});
       }}
-    }}
+    }})();
     }})();
     """).strip()
 
