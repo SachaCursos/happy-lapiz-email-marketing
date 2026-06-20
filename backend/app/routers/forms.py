@@ -559,6 +559,8 @@ def _build_embed_js(cfg: dict) -> str:
         '#hb-popup-success{{display:none;text-align:center;padding:8px 0 4px;}}',
         '.hb-coupon-box{{margin:4px 0 12px;padding:14px 20px;background:#f0f9ff;border:2px dashed ' + btnBg + ';border-radius:12px;text-align:center;}}',
         '#hb-popup-fine{{margin:12px 0 0;color:#94a3b8;font-size:11px;text-align:center;}}',
+        '#hb-bubble{{position:fixed;bottom:20px;left:20px;z-index:2147483646;background:linear-gradient(135deg,' + btnBg + ',' + btnBg2 + ');color:' + btnTxt + ';border:none;border-radius:50px;padding:10px 16px;cursor:pointer;font-size:13px;font-weight:700;font-family:' + fontFam + ',system-ui,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,0.25);display:flex;align-items:center;gap:6px;animation:hbFadeIn 0.3s ease;}}',
+        '#hb-bubble:hover{{opacity:0.88;transform:scale(1.04);}}',
       ].join('\\n');
 
       try {{
@@ -644,7 +646,7 @@ def _build_embed_js(cfg: dict) -> str:
             (s.fields||[]).forEach(function(k){{ fieldsHtml += renderField(k); }});
           }}
           var isFinal = (idx === lastSubmitIdx);
-          var btnText = s.button_text || (isFinal && !isCouponStep ? C.button_text : isCouponStep ? 'Ir a la tienda →' : 'Continuar →');
+          var btnText = s.button_text || (isFinal && !isCouponStep ? C.button_text : isCouponStep ? 'Usar mi 20% OFF' : 'Continuar →');
 
           if (isCouponStep) {{
             // Coupon step: shown after submit, not a real form step
@@ -658,7 +660,7 @@ def _build_embed_js(cfg: dict) -> str:
               '</div>' +
               (s.description ? '<p style="margin:8px 0 0;font-size:13px;color:#475569">'+s.description+'</p>' : '') +
               '</div>' +
-              '<a href="https://happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
+              '<a id="hb-coupon-link" href="https://happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
               '</div>';
           }} else {{
             stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
@@ -867,6 +869,8 @@ def _build_embed_js(cfg: dict) -> str:
               if (code) {{
                 var codeEl = document.getElementById('hb-coupon-code');
                 if (codeEl) codeEl.textContent = code;
+                var linkEl = document.getElementById('hb-coupon-link');
+                if (linkEl) linkEl.href = 'https://happylapiz.cl?discount=' + encodeURIComponent(code);
               }}
             }} else {{
               // No coupon step: show regular success screen
@@ -896,6 +900,18 @@ def _build_embed_js(cfg: dict) -> str:
         var el = document.getElementById('hb-popup-overlay');
         if (el) el.parentNode.removeChild(el);
         _ss.setItem(STORE_KEY + '_d', '1');
+        // Show minimized bubble so users can reopen the form
+        if (!document.getElementById('hb-bubble')) {{
+          var bubble = document.createElement('button');
+          bubble.id = 'hb-bubble';
+          bubble.innerHTML = '🎁 <span>20% OFF</span>';
+          bubble.addEventListener('click', function() {{
+            bubble.parentNode.removeChild(bubble);
+            _ss.removeItem(STORE_KEY + '_d');
+            showPopup();
+          }});
+          document.body.appendChild(bubble);
+        }}
       }}
 
       // Triggers: activate delay AND/OR scroll (whichever fires first shows the popup)
