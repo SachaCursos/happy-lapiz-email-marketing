@@ -839,7 +839,11 @@ def _send_email_step(
                 pass
 
         _env = Environment(undefined=ChainableUndefined)
-        raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
+        _unsub_href = unsub_url(contact.email)
+        _unsub_link = (
+            f'<a href="{_unsub_href}" style="color:inherit;text-decoration:underline;">Unsubscribe</a>'
+        )
+        raw_html = tpl.html_content.replace("{% unsubscribe %}", _unsub_link)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
 
         preview_text = step.get("preview_text", "")
