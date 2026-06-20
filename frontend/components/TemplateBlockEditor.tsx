@@ -172,6 +172,8 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     padding_x: "0",
   },
   timer: {
+    timer_mode: "relativo",
+    duration_hours: "24",
     target_date: "",
     title: "¡La oferta termina en!",
     subtitle: "Aprovecha antes de que sea tarde",
@@ -758,6 +760,27 @@ function blockHtml(block: Block): string {
 
     case "timer": {
       const tf = "'Helvetica Neue', Arial, sans-serif";
+      const isRelativo = (p.timer_mode as string) === "relativo";
+
+      // Relative mode: emit a placeholder that the backend resolves at send time
+      if (isRelativo) {
+        const cfg = {
+          design:        (p.design        as string) || "clasico",
+          duration_hours: parseFloat((p.duration_hours as string) || "24") || 24,
+          bg_color:      (p.bg_color      as string) || "#111111",
+          accent_color:  (p.accent_color  as string) || "#682ae7",
+          text_color:    (p.text_color    as string) || "#ffffff",
+          title:         (p.title         as string) || "",
+          subtitle:      (p.subtitle      as string) || "",
+          show_seconds:  p.show_seconds !== false,
+          label_days:    (p.label_days    as string) || "DÍAS",
+          label_hours:   (p.label_hours   as string) || "HRS",
+          label_minutes: (p.label_minutes as string) || "MIN",
+          label_seconds: (p.label_seconds as string) || "SEG",
+        };
+        return `<!-- HOTBOAT_TIMER_RELATIVE:${JSON.stringify(cfg)} -->`;
+      }
+
       const target = p.target_date ? new Date(p.target_date as string) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
       const diff = Math.max(0, target.getTime() - Date.now());
       const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -948,10 +971,17 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
 
   const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const timerTargetDate = block.type === "timer" ? (p.target_date as string) : "";
+  const timerMode = block.type === "timer" ? (p.timer_mode as string) : "fijo";
+  const timerDurationHours = block.type === "timer" ? (parseFloat(p.duration_hours as string) || 24) : 24;
   useEffect(() => {
     if (block.type !== "timer") return;
     const calc = () => {
-      const t = timerTargetDate ? new Date(timerTargetDate) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      let t: Date;
+      if (timerMode === "relativo") {
+        t = new Date(Date.now() + timerDurationHours * 3600 * 1000);
+      } else {
+        t = timerTargetDate ? new Date(timerTargetDate) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      }
       const diff = Math.max(0, t.getTime() - Date.now());
       return {
         days: Math.floor(diff / 86400000),
@@ -963,7 +993,7 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
     setTimeLeft(calc());
     const id = setInterval(() => setTimeLeft(calc()), 1000);
     return () => clearInterval(id);
-  }, [block.type, timerTargetDate]);
+  }, [block.type, timerTargetDate, timerMode, timerDurationHours]);
 
   switch (block.type) {
     case "header":
@@ -1725,12 +1755,41 @@ function PropsPanel({
                 })}
               </div>
             </Field>
-            <Field label="Fecha y hora objetivo">
-              <input type="datetime-local" value={(p.target_date as string) || ""}
-                onChange={(e) => set("target_date", e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-              <p className="text-xs text-gray-400 mt-1">El timer cuenta hacia esta fecha/hora</p>
+            <Field label="Modo del timer">
+              <div className="flex gap-2">
+                {([["relativo", "Duración relativa"], ["fijo", "Fecha fija"]] as [string, string][]).map(([val, lbl]) => {
+                  const active = ((p.timer_mode as string) || "relativo") === val;
+                  return (
+                    <button key={val} type="button"
+                      onClick={() => set("timer_mode", val)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${active ? "bg-brand-600 text-white border-brand-600" : "bg-white text-gray-600 border-gray-200 hover:border-brand-400"}`}>
+                      {lbl}
+                    </button>
+                  );
+                })}
+              </div>
             </Field>
+            {((p.timer_mode as string) || "relativo") === "relativo" ? (
+              <Field label="Duración desde el envío">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min={1} max={8760}
+                    value={(p.duration_hours as string) || "24"}
+                    onChange={(e) => set("duration_hours", e.target.value)}
+                    className="w-24 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <span className="text-sm text-gray-500">horas</span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">El timer se calcula automáticamente al momento del envío</p>
+              </Field>
+            ) : (
+              <Field label="Fecha y hora objetivo">
+                <input type="datetime-local" value={(p.target_date as string) || ""}
+                  onChange={(e) => set("target_date", e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                <p className="text-xs text-gray-400 mt-1">El timer cuenta hacia esta fecha fija</p>
+              </Field>
+            )}
             <Field label="Título"><TI value={p.title as string} onChange={(v) => set("title", v)} placeholder="¡La oferta termina en!" /></Field>
             <Field label="Subtítulo"><TI value={p.subtitle as string} onChange={(v) => set("subtitle", v)} placeholder="Aprovecha antes de que sea tarde" /></Field>
             <Field label="Color de fondo"><CI value={(p.bg_color as string) || "#111111"} onChange={(v) => set("bg_color", v)} /></Field>

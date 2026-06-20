@@ -1,8 +1,9 @@
+import json
 import logging
 import re
 import time
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import resend
 from jinja2 import Template as Jinja2Template
 from sqlmodel import Session, select, func
@@ -50,6 +51,138 @@ def replace_unsub_tag(html: str, email: str) -> str:
     Must run before Jinja2 to avoid 'Unknown tag unsubscribe' syntax error."""
     link = _unsub_link(email)
     return html.replace("{% unsubscribe %}", link)
+
+
+# ── Relative countdown timer resolution ───────────────────────────────────────
+
+_TIMER_RE = re.compile(r'<!-- HOTBOAT_TIMER_RELATIVE:(\{.*?\}) -->', re.DOTALL)
+_TIMER_FONT = "'Helvetica Neue', Arial, sans-serif"
+
+
+def _render_timer_html(cfg: dict, now: datetime) -> str:
+    duration_hours = float(cfg.get("duration_hours", 24))
+    target = now + timedelta(hours=duration_hours)
+    diff = max(0.0, (target - now).total_seconds())
+
+    days = int(diff // 86400)
+    hrs  = int((diff % 86400) // 3600)
+    mins = int((diff % 3600) // 60)
+    secs = int(diff % 60)
+
+    def p(n: int) -> str:
+        return str(n).zfill(2)
+
+    f      = _TIMER_FONT
+    bg     = cfg.get("bg_color", "#111111")
+    accent = cfg.get("accent_color", "#682ae7")
+    tc     = cfg.get("text_color", "#ffffff")
+    design = cfg.get("design", "clasico")
+    title  = cfg.get("title", "")
+    sub    = cfg.get("subtitle", "")
+    units  = [
+        (p(days), cfg.get("label_days", "DÍAS")),
+        (p(hrs),  cfg.get("label_hours", "HRS")),
+        (p(mins), cfg.get("label_minutes", "MIN")),
+    ]
+    if cfg.get("show_seconds", True):
+        units.append((p(secs), cfg.get("label_seconds", "SEG")))
+
+    if design == "clasico":
+        cells = ""
+        for i, (val, lbl) in enumerate(units):
+            if i > 0:
+                cells += f'<td style="padding:0 6px;vertical-align:middle;"><span style="font-size:28px;color:rgba(255,255,255,0.3);font-weight:300;font-family:{f};">:</span></td>'
+            cells += (
+                f'<td style="text-align:center;padding:0 4px;">'
+                f'<div style="background:{accent};border-radius:10px;padding:14px 10px;min-width:58px;display:inline-block;">'
+                f'<div style="font-size:38px;font-weight:900;color:{tc};line-height:1;font-family:{f};letter-spacing:-1px;">{val}</div>'
+                f'<div style="font-size:10px;color:rgba(255,255,255,0.65);margin-top:6px;letter-spacing:2px;font-family:{f};">{lbl}</div>'
+                f'</div></td>'
+            )
+        title_h = f'<p style="margin:0 0 20px;font-size:18px;font-weight:700;color:{tc};font-family:{f};">{title}</p>' if title else ""
+        sub_h   = f'<p style="margin:20px 0 0;font-size:13px;color:rgba(255,255,255,0.5);font-family:{f};">{sub}</p>' if sub else ""
+        return (
+            f'<div style="background:{bg};padding:32px 24px;text-align:center;">'
+            f'{title_h}<table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">'
+            f'<tr>{cells}</tr></table>{sub_h}</div>'
+        )
+
+    if design == "minimal":
+        cells = ""
+        for i, (val, lbl) in enumerate(units):
+            if i > 0:
+                cells += f'<td style="padding:0 4px;vertical-align:top;padding-top:6px;"><span style="font-size:36px;color:{accent};font-weight:300;font-family:{f};opacity:0.4;">:</span></td>'
+            cells += (
+                f'<td style="text-align:center;padding:0 12px;">'
+                f'<div style="font-size:52px;font-weight:900;color:{accent};line-height:1;font-family:{f};">{val}</div>'
+                f'<div style="font-size:11px;color:#9ca3af;margin-top:6px;letter-spacing:2px;font-family:{f};">{lbl}</div>'
+                f'</td>'
+            )
+        title_h = f'<p style="margin:0 0 24px;font-size:16px;font-weight:600;color:#222;font-family:{f};">{title}</p>' if title else ""
+        sub_h   = f'<p style="margin:24px 0 0;font-size:13px;color:#6b7280;font-family:{f};">{sub}</p>' if sub else ""
+        return (
+            f'<div style="background:{bg};padding:32px 24px;text-align:center;border-top:3px solid {accent};">'
+            f'{title_h}<table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">'
+            f'<tr>{cells}</tr></table>{sub_h}</div>'
+        )
+
+    if design == "urgencia":
+        cells = ""
+        for i, (val, lbl) in enumerate(units):
+            if i > 0:
+                cells += f'<td style="padding:0 5px;vertical-align:middle;"><span style="font-size:28px;color:rgba(255,255,255,0.4);font-family:{f};">:</span></td>'
+            cells += (
+                f'<td style="text-align:center;padding:0 5px;">'
+                f'<div style="background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.3);border-radius:8px;padding:12px 8px;min-width:56px;display:inline-block;">'
+                f'<div style="font-size:40px;font-weight:900;color:#ffffff;line-height:1;font-family:{f};">{val}</div>'
+                f'<div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:5px;letter-spacing:2px;font-family:{f};">{lbl}</div>'
+                f'</div></td>'
+            )
+        title_h = f'<p style="margin:0 0 16px;font-size:12px;font-weight:700;color:rgba(255,255,255,0.85);letter-spacing:3px;text-transform:uppercase;font-family:{f};">&#9889; {title} &#9889;</p>' if title else ""
+        sub_h   = f'<p style="margin:20px 0 0;font-size:13px;color:rgba(255,255,255,0.7);font-family:{f};">{sub}</p>' if sub else ""
+        return (
+            f'<div style="background:{bg};padding:32px 24px;text-align:center;">'
+            f'{title_h}<table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">'
+            f'<tr>{cells}</tr></table>{sub_h}</div>'
+        )
+
+    # elegante
+    cells = ""
+    for i, (val, lbl) in enumerate(units):
+        if i > 0:
+            cells += f'<td style="padding:0 8px;vertical-align:top;padding-top:6px;"><span style="font-size:30px;color:{accent};font-weight:200;font-family:{f};opacity:0.4;">:</span></td>'
+        cells += (
+            f'<td style="text-align:center;padding:0 6px;">'
+            f'<div style="border:2px solid {accent};border-radius:12px;padding:14px 10px;min-width:62px;display:inline-block;background:#ffffff;">'
+            f'<div style="font-size:38px;font-weight:900;color:{accent};line-height:1;font-family:{f};">{val}</div>'
+            f'<div style="font-size:10px;color:#9ca3af;margin-top:6px;letter-spacing:2px;font-family:{f};">{lbl}</div>'
+            f'</div></td>'
+        )
+    title_h = f'<p style="margin:0 0 6px;font-size:12px;font-weight:600;color:{accent};letter-spacing:3px;text-transform:uppercase;font-family:{f};">{title}</p><div style="width:48px;height:2px;background:{accent};margin:0 auto 20px;"></div>' if title else ""
+    sub_h   = f'<p style="margin:24px 0 0;font-size:13px;color:#6b7280;font-family:{f};">{sub}</p>' if sub else ""
+    return (
+        f'<div style="background:{bg};padding:36px 24px;text-align:center;">'
+        f'{title_h}<table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">'
+        f'<tr>{cells}</tr></table>{sub_h}</div>'
+    )
+
+
+def resolve_relative_timers(html: str) -> str:
+    """Replace <!-- HOTBOAT_TIMER_RELATIVE:{...} --> placeholders with static timer HTML.
+    Called at send time so the countdown reflects the actual send moment."""
+    if "HOTBOAT_TIMER_RELATIVE" not in html:
+        return html
+    now = datetime.now(timezone.utc)
+
+    def _replace(m: re.Match) -> str:
+        try:
+            cfg = json.loads(m.group(1))
+            return _render_timer_html(cfg, now)
+        except Exception:
+            logger.warning("resolve_relative_timers: failed to parse timer config: %s", m.group(1))
+            return ""
+
+    return _TIMER_RE.sub(_replace, html)
 
 
 _HOTBOAT_FOOTER_RE = re.compile(
@@ -112,6 +245,7 @@ def render_html(html_content: str, contact: Contact, coupon_code: str = "") -> s
     # Replace {% unsubscribe %} before Jinja2 parses the template — Jinja2 would
     # throw "Unknown tag 'unsubscribe'" if left as-is.
     html_content = replace_unsub_tag(html_content, contact.email)
+    html_content = resolve_relative_timers(html_content)
     tpl = Jinja2Template(html_content)
     return tpl.render(
         nombre=_fmt_nombre(contact.name, contact.email),
