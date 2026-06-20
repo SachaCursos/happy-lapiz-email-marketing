@@ -770,13 +770,16 @@ def _send_email_step(
         run.resend_id = resend_id
         run.executed_at = datetime.utcnow()
         logger.info("Automation %d step %d variant=%s sent to %s", auto.id, step_number, variant or "-", contact.email)
+        session.add(run)
+        session.commit()
+        return True
     except Exception as exc:
         run.error = str(exc)[:500]
         run.executed_at = datetime.utcnow()
         logger.error("Automation %d step %d failed for %s: %s", auto.id, step_number, contact.email, exc)
-
-    session.add(run)
-    session.commit()
+        session.add(run)
+        session.commit()
+        return False
 
 
 # ── Enrollment processing ──────────────────────────────────────────────────────
@@ -837,7 +840,9 @@ def _process_enrollments(session: Session) -> None:
 
                 extra_vars = json.loads(enrollment.extra_vars_json or "{}")
                 effective_step, variant_label = _pick_variant(step)
-                _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
+                sent_ok = _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
+                if not sent_ok:
+                    continue
 
             # Advance to next step
             next_step_num = enrollment.next_step + 1
