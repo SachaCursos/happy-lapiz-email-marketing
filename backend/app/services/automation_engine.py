@@ -542,6 +542,7 @@ def _fetch_age_recommended_products(
             "handle": r[2],
             "image_url": r[3],
             "price": float(r[4]) if r[4] else 0,
+            "url": f"https://www.happylapiz.cl/products/{r[2] or ''}",
         }
         for r in all_rows
         if _age_matches(r[5] or "", edad_regalon)
