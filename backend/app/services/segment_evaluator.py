@@ -1,5 +1,5 @@
 from typing import List, Optional, Any
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, text
 from sqlmodel import Session, select
 from app.models.contact import Contact
 
@@ -54,6 +54,14 @@ def _build_clause(node: dict) -> Optional[Any]:
     field = node.get("field")
     op = node.get("op")
     value = node.get("value")
+
+    # Condición especial: tiene o no tiene regalado registrado
+    if field == "has_gift_recipient":
+        is_true = str(value).lower() in ("true", "1")
+        if is_true:
+            return text("contacts.email IN (SELECT email FROM gift_recipients)")
+        else:
+            return text("contacts.email NOT IN (SELECT email FROM gift_recipients)")
 
     # Soporte para custom_fields.{clave} — p. ej. custom_fields.es_mama
     if field and field.startswith("custom_fields."):

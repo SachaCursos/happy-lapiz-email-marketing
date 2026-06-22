@@ -97,11 +97,13 @@ const EXIT_CONDITIONS: Record<string, { value: string; label: string; hint: stri
     { value: "always",        label: "Siempre, aunque ya haya comprado",         hint: "" },
   ],
   placed_order: [
-    { value: "always", label: "Siempre", hint: "" },
+    { value: "always",                  label: "Siempre",                                    hint: "" },
+    { value: "has_no_gift_recipients",  label: "Solo si NO tiene regalados registrados",     hint: "" },
   ],
   _default: [
-    { value: "not_purchased", label: "Solo si aún NO ha comprado (recomendado)", hint: "" },
-    { value: "always",        label: "Siempre, aunque ya haya comprado",         hint: "" },
+    { value: "not_purchased",          label: "Solo si aún NO ha comprado (recomendado)",   hint: "" },
+    { value: "has_no_gift_recipients", label: "Solo si NO tiene regalados registrados",      hint: "" },
+    { value: "always",                 label: "Siempre, aunque ya haya comprado",            hint: "" },
   ],
 };
 

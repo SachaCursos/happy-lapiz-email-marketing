@@ -21,6 +21,7 @@ const FIELDS = [
   { value: "opted_in",             label: "Opt-in activo",          type: "boolean" },
   { value: "ultima_visita",        label: "Última visita web",      type: "date" },
   { value: "smile_points",         label: "Puntos de fidelidad",    type: "number" },
+  { value: "has_gift_recipient",   label: "Tiene regalado registrado", type: "boolean" },
 ];
 
 const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {

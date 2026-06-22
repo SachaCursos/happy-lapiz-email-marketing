@@ -234,6 +234,12 @@ def _passes_condition(condition: str | None, enrollment: AutomationEnrollment, s
         """), {"token": checkout_token}).fetchone()
         return result is None  # True = not recovered = still send
 
+    if condition == "has_no_gift_recipients":
+        result = session.execute(text(
+            "SELECT 1 FROM gift_recipients WHERE LOWER(email) = LOWER(:email) LIMIT 1"
+        ), {"email": enrollment.contact_email}).fetchone()
+        return result is None  # True = no gift recipients = still send
+
     return True
 
 
