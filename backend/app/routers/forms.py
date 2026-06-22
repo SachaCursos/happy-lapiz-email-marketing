@@ -259,18 +259,15 @@ def submit_form(
 
     if existing_subs:
         nombre_nuevo = (_ed.get("destinatario_nombre") or "").strip().lower()
-        allow_through = False
         if nombre_nuevo:
             already_registered = any(
                 (sub.nombre_regalado or "").strip().lower() == nombre_nuevo
                 for sub in existing_subs
             )
-            if not already_registered:
-                allow_through = True
-        if not allow_through:
-            existing_coupon = next((s.coupon_code for s in existing_subs if s.coupon_code), None) or coupon_code
-            session.commit()
-            return {"ok": False, "already_submitted": True, "coupon_code": existing_coupon}
+            if already_registered:
+                existing_coupon = next((s.coupon_code for s in existing_subs if s.coupon_code), None) or coupon_code
+                session.commit()
+                return {"ok": False, "already_submitted": True, "coupon_code": existing_coupon}
 
     session.add(FormSubmission(
         form_id=form_id,
