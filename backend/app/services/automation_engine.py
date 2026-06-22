@@ -757,6 +757,9 @@ def _send_email_step(
             **{k: v for k, v in cf.items() if isinstance(k, str)},
             **(extra_vars or {}),
         }
+        # Only use first name for nombre_regalado (customers sometimes enter full name)
+        if vars_.get("nombre_regalado"):
+            vars_["nombre_regalado"] = vars_["nombre_regalado"].split()[0]
         # If there's a coupon code and a checkout URL, inject checkout_url_with_coupon
         # so templates can use {{ event.extra.checkout_url_with_coupon }} to get the
         # checkout URL with the discount pre-applied (Shopify supports ?discount=CODE).

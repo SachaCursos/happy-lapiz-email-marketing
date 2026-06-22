@@ -248,6 +248,30 @@ def submit_form(
         coupon_code = f.coupon_code
 
     _ed = payload.extra_data or {}
+
+    # Duplicate check: one submission per email, unless adding a new unregistered child
+    existing_subs = session.exec(
+        select(FormSubmission).where(
+            FormSubmission.form_id == form_id,
+            FormSubmission.email == email,
+        )
+    ).all()
+
+    if existing_subs:
+        nombre_nuevo = (_ed.get("destinatario_nombre") or "").strip().lower()
+        allow_through = False
+        if nombre_nuevo:
+            already_registered = any(
+                (sub.nombre_regalado or "").strip().lower() == nombre_nuevo
+                for sub in existing_subs
+            )
+            if not already_registered:
+                allow_through = True
+        if not allow_through:
+            existing_coupon = next((s.coupon_code for s in existing_subs if s.coupon_code), None) or coupon_code
+            session.commit()
+            return {"ok": False, "already_submitted": True, "coupon_code": existing_coupon}
+
     session.add(FormSubmission(
         form_id=form_id,
         email=email,
@@ -943,6 +967,22 @@ def _build_embed_js(cfg: dict) -> str:
           .then(function(r) {{ return r.json(); }})
           .then(function(res) {{
             var code = res.coupon_code || C.coupon_code || '';
+            if (res.already_submitted) {{
+              btn.disabled = false;
+              btn.textContent = C.button_text;
+              document.getElementById('hb-popup-form').style.display = 'none';
+              if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
+              var sucEl = document.getElementById('hb-popup-success');
+              if (sucEl) {{
+                sucEl.innerHTML = '<div style="font-size:36px;margin-bottom:8px">ℹ️</div>' +
+                  '<p style="color:#0369a1;font-weight:700;font-size:15px;margin:0 0 8px">Ya completaste este formulario anteriormente.</p>' +
+                  (code ? '<p style="font-size:13px;color:#555;margin:0">Tu cupón: <strong style="color:' + btnBg + ';font-size:18px;letter-spacing:2px">' + code + '</strong></p>' : '');
+                sucEl.style.display = 'block';
+              }}
+              _ls.setItem(STORE_KEY, 'submitted');
+              setTimeout(closePopup, 6000);
+              return;
+            }}
             // Check if there's a coupon step to advance to
             var couponStepIdx = -1;
             if (C.steps && C.steps.length > 0) {{
@@ -959,7 +999,7 @@ def _build_embed_js(cfg: dict) -> str:
                 if (codeEl) codeEl.textContent = code;
                 var linkEl = document.getElementById('hb-coupon-link');
                 if (linkEl) {{
-                  linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code) + '?redirect=%2F%23hb_coupon';
+                  linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code) + '?redirect=%2F';
                   linkEl.addEventListener('click', function() {{ try {{ localStorage.setItem('hb_coupon_activated','1'); }} catch(e) {{}} }});
                 }}
               }}
