@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen
 from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
+from app.models import evergreen as _evergreen_model  # noqa: F401
 
 app = FastAPI(title="Happy Lápiz Email Marketing API", version="1.0.0", redirect_slashes=False)
 
@@ -25,6 +26,7 @@ app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
 app.include_router(segments.router, prefix="/api/segments", tags=["segments"])
 app.include_router(templates.router, prefix="/api/templates", tags=["templates"])
 app.include_router(campaigns.router, prefix="/api/campaigns", tags=["campaigns"])
+app.include_router(evergreen.router, prefix="/api/evergreen", tags=["evergreen"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])

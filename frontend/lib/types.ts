@@ -139,6 +139,37 @@ export interface CampaignConversions {
   converted_contacts: number;
 }
 
+export type EvergreenStatus = "active" | "paused";
+
+export interface EvergreenCampaign {
+  id: number;
+  name: string;
+  subject: string;
+  preview_text: string | null;
+  template_id: number;
+  segment_id: number | null;
+  exclude_segment_ids: number[] | null;
+  sort_order: number;
+  status: EvergreenStatus;
+  allow_resend: boolean;
+  resend_after_days: number | null;
+  min_days_inactive: number;
+  require_open_in_last_n: number;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EvergreenStats {
+  evergreen_id: number;
+  total: number;
+  sent: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
+}
+
 export type FormTrigger = "delay" | "exit_intent" | "scroll";
 
 export interface FormField {

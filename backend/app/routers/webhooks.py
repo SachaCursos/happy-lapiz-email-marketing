@@ -113,5 +113,22 @@ async def resend_webhook(
         logger.info("AutomationRun actualizado: id=%s status=%s", run.id, new_status)
         return {"ok": True}
 
+    from app.models.evergreen import EvergreenSend
+    eg_send = session.exec(select(EvergreenSend).where(EvergreenSend.resend_id == resend_id)).first()
+    if eg_send:
+        eg_send.status = new_status
+        if new_status == "delivered":
+            eg_send.delivered_at = now
+        elif new_status == "opened" and not eg_send.opened_at:
+            eg_send.opened_at = now
+        elif new_status == "clicked" and not eg_send.clicked_at:
+            eg_send.clicked_at = now
+        elif new_status == "bounced":
+            eg_send.bounced_at = now
+        session.add(eg_send)
+        session.commit()
+        logger.info("EvergreenSend actualizado: id=%s status=%s", eg_send.id, new_status)
+        return {"ok": True}
+
     logger.warning("Email no encontrado para resend_id=%s", resend_id)
     return {"ok": True}

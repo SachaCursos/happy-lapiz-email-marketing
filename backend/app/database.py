@@ -89,6 +89,39 @@ def _run_migrations():
             used BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
+        """CREATE TABLE IF NOT EXISTS evergreen_campaigns (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            subject VARCHAR NOT NULL,
+            preview_text VARCHAR,
+            template_id INTEGER NOT NULL REFERENCES templates(id),
+            segment_id INTEGER REFERENCES segments(id),
+            exclude_segment_ids JSONB,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            status VARCHAR NOT NULL DEFAULT 'active',
+            allow_resend BOOLEAN NOT NULL DEFAULT FALSE,
+            resend_after_days INTEGER,
+            min_days_inactive INTEGER NOT NULL DEFAULT 15,
+            require_open_in_last_n INTEGER NOT NULL DEFAULT 5,
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS evergreen_sends (
+            id SERIAL PRIMARY KEY,
+            evergreen_id INTEGER NOT NULL REFERENCES evergreen_campaigns(id),
+            contact_id INTEGER NOT NULL REFERENCES contacts(id),
+            resend_id VARCHAR,
+            status VARCHAR NOT NULL DEFAULT 'queued',
+            sent_at TIMESTAMP,
+            delivered_at TIMESTAMP,
+            opened_at TIMESTAMP,
+            clicked_at TIMESTAMP,
+            bounced_at TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_evergreen_sends_evergreen ON evergreen_sends(evergreen_id)",
+        "CREATE INDEX IF NOT EXISTS idx_evergreen_sends_contact ON evergreen_sends(contact_id)",
+        "CREATE INDEX IF NOT EXISTS idx_evergreen_sends_resend ON evergreen_sends(resend_id)",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

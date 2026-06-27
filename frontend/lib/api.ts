@@ -100,6 +100,19 @@ export const campaignsApi = {
   sends: (id: number) => api.get(`/campaigns/${id}/sends`),
 };
 
+// Evergreen campaigns
+export const evergreenApi = {
+  list: () => api.get("/evergreen"),
+  get: (id: number) => api.get(`/evergreen/${id}`),
+  create: (data: unknown) => api.post("/evergreen", data),
+  update: (id: number, data: unknown) => api.patch(`/evergreen/${id}`, data),
+  delete: (id: number) => api.delete(`/evergreen/${id}`),
+  reorder: (ordered_ids: number[]) => api.post("/evergreen/reorder", { ordered_ids }),
+  stats: (id: number) => api.get(`/evergreen/${id}/stats`),
+  sendTest: (id: number) => api.post(`/evergreen/${id}/send-test`),
+  runNow: () => api.post("/evergreen/run-now"),
+};
+
 // Analytics
 export const analyticsApi = {
   overview: () => api.get("/analytics/overview"),
