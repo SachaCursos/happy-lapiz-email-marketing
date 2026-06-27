@@ -377,43 +377,103 @@ def _ensure_shopify_products_table() -> None:
             ))
 
 
+def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict], str | None]:
+    """Fetch active products from Shopify Admin GraphQL (includes totalInventory)."""
+    gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
+    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+    query = """
+    query SyncProducts($cursor: String) {
+      products(first: 100, query: "status:active", after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges {
+          node {
+            legacyResourceId
+            title
+            handle
+            productType
+            tags
+            vendor
+            status
+            totalInventory
+            featuredImage { url }
+            variants(first: 100) {
+              edges { node { price inventoryQuantity } }
+            }
+          }
+        }
+      }
+    }
+    """
+    all_products: list[dict] = []
+    cursor: str | None = None
+
+    with httpx.Client(timeout=60.0) as client:
+        while True:
+            r = client.post(
+                gql_url,
+                headers=headers,
+                json={"query": query, "variables": {"cursor": cursor}},
+            )
+            if r.status_code != 200:
+                return [], f"Shopify GraphQL {r.status_code}: {r.text[:200]}"
+            payload = r.json()
+            if payload.get("errors"):
+                return [], f"Shopify GraphQL: {payload['errors'][0].get('message', payload['errors'])}"
+            data = (payload.get("data") or {}).get("products") or {}
+            for edge in data.get("edges") or []:
+                node = edge.get("node") or {}
+                variant_edges = (node.get("variants") or {}).get("edges") or []
+                price = 0.0
+                if variant_edges:
+                    try:
+                        price = float(variant_edges[0]["node"].get("price") or 0)
+                    except (TypeError, ValueError, KeyError):
+                        price = 0.0
+                inv_raw = node.get("totalInventory")
+                if inv_raw is None:
+                    inventory_total = sum(
+                        int((e.get("node") or {}).get("inventoryQuantity") or 0)
+                        for e in variant_edges
+                    )
+                else:
+                    inventory_total = int(inv_raw or 0)
+                tags = node.get("tags") or []
+                all_products.append({
+                    "id": int(node["legacyResourceId"]),
+                    "title": node.get("title") or "",
+                    "handle": node.get("handle") or "",
+                    "product_type": node.get("productType") or "",
+                    "tags": ", ".join(tags) if isinstance(tags, list) else str(tags or ""),
+                    "vendor": node.get("vendor") or "",
+                    "image_url": (node.get("featuredImage") or {}).get("url") or "",
+                    "price": price,
+                    "status": "active" if (node.get("status") or "").upper() == "ACTIVE" else "draft",
+                    "inventory_total": inventory_total,
+                })
+            page_info = data.get("pageInfo") or {}
+            if not page_info.get("hasNextPage"):
+                break
+            cursor = page_info.get("endCursor")
+            if not cursor:
+                break
+    return all_products, None
+
+
 @router.post("/sync-products")
 def sync_shopify_products(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
 ):
-    """Sync all Shopify products to local shopify_products table (tags, type, image, price)."""
-    import re as _re
+    """Sync all Shopify products to local shopify_products table (tags, type, image, price, inventory)."""
     from app.core.config import settings as _s
     token = _s.SHOPIFY_ACCESS_TOKEN
     domain = _s.SHOPIFY_DOMAIN
     if not token:
         return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN not configured"}
 
-    headers = {"X-Shopify-Access-Token": token}
-    all_products: list[dict] = []
-    url = f"https://{domain}/admin/api/2024-01/products.json"
-    params: dict = {
-        "limit": 250,
-        "status": "active",
-        "fields": "id,title,handle,product_type,tags,vendor,images,variants,status",
-    }
-
-    with httpx.Client(timeout=30.0) as client:
-        while True:
-            r = client.get(url, params=params, headers=headers)
-            if r.status_code != 200:
-                return {"ok": False, "error": f"Shopify API {r.status_code}: {r.text[:200]}"}
-            products = r.json().get("products", [])
-            all_products.extend(products)
-            link_header = r.headers.get("Link", "")
-            if 'rel="next"' not in link_header:
-                break
-            next_part = [p for p in link_header.split(",") if 'rel="next"' in p]
-            m = _re.search(r'page_info=([^&>]+)', next_part[0]) if next_part else None
-            if not m:
-                break
-            params = {"limit": 250, "page_info": m.group(1)}
+    all_products, fetch_error = _fetch_shopify_products_for_sync(token, domain)
+    if fetch_error:
+        return {"ok": False, "error": fetch_error}
 
     try:
         _ensure_shopify_products_table()
@@ -443,11 +503,6 @@ def sync_shopify_products(
     """)
     for p in all_products:
         try:
-            variants = p.get("variants") or [{}]
-            variant = variants[0]
-            price = float(variant.get("price") or 0)
-            inventory = sum(int(v.get("inventory_quantity") or 0) for v in variants)
-            image_url = (p.get("images") or [{}])[0].get("src", "")
             session.execute(sql, {
                 "sid":    int(p["id"]),
                 "title":  p.get("title", ""),
@@ -455,11 +510,11 @@ def sync_shopify_products(
                 "ptype":  p.get("product_type", ""),
                 "tags":   p.get("tags", ""),
                 "vendor": p.get("vendor", ""),
-                "img":    image_url,
-                "price":  price,
-                "status": "active",
+                "img":    p.get("image_url", ""),
+                "price":  p.get("price", 0),
+                "status": p.get("status", "active"),
                 "now":    now,
-                "inventory": inventory,
+                "inventory": int(p.get("inventory_total") or 0),
             })
             session.commit()  # commit each product individually so one failure doesn't abort the rest
             upserted += 1
