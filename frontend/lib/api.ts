@@ -237,4 +237,5 @@ export interface SyncedProduct {
   status: string;
   synced_at: string | null;
   edad_recomendada: string | null;
+  inventory_total: number;
 }

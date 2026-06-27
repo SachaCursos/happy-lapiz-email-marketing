@@ -481,6 +481,7 @@ _SORT_COLUMNS = {
     "price": "price",
     "status": "status",
     "edad_recomendada": "edad_recomendada",
+    "inventory_total": "inventory_total",
 }
 
 @router.get("/products")
@@ -521,7 +522,7 @@ def list_synced_products(
     params["limit"] = per_page
     rows = session.execute(
         text(f"""
-            SELECT shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at, edad_recomendada
+            SELECT shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at, edad_recomendada, inventory_total
             FROM shopify_products WHERE {where}
             ORDER BY {col} {direction} NULLS LAST
             LIMIT :limit OFFSET :offset
@@ -540,6 +541,7 @@ def list_synced_products(
             "image_url": r[6], "price": float(r[7] or 0),
             "status": r[8], "synced_at": str(r[9]) if r[9] else None,
             "edad_recomendada": r[10],
+            "inventory_total": int(r[11] or 0),
         }
         for r in rows
     ]

@@ -17,7 +17,7 @@ function formatDate(s: string | null) {
   return new Date(s).toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-type SortKey = "title" | "product_type" | "tags" | "price" | "status" | "edad_recomendada";
+type SortKey = "title" | "product_type" | "tags" | "price" | "status" | "edad_recomendada" | "inventory_total";
 
 function SortIcon({ col, sortBy, sortDir }: { col: SortKey; sortBy: SortKey; sortDir: "asc" | "desc" }) {
   if (sortBy !== col) return <ChevronsUpDown size={13} className="ml-1 text-gray-300 inline" />;
@@ -171,6 +171,7 @@ export default function ProductsPage() {
                 {th("Tipo", "product_type", "hidden md:table-cell")}
                 {th("Etiquetas", "tags", "hidden lg:table-cell")}
                 {th("Edad rec.", "edad_recomendada", "hidden md:table-cell")}
+                {th("Inventario", "inventory_total", "text-right hidden sm:table-cell")}
                 {th("Precio", "price", "text-right")}
                 {th("Estado", "status", "text-center hidden sm:table-cell")}
                 <th className="px-4 py-3 text-right font-medium text-gray-500 hidden xl:table-cell">Sincronizado</th>
@@ -225,6 +226,17 @@ export default function ProductsPage() {
                   </td>
                   <td className="px-4 py-2 hidden md:table-cell text-gray-500 text-sm">
                     {p.edad_recomendada || <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-2 text-right hidden sm:table-cell">
+                    <span className={`font-mono text-sm tabular-nums ${
+                      p.inventory_total <= 0
+                        ? "text-red-500"
+                        : p.inventory_total <= 5
+                          ? "text-amber-600"
+                          : "text-gray-700"
+                    }`}>
+                      {p.inventory_total.toLocaleString("es-CL")}
+                    </span>
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-gray-700">
                     {formatPrice(p.price)}
