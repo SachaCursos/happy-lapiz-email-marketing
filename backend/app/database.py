@@ -151,9 +151,11 @@ def _run_migrations():
             name VARCHAR NOT NULL,
             description TEXT,
             html_template TEXT NOT NULL,
+            design_config JSONB,
             sample_products JSONB,
             updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
+        "ALTER TABLE dynamic_html_blocks ADD COLUMN IF NOT EXISTS design_config JSONB",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

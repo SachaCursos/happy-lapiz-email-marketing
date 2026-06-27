@@ -21,48 +21,47 @@ router = APIRouter()
 
 class PreviewPayload(BaseModel):
     html_template: str | None = None
+    design_config: dict | None = None
     sample_products: list | None = None
     btn_color: str = "#f97316"
+
+
+def _row_to_read(row) -> DynamicHtmlBlockRead:
+    return DynamicHtmlBlockRead(
+        block_key=row[0],
+        name=row[1],
+        description=row[2],
+        html_template=row[3],
+        design_config=row[4],
+        sample_products=row[5],
+        updated_at=row[6],
+    )
+
+
+_SELECT_COLS = """
+    SELECT block_key, name, description, html_template, design_config, sample_products, updated_at
+"""
 
 
 @router.get("", response_model=list[DynamicHtmlBlockRead])
 def list_html_blocks(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
     seed_default_blocks(session)
     rows = session.execute(
-        text("""
-            SELECT block_key, name, description, html_template, sample_products, updated_at
-            FROM dynamic_html_blocks ORDER BY name
-        """)
+        text(f"{_SELECT_COLS} FROM dynamic_html_blocks ORDER BY name")
     ).fetchall()
-    out = []
-    for r in rows:
-        out.append(DynamicHtmlBlockRead(
-            block_key=r[0],
-            name=r[1],
-            description=r[2],
-            html_template=r[3],
-            sample_products=r[4],
-            updated_at=r[5],
-        ))
-    return out
+    return [_row_to_read(r) for r in rows]
 
 
 @router.get("/{block_key}", response_model=DynamicHtmlBlockRead)
 def get_html_block(block_key: str, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
     seed_default_blocks(session)
     row = session.execute(
-        text("""
-            SELECT block_key, name, description, html_template, sample_products, updated_at
-            FROM dynamic_html_blocks WHERE block_key = :k
-        """),
+        text(f"{_SELECT_COLS} FROM dynamic_html_blocks WHERE block_key = :k"),
         {"k": block_key},
     ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Bloque no encontrado")
-    return DynamicHtmlBlockRead(
-        block_key=row[0], name=row[1], description=row[2],
-        html_template=row[3], sample_products=row[4], updated_at=row[5],
-    )
+    return _row_to_read(row)
 
 
 @router.patch("/{block_key}", response_model=DynamicHtmlBlockRead)
@@ -85,6 +84,9 @@ def update_html_block(
     if payload.html_template is not None:
         updates.append("html_template = :tpl")
         params["tpl"] = payload.html_template
+    if payload.design_config is not None:
+        updates.append("design_config = CAST(:design AS jsonb)")
+        params["design"] = json.dumps(payload.design_config, ensure_ascii=False)
     if payload.sample_products is not None:
         updates.append("sample_products = CAST(:samples AS jsonb)")
         params["samples"] = json.dumps(payload.sample_products, ensure_ascii=False)
@@ -126,7 +128,8 @@ def block_variables(_: User = Depends(get_current_user)):
         "variables": [
             {"name": "products", "description": "Lista de productos [{title, url, image_url, price, handle}]"},
             {"name": "product_rows", "description": "Productos agrupados de a 2 para filas de grilla"},
-            {"name": "btn_color", "description": "Color del botón (hex), ej. #f97316"},
+            {"name": "btn_color", "description": "Color del botón (hex), ej. #f97316 — legacy, el diseño visual define btn_bg"},
+            {"name": "descuento_producto_mes", "description": "Porcentaje de descuento (producto del mes)"},
             {"name": "p.title", "description": "Dentro de {% for p in row %}: nombre del producto"},
             {"name": "p.url", "description": "URL del producto en happylapiz.cl"},
             {"name": "p.image_url", "description": "Imagen del producto"},

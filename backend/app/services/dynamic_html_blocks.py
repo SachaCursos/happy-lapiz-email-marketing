@@ -86,10 +86,14 @@ def ensure_html_blocks_table(session: Session) -> None:
             name VARCHAR NOT NULL,
             description TEXT,
             html_template TEXT NOT NULL,
+            design_config JSONB,
             sample_products JSONB,
             updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )
     """))
+    session.execute(text(
+        "ALTER TABLE dynamic_html_blocks ADD COLUMN IF NOT EXISTS design_config JSONB"
+    ))
     session.commit()
 
 

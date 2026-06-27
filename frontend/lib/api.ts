@@ -141,6 +141,7 @@ export interface DynamicHtmlBlock {
   name: string;
   description: string | null;
   html_template: string;
+  design_config: Record<string, unknown> | null;
   sample_products: Record<string, unknown>[] | null;
   updated_at: string;
 }
@@ -148,9 +149,9 @@ export interface DynamicHtmlBlock {
 export const htmlBlocksApi = {
   list: () => api.get<DynamicHtmlBlock[]>("/html-blocks"),
   get: (key: string) => api.get<DynamicHtmlBlock>(`/html-blocks/${key}`),
-  update: (key: string, data: { html_template?: string; sample_products?: unknown[] }) =>
+  update: (key: string, data: { html_template?: string; design_config?: Record<string, unknown>; sample_products?: unknown[] }) =>
     api.patch<DynamicHtmlBlock>(`/html-blocks/${key}`, data),
-  preview: (key: string, data?: { html_template?: string; sample_products?: unknown[]; btn_color?: string }) =>
+  preview: (key: string, data?: { html_template?: string; design_config?: Record<string, unknown>; sample_products?: unknown[]; btn_color?: string }) =>
     api.post<{ html: string }>(`/html-blocks/${key}/preview`, data ?? {}),
   variables: () => api.get<{ variables: { name: string; description: string }[] }>("/html-blocks/meta/variables"),
 };
