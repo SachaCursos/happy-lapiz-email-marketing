@@ -135,6 +135,26 @@ export const formsApi = {
   submissions: (id: number) => api.get(`/forms/${id}/submissions`),
 };
 
+// HTML blocks (dynamic email snippets)
+export interface DynamicHtmlBlock {
+  block_key: string;
+  name: string;
+  description: string | null;
+  html_template: string;
+  sample_products: Record<string, unknown>[] | null;
+  updated_at: string;
+}
+
+export const htmlBlocksApi = {
+  list: () => api.get<DynamicHtmlBlock[]>("/html-blocks"),
+  get: (key: string) => api.get<DynamicHtmlBlock>(`/html-blocks/${key}`),
+  update: (key: string, data: { html_template?: string; sample_products?: unknown[] }) =>
+    api.patch<DynamicHtmlBlock>(`/html-blocks/${key}`, data),
+  preview: (key: string, data?: { html_template?: string; sample_products?: unknown[]; btn_color?: string }) =>
+    api.post<{ html: string }>(`/html-blocks/${key}/preview`, data ?? {}),
+  variables: () => api.get<{ variables: { name: string; description: string }[] }>("/html-blocks/meta/variables"),
+};
+
 // Automations
 export const automationsApi = {
   list: () => api.get("/automations"),

@@ -89,6 +89,18 @@ const GROUPS: VarGroup[] = [
     ],
   },
   {
+    title: "Producto del mes",
+    color: "bg-amber-50 border-amber-200",
+    description: "Variables para la automatización «Producto del mes». El producto se elige solo (rotación por inventario). Mismo producto en todos los correos del mes. Edita el HTML en Bloques HTML.",
+    vars: [
+      { tag: "{{ producto_del_mes }}",         description: "Nombre del producto destacado del mes", example: "Pack Científico Explorador" },
+      { tag: "{{ producto_del_mes_url }}",     description: "URL del producto en happylapiz.cl", example: "https://www.happylapiz.cl/products/..." },
+      { tag: "{{ featured_product_html }}",    description: "Bloque HTML con imagen, precio y botón del producto", example: "<tabla con 1 producto>" },
+      { tag: "{{ descuento_producto_mes }}",   description: "% de descuento configurado en la automatización (texto)", example: "20" },
+      { tag: "{{ featured_product.price }}",   description: "Precio formateado del producto", example: "$29.990" },
+    ],
+  },
+  {
     title: "Cupones",
     color: "bg-yellow-50 border-yellow-200",
     description: "Variables de descuento. Se asignan automáticamente cuando la automatización tiene una campaña de cupones configurada.",

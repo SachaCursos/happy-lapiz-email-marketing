@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks
 from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
 from app.models import evergreen as _evergreen_model  # noqa: F401
 
@@ -35,6 +35,7 @@ app.include_router(forms.router, prefix="/api/forms", tags=["forms"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(coupons.router, prefix="/api/coupons", tags=["coupons"])
 app.include_router(shopify_webhooks.router, prefix="/api/shopify", tags=["shopify"])
+app.include_router(html_blocks.router, prefix="/api/html-blocks", tags=["html-blocks"])
 
 
 @app.on_event("startup")

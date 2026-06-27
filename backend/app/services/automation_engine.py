@@ -804,7 +804,10 @@ def _send_email_step(
                         _cs_btn = _b["props"]["btn_color"]; break
             except Exception:
                 pass
-            vars_["recommended_products_html"] = _build_cross_sell_html(rec, _cs_btn)
+            from app.services.dynamic_html_blocks import render_html_block
+            vars_["recommended_products_html"] = render_html_block(
+                session, "recommended_products_html", rec, _cs_btn
+            ) or _build_cross_sell_html(rec, _cs_btn)
 
         # Purchase history variables (always available, derived from shopify_events)
         orders_count_val = contact.orders_count or 0
@@ -846,12 +849,41 @@ def _send_email_step(
                 genero_regalado = (extra_vars or {}).get("genero_regalado") or contact.gender
                 age_rec = _fetch_age_recommended_products(session, contact.email, edad_int, gender=genero_regalado)
                 vars_["productos_recomendados_edad"] = age_rec
-                vars_["productos_recomendados_edad_html"] = _build_cross_sell_html(age_rec, btn_color)
+                from app.services.dynamic_html_blocks import render_html_block
+                vars_["productos_recomendados_edad_html"] = render_html_block(
+                    session, "recommended_products_html", age_rec, btn_color
+                ) or _build_cross_sell_html(age_rec, btn_color)
             except (ValueError, TypeError):
                 pass
 
         from app.services.regalado_vars import prepare_regalado_vars, preprocess_regalado_template
         prepare_regalado_vars(vars_)
+
+        # Product of the month — featured product block for template
+        fp = vars_.get("featured_product")
+        if isinstance(fp, dict) and fp.get("title"):
+            _fp_btn = "#f97316"
+            try:
+                _blks = json.loads(tpl.json_blocks) if isinstance(tpl.json_blocks, str) else (tpl.json_blocks or [])
+                for _b in (_blks if isinstance(_blks, list) else []):
+                    if _b.get("type") == "product_grid" and _b.get("props", {}).get("btn_color"):
+                        _fp_btn = _b["props"]["btn_color"]
+                        break
+            except Exception:
+                pass
+            if "descuento_producto_mes" not in vars_:
+                pom_cfg = (auto.trigger_config or {}) if auto.trigger_type == "product_of_month" else {}
+                vars_["descuento_producto_mes"] = int(pom_cfg.get("discount_percent", 20))
+            from app.services.dynamic_html_blocks import render_html_block
+            vars_["featured_product_html"] = render_html_block(
+                session,
+                "featured_product_html",
+                [fp],
+                _fp_btn,
+                extra_vars={"descuento_producto_mes": vars_.get("descuento_producto_mes", 20)},
+            ) or _build_cross_sell_html([fp], _fp_btn)
+            vars_["producto_del_mes"] = fp.get("title", vars_.get("producto_del_mes", ""))
+            vars_["producto_del_mes_url"] = fp.get("url", vars_.get("producto_del_mes_url", ""))
 
         _env = Environment(undefined=ChainableUndefined)
         raw_html = preprocess_regalado_template(replace_unsub_tag(tpl.html_content, contact.email))
@@ -964,10 +996,20 @@ def _process_enrollments(session: Session) -> None:
             if next_step_num > len(steps):
                 enrollment.status = "completed"
             else:
-                next_step = steps[next_step_num - 1]
-                delay = float(next_step.get("delay_hours", 24))
-                enrollment.next_step = next_step_num
-                enrollment.next_send_at = now + timedelta(hours=delay)
+                if auto.trigger_type == "product_of_month":
+                    extra = json.loads(enrollment.extra_vars_json or "{}")
+                    schedules = extra.get("step_schedules") or {}
+                    sched_key = str(next_step_num)
+                    if sched_key in schedules:
+                        enrollment.next_step = next_step_num
+                        enrollment.next_send_at = datetime.fromisoformat(schedules[sched_key])
+                    else:
+                        enrollment.status = "completed"
+                else:
+                    next_step = steps[next_step_num - 1]
+                    delay = float(next_step.get("delay_hours", 24))
+                    enrollment.next_step = next_step_num
+                    enrollment.next_send_at = now + timedelta(hours=delay)
 
             session.add(enrollment)
             session.commit()
@@ -1357,6 +1399,89 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
         _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
+def _check_product_of_month(auto: Automation, session: Session) -> None:
+    """Enroll segment on the 1st Monday of each month for a 3-email product-of-month flow."""
+    from app.services.product_of_month import (
+        build_step_schedules_from_steps,
+        get_or_create_monthly_product,
+        is_enrollment_day,
+        mark_month_enrolled,
+        month_already_enrolled,
+        month_key_for,
+        today_in_tz,
+    )
+
+    config = auto.trigger_config or {}
+    tz_name = str(config.get("timezone", "America/Santiago"))
+    today = today_in_tz(tz_name)
+
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    if not is_enrollment_day(today, steps):
+        return
+
+    mk = month_key_for(today)
+    if month_already_enrolled(session, auto.id, mk):
+        return
+
+    segment_id = config.get("segment_id")
+    if not segment_id:
+        logger.warning("product_of_month automation %d: segment_id not configured", auto.id)
+        return
+
+    seg = session.get(Segment, int(segment_id))
+    if not seg:
+        logger.warning("product_of_month automation %d: segment %s not found", auto.id, segment_id)
+        return
+
+    pool_size = int(config.get("product_pool_size", 5))
+    product = get_or_create_monthly_product(session, auto.id, mk, pool_size)
+    if not product:
+        logger.warning("product_of_month automation %d: no product available for %s", auto.id, mk)
+        return
+
+    send_hour = int(config.get("send_hour", 10))
+    discount_percent = int(config.get("discount_percent", 20))
+    step_schedules = build_step_schedules_from_steps(steps, today.year, today.month, tz_name, send_hour)
+
+    extra_base = {
+        "featured_product": product,
+        "producto_del_mes": product.get("title", ""),
+        "producto_del_mes_url": product.get("url", ""),
+        "descuento_producto_mes": discount_percent,
+        "month_key": mk,
+        "step_schedules": step_schedules,
+    }
+
+    contacts = evaluate_segment(seg.conditions, session)
+    exclude_ids = config.get("exclude_segment_ids") or []
+    if exclude_ids:
+        excluded: set[int] = set()
+        for excl_id in exclude_ids:
+            excl_seg = session.get(Segment, int(excl_id))
+            if excl_seg:
+                excluded.update(c.id for c in evaluate_segment(excl_seg.conditions, session))
+        contacts = [c for c in contacts if c.id not in excluded]
+
+    if not contacts:
+        mark_month_enrolled(session, auto.id, mk)
+        return
+
+    enrolled = 0
+    for contact in contacts:
+        trigger_key = f"pom:{auto.id}:{mk}:{contact.id}"
+        if _enroll(session, auto, contact.email, trigger_key, 0.0, extra_base):
+            enrolled += 1
+
+    if enrolled > 0:
+        mark_month_enrolled(session, auto.id, mk)
+        logger.info(
+            "product_of_month: automation %d enrolled %d contacts for %s (product: %s)",
+            auto.id, enrolled, mk, product.get("title"),
+        )
+
+
 def _make_shopify_handler(trigger_type: str):
     def handler(auto, session): _check_shopify_event(auto, session, trigger_type)
     handler.__name__ = f"_check_{trigger_type}"
@@ -1385,6 +1510,7 @@ HANDLERS = {
     "post_visit":               _check_post_visit,
     "reactivation":             _check_reactivation,
     "birthday_reminder":        _check_birthday_reminder,
+    "product_of_month":         _check_product_of_month,
 }
 
 

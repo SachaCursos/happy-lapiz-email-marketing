@@ -135,6 +135,25 @@ def _run_migrations():
             status VARCHAR NOT NULL DEFAULT 'active'
         )""",
         "CREATE INDEX IF NOT EXISTS idx_evergreen_enrollments_due ON evergreen_enrollments(status, next_send_at)",
+        "ALTER TABLE shopify_products ADD COLUMN IF NOT EXISTS inventory_total INTEGER NOT NULL DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS automation_calendar_state (
+            automation_id INTEGER NOT NULL,
+            month_key VARCHAR(7) NOT NULL,
+            rotation_index INTEGER NOT NULL DEFAULT 0,
+            product_shopify_id BIGINT,
+            product_json JSONB,
+            enrolled_at TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (automation_id, month_key)
+        )""",
+        """CREATE TABLE IF NOT EXISTS dynamic_html_blocks (
+            block_key VARCHAR PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            description TEXT,
+            html_template TEXT NOT NULL,
+            sample_products JSONB,
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

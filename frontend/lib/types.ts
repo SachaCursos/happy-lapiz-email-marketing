@@ -346,7 +346,8 @@ export type AutomationTrigger =
   // Internos
   | "welcome" | "post_visit" | "reactivation"
   | "birthday_reminder"
-  | "form_submitted";
+  | "form_submitted"
+  | "product_of_month";
 export type AutomationStatus = "active" | "paused";
 
 export interface AutomationVariant {
@@ -356,6 +357,8 @@ export interface AutomationVariant {
   weight: number;
 }
 
+export type MondayOccurrence = "first" | "second" | "third" | "fourth" | "last";
+
 export interface AutomationStep {
   step: number;
   delay_hours: number;
@@ -363,6 +366,7 @@ export interface AutomationStep {
   subject: string;
   preview_text?: string;
   condition: "not_purchased" | "not_recovered" | "always" | null;
+  send_on_monday?: MondayOccurrence;
   variants?: AutomationVariant[];
 }
 

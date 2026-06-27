@@ -358,6 +358,7 @@ def _ensure_shopify_products_table() -> None:
             "status":           "VARCHAR NOT NULL DEFAULT 'active'",
             "synced_at":        "TIMESTAMP NOT NULL DEFAULT NOW()",
             "edad_recomendada": "VARCHAR",
+            "inventory_total": "INTEGER NOT NULL DEFAULT 0",
         }
         for col, col_type in needed.items():
             if col not in existing_cols:
@@ -425,9 +426,9 @@ def sync_shopify_products(
     errors: list[str] = []
     sql = text("""
         INSERT INTO shopify_products
-            (shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at)
+            (shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at, inventory_total)
         VALUES
-            (:sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now)
+            (:sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now, :inventory)
         ON CONFLICT (shopify_id) DO UPDATE SET
             title        = EXCLUDED.title,
             handle       = EXCLUDED.handle,
@@ -437,12 +438,15 @@ def sync_shopify_products(
             image_url    = EXCLUDED.image_url,
             price        = EXCLUDED.price,
             status       = EXCLUDED.status,
-            synced_at    = EXCLUDED.synced_at
+            synced_at    = EXCLUDED.synced_at,
+            inventory_total = EXCLUDED.inventory_total
     """)
     for p in all_products:
         try:
-            variant = (p.get("variants") or [{}])[0]
+            variants = p.get("variants") or [{}]
+            variant = variants[0]
             price = float(variant.get("price") or 0)
+            inventory = sum(int(v.get("inventory_quantity") or 0) for v in variants)
             image_url = (p.get("images") or [{}])[0].get("src", "")
             session.execute(sql, {
                 "sid":    int(p["id"]),
@@ -455,6 +459,7 @@ def sync_shopify_products(
                 "price":  price,
                 "status": "active",
                 "now":    now,
+                "inventory": inventory,
             })
             session.commit()  # commit each product individually so one failure doesn't abort the rest
             upserted += 1

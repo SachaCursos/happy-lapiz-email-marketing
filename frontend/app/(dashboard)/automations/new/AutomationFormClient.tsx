@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { automationsApi, templatesApi, api, shopifyApi, formsApi, ShopifyProduct, ShopifyCollection } from "@/lib/api";
-import { Template, AutomationTrigger, AutomationStep, Automation } from "@/lib/types";
+import { automationsApi, templatesApi, api, shopifyApi, formsApi, segmentsApi, ShopifyProduct, ShopifyCollection } from "@/lib/api";
+import { Template, AutomationTrigger, AutomationStep, Automation, Segment } from "@/lib/types";
 import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart, MapPin } from "lucide-react";
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
@@ -40,6 +40,7 @@ const TRIGGERS: {
   { value: "post_visit",               badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Seguimiento post-compra",          description: "N días después de la última compra." },
   { value: "birthday_reminder",        badge: "Interno",  badgeColor: "bg-pink-100 text-pink-700",     label: "Recordatorio de cumpleaños",       description: "N días antes del cumpleaños guardado en custom_fields." },
   { value: "form_submitted",           badge: "Formulario", badgeColor: "bg-indigo-100 text-indigo-700", label: "Formulario completado",            description: "El contacto completó un formulario de suscripción." },
+  { value: "product_of_month",         badge: "Calendario", badgeColor: "bg-amber-100 text-amber-800",   label: "Producto del mes",                 description: "Correos en lunes del mes que elijas, con producto rotativo automático." },
 ];
 
 const EVENT_TRIGGERS = new Set<AutomationTrigger>([
@@ -96,6 +97,10 @@ const EXIT_CONDITIONS: Record<string, { value: string; label: string; hint: stri
     { value: "not_purchased", label: "Solo si aún NO ha comprado (recomendado)", hint: "" },
     { value: "always",        label: "Siempre, aunque ya haya comprado",         hint: "" },
   ],
+  product_of_month: [
+    { value: "not_purchased", label: "Solo si aún NO ha comprado (recomendado)", hint: "" },
+    { value: "always",        label: "Siempre, aunque ya haya comprado",         hint: "" },
+  ],
   placed_order: [
     { value: "always",                  label: "Siempre",                                    hint: "" },
     { value: "has_no_gift_recipients",  label: "Solo si NO tiene regalados registrados",     hint: "" },
@@ -147,6 +152,14 @@ const TIME_UNITS = [
   { value: "minutos", label: "minutos" },
   { value: "horas",   label: "horas" },
   { value: "dias",    label: "días" },
+];
+
+const MONDAY_OPTIONS: { value: string; label: string }[] = [
+  { value: "first", label: "1.er lunes" },
+  { value: "second", label: "2.º lunes" },
+  { value: "third", label: "3.er lunes" },
+  { value: "fourth", label: "4.º lunes" },
+  { value: "last", label: "Último lunes" },
 ];
 const LOOKBACK_UNITS = [
   { value: "horas", label: "horas" },
@@ -390,8 +403,15 @@ interface StepState {
   subject: string;
   previewText: string;
   condition: string;
-  variants: VariantState[];  // empty = no A/B test
+  sendOnMonday: string;
+  variants: VariantState[];
 }
+
+const DEFAULT_POM_STEPS: StepState[] = [
+  { delayValue: 0, delayUnit: "horas", templateId: "", subject: "⭐ Producto del mes: {{ producto_del_mes }}", previewText: "{{ descuento_producto_mes }}% OFF este mes", condition: "not_recovered", sendOnMonday: "first", variants: [] },
+  { delayValue: 0, delayUnit: "horas", templateId: "", subject: "¿Ya viste {{ producto_del_mes }}?", previewText: "Solo este mes con {{ descuento_producto_mes }}% de descuento", condition: "not_purchased", sendOnMonday: "third", variants: [] },
+  { delayValue: 0, delayUnit: "horas", templateId: "", subject: "Última oportunidad: {{ producto_del_mes }}", previewText: "Cierra el mes con tu {{ descuento_producto_mes }}% OFF", condition: "not_purchased", sendOnMonday: "last", variants: [] },
+];
 
 function VariantEditor({
   variants,
@@ -572,6 +592,29 @@ function StepCard({
       <div className="px-5 py-4 space-y-4">
         {/* Delay */}
         <div>
+          {triggerType === "product_of_month" ? (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-sky-900 flex items-center gap-1.5">
+                <Clock size={13} className="text-sky-500" />
+                Enviar el
+              </label>
+              <select
+                value={step.sendOnMonday}
+                onChange={(e) => onChange({ ...step, sendOnMonday: e.target.value })}
+                className="w-full border border-sky-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                {MONDAY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label} del mes</option>
+                ))}
+              </select>
+              <p className="text-xs text-sky-700">
+                {isFirst
+                  ? "Este es el lunes en que se inscribe el segmento y se envía el primer correo."
+                  : "Fecha automática según el calendario del mes (hora Chile)."}
+              </p>
+            </div>
+          ) : (
+            <>
           <label className="block text-sm font-medium text-gray-700 mb-1.5 flex items-center gap-1.5">
             <Clock size={13} className="text-gray-400" />
             {isFirst ? "Enviar después del evento" : `Esperar antes de enviar este correo`}
@@ -587,6 +630,8 @@ function StepCard({
           </div>
           {!isFirst && (
             <p className="text-xs text-gray-400 mt-1">Tiempo desde el envío del correo anterior.</p>
+          )}
+            </>
           )}
         </div>
 
@@ -670,7 +715,7 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
 
   // Steps
   const [steps, setSteps] = useState<StepState[]>([
-    { delayValue: 1, delayUnit: "horas", templateId: "", subject: "", previewText: "", condition: "not_recovered", variants: [] },
+    { delayValue: 1, delayUnit: "horas", templateId: "", subject: "", previewText: "", condition: "not_recovered", sendOnMonday: "first", variants: [] },
   ]);
 
   // Lookback (trigger-level config, only for event triggers)
@@ -685,6 +730,13 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
   const [birthdayField, setBirthdayField] = useState("fecha_nacimiento");
   const [birthdayNameField, setBirthdayNameField] = useState("nombre_regalado");
   const [formSubmittedFormId, setFormSubmittedFormId] = useState<string>("");
+
+  // Product of the month
+  const [pomSegmentId, setPomSegmentId] = useState<number>(0);
+  const [pomExcludeSegmentIds, setPomExcludeSegmentIds] = useState<number[]>([]);
+  const [pomPoolSize, setPomPoolSize] = useState(5);
+  const [pomDiscountPercent, setPomDiscountPercent] = useState(20);
+  const [pomSendHour, setPomSendHour] = useState(10);
 
   // Order count filter
   const [orderCountPreset, setOrderCountPreset] = useState("none");
@@ -738,7 +790,9 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       return;
     }
     const def = TRIGGER_DEFAULTS[triggerType];
-    if (def) {
+    if (triggerType === "product_of_month") {
+      setSteps(DEFAULT_POM_STEPS.map((s) => ({ ...s })));
+    } else if (def) {
       setLookbackValue(def.lookback);
       setLookbackUnit(def.lookbackUnit as "horas" | "dias");
       setSteps((prev) => prev.map((s, i) =>
@@ -767,6 +821,12 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       setBirthdayNameField(String(tc.name_field ?? "nombre_regalado"));
     } else if (existingAuto.trigger_type === "form_submitted") {
       setFormSubmittedFormId(String(tc.form_id ?? ""));
+    } else if (existingAuto.trigger_type === "product_of_month") {
+      setPomSegmentId(Number(tc.segment_id ?? 0));
+      setPomExcludeSegmentIds(Array.isArray(tc.exclude_segment_ids) ? tc.exclude_segment_ids.map(Number) : []);
+      setPomPoolSize(Number(tc.product_pool_size ?? 5));
+      setPomDiscountPercent(Number(tc.discount_percent ?? 20));
+      setPomSendHour(Number(tc.send_hour ?? 10));
     } else if (EVENT_TRIGGERS.has(existingAuto.trigger_type as AutomationTrigger)) {
       const lh = Number(tc.lookback_hours ?? 24);
       if (lh % 24 === 0) { setLookbackValue(lh / 24); setLookbackUnit("dias"); }
@@ -793,6 +853,7 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
           subject: String(raw.subject ?? ""),
           previewText: String(raw.preview_text ?? ""),
           condition: String(raw.condition ?? "not_recovered"),
+          sendOnMonday: String(raw.send_on_monday ?? (i === 0 ? "first" : i === 1 ? "third" : "last")),
           variants,
         };
       }));
@@ -809,6 +870,12 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     queryKey: ["forms"],
     queryFn: () => formsApi.list().then((r) => r.data),
     staleTime: 5 * 60_000,
+  });
+
+  const { data: segments = [] } = useQuery<Segment[]>({
+    queryKey: ["segments"],
+    queryFn: () => segmentsApi.list().then((r) => r.data),
+    staleTime: 60_000,
   });
 
   const { data: couponCampaigns = [] } = useQuery<CouponCampaign[]>({
@@ -839,7 +906,7 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     const defaultCondition = (EXIT_CONDITIONS[triggerType] ?? EXIT_CONDITIONS["_default"])[0].value;
     setSteps((prev) => [
       ...prev,
-      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", previewText: "", condition: defaultCondition, variants: [] },
+      { delayValue: 24, delayUnit: "horas", templateId: "", subject: "", previewText: "", condition: defaultCondition, sendOnMonday: "last", variants: [] },
     ]);
   }
 
@@ -863,6 +930,15 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
         triggerConfig = { days_before: birthdayDaysBefore, birthday_field: birthdayField, name_field: birthdayNameField };
       } else if (triggerType === "form_submitted") {
         triggerConfig = { form_id: formSubmittedFormId };
+      } else if (triggerType === "product_of_month") {
+        triggerConfig = {
+          segment_id: pomSegmentId,
+          exclude_segment_ids: pomExcludeSegmentIds,
+          product_pool_size: pomPoolSize,
+          discount_percent: pomDiscountPercent,
+          send_hour: pomSendHour,
+          timezone: "America/Santiago",
+        };
       } else if (EVENT_TRIGGERS.has(triggerType)) {
         triggerConfig = {
           lookback_hours: toHours(lookbackValue, lookbackUnit as TimeUnit),
@@ -900,11 +976,14 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       }
 
       const stepsPayload: AutomationStep[] = steps.map((s, i) => {
-        const base = {
+        const base: Record<string, unknown> = {
           step: i + 1,
           delay_hours: toHours(s.delayValue, s.delayUnit),
           condition: i === 0 ? null : (s.condition as AutomationStep["condition"]),
         };
+        if (triggerType === "product_of_month") {
+          base.send_on_monday = s.sendOnMonday;
+        }
         if (s.variants.length >= 2) {
           return {
             ...base,
@@ -943,7 +1022,9 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     },
   });
 
-  const isValid = name && steps.every((s) => {
+  const isValid = name
+    && (triggerType !== "product_of_month" || pomSegmentId > 0)
+    && steps.every((s) => {
     if (s.variants.length >= 2) {
       return s.variants.every((v) => v.templateId && v.subject);
     }
@@ -1131,6 +1212,71 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
                 <p><code>{"{{ nombre_regalado }}"}</code> — nombre del destinatario del regalo</p>
                 <p><code>{"{{ coupon_code }}"}</code> — cupón generado (si aplica)</p>
                 <p><code>{"{{ products_recomendados_edad_html }}"}</code> — grilla de productos recomendados por edad</p>
+              </div>
+            </div>
+          )}
+          {triggerType === "product_of_month" && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Segmento destinatario *</label>
+                <select
+                  value={pomSegmentId}
+                  onChange={(e) => setPomSegmentId(Number(e.target.value))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value={0}>Seleccionar segmento…</option>
+                  {segments.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.contact_count ?? 0})</option>
+                  ))}
+                </select>
+              </div>
+              {segments.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Excluir segmentos (opcional)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {segments.filter((s) => s.id !== pomSegmentId).map((s) => (
+                      <label key={s.id} className="inline-flex items-center gap-1.5 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-gray-50">
+                        <input
+                          type="checkbox"
+                          checked={pomExcludeSegmentIds.includes(s.id)}
+                          onChange={() => setPomExcludeSegmentIds((prev) =>
+                            prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id]
+                          )}
+                          className="accent-brand-600"
+                        />
+                        {s.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Productos en rotación</label>
+                  <input type="number" min={1} max={20} value={pomPoolSize}
+                    onChange={(e) => setPomPoolSize(Math.max(1, Number(e.target.value)))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-center" />
+                  <p className="text-[11px] text-gray-400 mt-1">Top por inventario</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">% descuento (plantilla)</label>
+                  <input type="number" min={1} max={90} value={pomDiscountPercent}
+                    onChange={(e) => setPomDiscountPercent(Math.max(1, Number(e.target.value)))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-center" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Hora de envío (Chile)</label>
+                  <input type="number" min={6} max={20} value={pomSendHour}
+                    onChange={(e) => setPomSendHour(Math.max(6, Math.min(20, Number(e.target.value))))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-center" />
+                </div>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-900 space-y-1">
+                <p className="font-semibold">Cómo funciona</p>
+                <p>El <strong>1.er lunes</strong> del mes se elige automáticamente el producto con más inventario (rota entre los top {pomPoolSize}).</p>
+                <p>Se envían <strong>{steps.length} correo{steps.length !== 1 ? "s" : ""}</strong> en los lunes que definas en cada paso. Sin intervención manual.</p>
+                <p className="pt-1">Diseño del HTML: pestaña <strong>Bloques HTML</strong> en el menú.</p>
+                <p className="text-amber-700">Sincroniza productos en Admin → Productos para actualizar inventarios.</p>
               </div>
             </div>
           )}
