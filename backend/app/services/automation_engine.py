@@ -1177,7 +1177,7 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
 
     # For event-based triggers, only enroll events that haven't been enrolled yet
     rows = session.execute(text("""
-        SELECT se.id, se.email, se.payload
+        SELECT se.id, se.email, se.payload, se.shopify_id
         FROM shopify_events se
         WHERE se.topic = :topic
           AND se.processed = FALSE
@@ -1196,7 +1196,10 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
         contact = session.exec(select(Contact).where(Contact.email == email)).first()
         if not contact or not contact.opted_in:
             continue
-        trigger_key = f"{trigger_type}:{row[0]}"
+        # Use shopify_id (Shopify's own order/event ID) when available so that webhook-
+        # created and sync-backfilled events for the same order share the same trigger_key
+        # and deduplication in _enroll() prevents double enrollment.
+        trigger_key = f"{trigger_type}:{row[3] or row[0]}"
         payload = row[2] or {}
 
         # Apply order count filter before enrolling.

@@ -4,12 +4,43 @@ Called from the background scheduler every minute.
 - Creates a contact for every new Shopify buyer not yet in contacts.
 - Updates order stats (orders_count, total_spent, last_purchase, etc.)
   for contacts that already exist whenever newer orders arrive.
+- Backfills shopify_events for recent orders that were never delivered via webhook.
+  This makes placed_order / ordered_product automations resilient to webhook failures.
 """
 import logging
 from sqlalchemy import text
 from app.database import engine
 
 logger = logging.getLogger(__name__)
+
+
+def _backfill_missing_order_events(conn) -> int:
+    """Insert shopify_events rows for orders from the last 72 hours that have no webhook event.
+
+    Uses shopify_id = str(order.id) so the automation engine can deduplicate against
+    both webhook-created events and manually-created retroactive enrollments.
+    """
+    result = conn.execute(text("""
+        INSERT INTO shopify_events (topic, shopify_id, email, payload, processed, created_at)
+        SELECT
+            'orders/create',
+            so.id::text,
+            LOWER(so.email),
+            COALESCE(so.raw, '{}'::jsonb),
+            FALSE,
+            NOW()
+        FROM shopify_orders so
+        WHERE so.created_at >= NOW() - INTERVAL '72 hours'
+          AND so.email IS NOT NULL AND so.email <> ''
+          AND so.cancelled_at IS NULL
+          AND so.financial_status NOT IN ('voided', 'refunded')
+          AND NOT EXISTS (
+              SELECT 1 FROM shopify_events se
+              WHERE se.shopify_id = so.id::text
+                AND se.topic = 'orders/create'
+          )
+    """))
+    return result.rowcount
 
 
 def sync_contacts_from_shopify_orders() -> dict:
@@ -99,14 +130,15 @@ def sync_contacts_from_shopify_orders() -> dict:
     with engine.connect() as conn:
         ins = conn.execute(insert_sql)
         upd = conn.execute(update_sql)
+        backfilled = _backfill_missing_order_events(conn)
         conn.commit()
 
     created = len(ins.fetchall())
     updated = len(upd.fetchall())
 
-    if created or updated:
+    if created or updated or backfilled:
         logger.info(
-            "sync_shopify_orders: %d contact(s) created, %d updated",
-            created, updated,
+            "sync_shopify_orders: %d contact(s) created, %d updated, %d order event(s) backfilled",
+            created, updated, backfilled,
         )
-    return {"created": created, "updated": updated}
+    return {"created": created, "updated": updated, "events_backfilled": backfilled}
