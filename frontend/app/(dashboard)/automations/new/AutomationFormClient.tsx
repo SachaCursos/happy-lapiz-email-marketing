@@ -1070,6 +1070,7 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
                 </label>
                 <p className="text-xs text-gray-400 mb-2">
                   Crea múltiples automatizaciones con 30, 15 y 7 días para enviar una secuencia de recordatorios.
+                  Los datos se leen de custom_fields y de la última respuesta del formulario popup.
                 </p>
                 <div className="flex items-center gap-2">
                   <input type="number" min={1} max={365} value={birthdayDaysBefore}

@@ -5,7 +5,7 @@ import time
 from typing import List
 from datetime import datetime, timezone, timedelta
 import resend
-from jinja2 import Template as Jinja2Template
+from jinja2 import Environment, ChainableUndefined, Template as Jinja2Template
 from sqlmodel import Session, select, func
 from app.core.config import settings
 from app.core.unsub_token import unsub_url
@@ -241,22 +241,125 @@ def _unsub_headers(email: str) -> dict:
     }
 
 
-def render_html(html_content: str, contact: Contact, coupon_code: str = "") -> str:
+_REGALADO_MARKERS = (
+    "nombre_regalado",
+    "relacion_regalado",
+    "relacion2",
+    "nombres_regalados",
+    "fecha_nacimiento_regalado",
+    "fecha_nacimiento2",
+    "relacion",
+    "fecha_nacimiento",
+    "para_quien",
+    "destinatario_nombre",
+)
+
+
+def uses_regalado_vars(*texts: str) -> bool:
+    joined = " ".join(t for t in texts if t).lower()
+    return any(m in joined for m in _REGALADO_MARKERS)
+
+
+def _parse_custom_fields(contact: Contact) -> dict:
+    cf = contact.custom_fields or {}
+    if isinstance(cf, str):
+        try:
+            cf = json.loads(cf)
+        except Exception:
+            cf = {}
+    return cf if isinstance(cf, dict) else {}
+
+
+def _merge_regalado_from_submission(vars_: dict, email: str, session: Session) -> None:
+    """Overlay regalado fields from the latest form submission for this email."""
+    from app.models.form import FormSubmission
+    from app.services.regalado_vars import merge_regalado_sources
+
+    sub = session.exec(
+        select(FormSubmission)
+        .where(FormSubmission.email == email.lower())
+        .order_by(FormSubmission.created_at.desc())
+    ).first()
+    if not sub:
+        return
+
+    merged = merge_regalado_sources(vars_, sub)
+    for key, val in merged.items():
+        if val and not vars_.get(key):
+            vars_[key] = val
+
+
+def build_contact_template_vars(
+    contact: Contact,
+    coupon_code: str = "",
+    extra_vars: dict | None = None,
+    session: Session | None = None,
+    load_submission: bool = False,
+) -> dict:
+    """Build Jinja context for campaigns — mirrors automation email vars."""
+    cf = _parse_custom_fields(contact)
+    nombre = _fmt_nombre(contact.name, contact.email)
+    first_name = nombre.split()[0] if contact.name else ""
+
+    vars_ = {
+        "nombre": nombre,
+        "first_name": first_name,
+        "email": contact.email,
+        "ultima_visita": str(contact.ultima_visita) if contact.ultima_visita else "",
+        "ticket_medio": contact.ticket_medio or 0,
+        "orders_count": getattr(contact, "orders_count", 0),
+        "total_spent": getattr(contact, "total_spent", 0),
+        "shipping_city": getattr(contact, "shipping_city", "") or "",
+        "shipping_province": getattr(contact, "shipping_province", "") or "",
+        "coupon_code": coupon_code,
+        "custom_fields": cf,
+        **{k: v for k, v in cf.items() if isinstance(k, str)},
+        **(extra_vars or {}),
+    }
+
+    if load_submission and session:
+        _merge_regalado_from_submission(vars_, contact.email, session)
+
+    from app.services.regalado_vars import prepare_regalado_vars
+    prepare_regalado_vars(vars_)
+    return vars_
+
+
+def render_template_text(
+    text: str,
+    contact: Contact,
+    vars_: dict | None = None,
+    *,
+    preprocess_regalado: bool = False,
+) -> str:
+    """Render a Jinja fragment (HTML body, subject, preview text)."""
+    if not text:
+        return ""
+    from app.services.regalado_vars import preprocess_regalado_template
+
+    raw = preprocess_regalado_template(text) if preprocess_regalado else text
+    ctx = vars_ or build_contact_template_vars(contact)
+    _env = Environment(undefined=ChainableUndefined)
+    return _env.from_string(raw).render(**ctx)
+
+
+def render_html(
+    html_content: str,
+    contact: Contact,
+    coupon_code: str = "",
+    vars_: dict | None = None,
+    session: Session | None = None,
+    preprocess_regalado: bool = False,
+) -> str:
     # Replace {% unsubscribe %} before Jinja2 parses the template — Jinja2 would
     # throw "Unknown tag 'unsubscribe'" if left as-is.
     html_content = replace_unsub_tag(html_content, contact.email)
     html_content = resolve_relative_timers(html_content)
-    tpl = Jinja2Template(html_content)
-    return tpl.render(
-        nombre=_fmt_nombre(contact.name, contact.email),
-        first_name=_fmt_nombre(contact.name, contact.email).split()[0] if contact.name else "",
-        email=contact.email,
-        ultima_visita=str(contact.ultima_visita) if contact.ultima_visita else "",
-        ticket_medio=contact.ticket_medio or 0,
-        orders_count=getattr(contact, "orders_count", 0),
-        total_spent=getattr(contact, "total_spent", 0),
-        shipping_city=getattr(contact, "shipping_city", "") or "",
-        coupon_code=coupon_code,
+    return render_template_text(
+        html_content,
+        contact,
+        vars_=vars_,
+        preprocess_regalado=preprocess_regalado,
     )
 
 
@@ -298,11 +401,28 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
 def _send_one(campaign: Campaign, template: Template, contact: Contact, session: Session) -> None:
     resend.api_key = settings.RESEND_API_KEY
     coupon = _resolve_coupon(template.html_content, contact, campaign.id, session)
-    html = _inject_footer(render_html(template.html_content, contact, coupon_code=coupon), contact.email)
-    subject = Jinja2Template(campaign.subject).render(
-        nombre=_fmt_nombre(contact.name, contact.email),
-        first_name=_fmt_nombre(contact.name, contact.email),
-        email=contact.email,
+    regalado = uses_regalado_vars(template.html_content, campaign.subject)
+    vars_ = build_contact_template_vars(
+        contact,
+        coupon_code=coupon,
+        session=session,
+        load_submission=regalado,
+    )
+    html = _inject_footer(
+        render_html(
+            template.html_content,
+            contact,
+            coupon_code=coupon,
+            vars_=vars_,
+            preprocess_regalado=regalado,
+        ),
+        contact.email,
+    )
+    subject = render_template_text(
+        campaign.subject,
+        contact,
+        vars_=vars_,
+        preprocess_regalado=regalado,
     )
 
     send = session.exec(

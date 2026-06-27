@@ -1261,19 +1261,32 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
 
 def _check_birthday_reminder(auto: Automation, session: Session) -> None:
     """
-    Triggers for contacts whose custom_fields contains a child birthday (fecha_nacimiento)
-    that falls exactly `days_before` days from today (checked daily).
-    Each contact+year combination fires once. custom_fields keys configured via trigger_config:
-      days_before: int            — how many days before birthday to send (default 30)
-      birthday_field: str         — key inside custom_fields for the date (default "fecha_nacimiento")
-      name_field: str             — key inside custom_fields for the child's name (default "nombre_regalado")
-      relation_field: str         — key inside custom_fields for relationship (default "relacion")
+    Triggers for contacts whose regalado birthday falls exactly `days_before` days from today.
+    Reads custom_fields AND the latest form_submission per email (popup data).
+    trigger_config keys:
+      days_before: int       — days before birthday to send (default 30)
+      birthday_field: str    — date field (default "fecha_nacimiento")
+      name_field: str          — name field (default "nombre_regalado")
+      relation_field: str      — relation field (default "relacion"; auto-infers "relacion2")
     """
+    from app.models.contact import Contact
+    from app.models.form import FormSubmission
+    from app.services.regalado_vars import (
+        get_regalado_field,
+        infer_relation_field,
+        merge_regalado_sources,
+        parse_birthday_mmdd,
+        prepare_regalado_vars,
+    )
+
     config = auto.trigger_config or {}
     days_before = int(config.get("days_before", 30))
     birthday_field = config.get("birthday_field", "fecha_nacimiento")
     name_field = config.get("name_field", "nombre_regalado")
-    relation_field = config.get("relation_field", "relacion")
+    relation_field = infer_relation_field(
+        name_field,
+        config.get("relation_field", "relacion"),
+    )
 
     steps = _get_steps(auto)
     if not steps:
@@ -1281,59 +1294,56 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
     first_delay = float(steps[0].get("delay_hours", 0))
 
     today = datetime.utcnow().date()
-    target = today + timedelta(days=days_before)  # the birthday date we're looking for
-    target_mmdd = f"{target.month:02d}-{target.day:02d}"  # MM-DD, ignoring year
+    target = today + timedelta(days=days_before)
+    target_mmdd = f"{target.month:02d}-{target.day:02d}"
 
-    # Query contacts that have custom_fields with the birthday field set
-    rows = session.execute(text("""
-        SELECT id, email, name, custom_fields
-        FROM contacts
-        WHERE opted_in = TRUE
-          AND custom_fields IS NOT NULL
-          AND custom_fields::text LIKE :pattern
-    """), {"pattern": f"%{birthday_field}%"}).fetchall()
+    subs_by_email: dict[str, FormSubmission] = {}
+    for sub in session.exec(
+        select(FormSubmission).order_by(FormSubmission.created_at.desc())
+    ):
+        em = (sub.email or "").lower()
+        if em and em not in subs_by_email:
+            subs_by_email[em] = sub
 
-    for row in rows:
-        cf = row[3] or {}
+    contacts = session.exec(
+        select(Contact).where(Contact.opted_in == True)  # noqa: E712
+    ).all()
+
+    seen: set[tuple] = set()
+
+    for contact in contacts:
+        cf = contact.custom_fields or {}
         if isinstance(cf, str):
             try:
                 cf = json.loads(cf)
             except Exception:
-                continue
+                cf = {}
+        if not isinstance(cf, dict):
+            cf = {}
 
-        raw_date = cf.get(birthday_field, "")
+        sub = subs_by_email.get(contact.email.lower())
+        data = merge_regalado_sources(cf, sub)
+
+        raw_date = get_regalado_field(data, birthday_field)
         if not raw_date:
             continue
 
-        # Accept YYYY-MM-DD or DD-MM-YYYY or DD/MM/YYYY
-        try:
-            if len(raw_date) == 10 and raw_date[4] in ("-", "/"):
-                # YYYY-MM-DD
-                bday = datetime.strptime(raw_date, "%Y-%m-%d").date()
-                bday_mmdd = f"{bday.month:02d}-{bday.day:02d}"
-            else:
-                for fmt in ("%d-%m-%Y", "%d/%m/%Y"):
-                    try:
-                        bday = datetime.strptime(raw_date, fmt).date()
-                        bday_mmdd = f"{bday.month:02d}-{bday.day:02d}"
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    continue
-        except Exception:
+        if parse_birthday_mmdd(raw_date) != target_mmdd:
             continue
 
-        if bday_mmdd != target_mmdd:
+        dedupe = (contact.email.lower(), birthday_field, target.year, days_before)
+        if dedupe in seen:
             continue
+        seen.add(dedupe)
 
-        child_name = cf.get(name_field, "")
-        relation = cf.get(relation_field, "")
-        contact_name = row[2] or row[1]
+        child_name = get_regalado_field(data, name_field)
+        relation = get_regalado_field(data, relation_field)
+        contact_name = contact.name or contact.email
         first = contact_name.split()[0]
 
-        trigger_key = f"birthday:{row[0]}:{target.year}:{days_before}"
+        trigger_key = f"birthday:{contact.id}:{birthday_field}:{target.year}:{days_before}"
         extra_vars = {
+            **{k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)},
             "nombre": contact_name,
             "first_name": first,
             "nombre_regalado": child_name,
@@ -1341,9 +1351,10 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
             "dias_para_cumpleanos": days_before,
             "fecha_cumpleanos": str(target),
         }
-        from app.services.regalado_vars import prepare_regalado_vars
+        if isinstance(data.get("regalados"), list):
+            extra_vars["regalados"] = data["regalados"]
         prepare_regalado_vars(extra_vars)
-        _enroll(session, auto, row[1], trigger_key, first_delay, extra_vars)
+        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
 
 
 def _make_shopify_handler(trigger_type: str):

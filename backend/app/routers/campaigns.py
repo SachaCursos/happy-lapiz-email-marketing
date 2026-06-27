@@ -15,7 +15,15 @@ from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
 from app.services.segment_evaluator import evaluate_segment
-from app.services.email_sender import send_campaign_sync, _inject_footer, _unsub_headers
+from app.services.email_sender import (
+    send_campaign_sync,
+    _inject_footer,
+    _unsub_headers,
+    build_contact_template_vars,
+    render_html,
+    render_template_text,
+    uses_regalado_vars,
+)
 
 
 class SendOptions(BaseModel):
@@ -178,15 +186,43 @@ def send_test_email(
     if not tpl:
         raise HTTPException(status_code=400, detail="Plantilla no encontrada")
 
-    nombre = current_user.name or current_user.email.split("@")[0]
-    html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email)
+    contact = session.exec(
+        select(Contact).where(Contact.email == current_user.email.lower())
+    ).first()
+    regalado = uses_regalado_vars(tpl.html_content, c.subject)
+
+    if contact:
+        vars_ = build_contact_template_vars(
+            contact,
+            session=session,
+            load_submission=regalado,
+        )
+        html = _inject_footer(
+            render_html(
+                tpl.html_content,
+                contact,
+                vars_=vars_,
+                preprocess_regalado=regalado,
+            ),
+            current_user.email,
+        )
+        subject = render_template_text(
+            c.subject,
+            contact,
+            vars_=vars_,
+            preprocess_regalado=regalado,
+        )
+    else:
+        nombre = current_user.name or current_user.email.split("@")[0]
+        html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email)
+        subject = c.subject
 
     resend.api_key = settings.RESEND_API_KEY
     try:
         result = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
             "to": [current_user.email],
-            "subject": f"[PRUEBA] {c.subject}",
+            "subject": f"[PRUEBA] {subject}",
             "html": html,
             "headers": _unsub_headers(current_user.email),
         })

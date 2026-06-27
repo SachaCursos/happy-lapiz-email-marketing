@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import datetime
+from typing import Any
 
 _GIBBERISH_SUBSTRINGS = (
     "asdf", "qwer", "zxcv", "hjkl", "sdfg", "fdsa", "jkl",
@@ -192,3 +194,147 @@ def sanitize_regalados_list(regalados: list[dict]) -> list[dict]:
             row["destinatario_nombre"] = clean or ""
         out.append(row)
     return out
+
+
+# ── Field aliases + form_submission merge (campaigns + birthday automations) ──
+
+FIELD_ALIASES: dict[str, list[str]] = {
+    "fecha_nacimiento": [
+        "fecha_nacimiento",
+        "fecha_nacimiento_regalado",
+        "cual_es_su_fecha_de_nacimiento",
+        "destinatario_cumpleanos",
+    ],
+    "fecha_nacimiento_regalado": [
+        "fecha_nacimiento_regalado",
+        "fecha_nacimiento",
+        "cual_es_su_fecha_de_nacimiento",
+        "destinatario_cumpleanos",
+    ],
+    "fecha_nacimiento2": [
+        "fecha_nacimiento2",
+        "fecha_nacimiento_regalado2",
+    ],
+    "fecha_nacimiento_regalado2": [
+        "fecha_nacimiento_regalado2",
+        "fecha_nacimiento2",
+    ],
+    "nombre_regalado": [
+        "nombre_regalado",
+        "destinatario_nombre",
+    ],
+    "nombre_regalado2": [
+        "nombre_regalado2",
+        "destinatario_nombre2",
+    ],
+    "relacion": [
+        "relacion",
+        "relacion_regalado",
+        "para_quien",
+    ],
+    "relacion_regalado": [
+        "relacion_regalado",
+        "relacion",
+        "para_quien",
+    ],
+    "relacion2": [
+        "relacion2",
+        "relacion_regalado2",
+        "para_quien2",
+    ],
+    "relacion_regalado2": [
+        "relacion_regalado2",
+        "relacion2",
+    ],
+}
+
+
+def get_regalado_field(data: dict, field: str) -> str:
+    """Read a regalado field from a merged dict, trying known aliases."""
+    for key in FIELD_ALIASES.get(field, [field]):
+        v = data.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def parse_birthday_mmdd(raw_date: str) -> str | None:
+    """Return MM-DD for a birthday string, or None if unparseable."""
+    raw = (raw_date or "").strip()
+    if not raw:
+        return None
+    try:
+        if len(raw) == 10 and raw[4] in ("-", "/"):
+            bday = datetime.strptime(raw.replace("/", "-"), "%Y-%m-%d").date()
+            return f"{bday.month:02d}-{bday.day:02d}"
+        for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                bday = datetime.strptime(raw, fmt).date()
+                return f"{bday.month:02d}-{bday.day:02d}"
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def submission_to_regalado_dict(submission: Any) -> dict:
+    """Map a FormSubmission row to canonical regalado field keys."""
+    if not submission:
+        return {}
+
+    out: dict[str, str] = {}
+    pairs = (
+        ("relacion_regalado", submission.relacion_regalado),
+        ("relacion", submission.relacion_regalado),
+        ("para_quien", submission.relacion_regalado),
+        ("nombre_regalado", submission.nombre_regalado),
+        ("destinatario_nombre", submission.nombre_regalado),
+        ("fecha_nacimiento_regalado", submission.fecha_nacimiento_regalado),
+        ("fecha_nacimiento", submission.fecha_nacimiento_regalado),
+        ("cual_es_su_fecha_de_nacimiento", submission.fecha_nacimiento_regalado),
+        ("relacion_regalado2", submission.relacion_regalado2),
+        ("relacion2", submission.relacion_regalado2),
+        ("nombre_regalado2", submission.nombre_regalado2),
+        ("destinatario_nombre2", submission.nombre_regalado2),
+        ("fecha_nacimiento_regalado2", submission.fecha_nacimiento_regalado2),
+        ("fecha_nacimiento2", submission.fecha_nacimiento_regalado2),
+    )
+    for key, val in pairs:
+        if val and str(val).strip():
+            out[key] = str(val).strip()
+
+    ed = getattr(submission, "extra_data", None) or {}
+    if isinstance(ed, dict):
+        for k in ("para_quien", "destinatario_nombre", "cual_es_su_fecha_de_nacimiento", "destinatario_cumpleanos"):
+            if ed.get(k) and k not in out:
+                out[k] = str(ed[k]).strip()
+        if ed.get("regalados"):
+            out["regalados"] = ed["regalados"]
+
+    return out
+
+
+def merge_regalado_sources(custom_fields: dict | None, submission: Any) -> dict:
+    """Merge contact custom_fields with form_submission data (submission fills gaps)."""
+    data: dict = {}
+    if isinstance(custom_fields, dict):
+        data.update({k: v for k, v in custom_fields.items() if v is not None and v != ""})
+    overlay = submission_to_regalado_dict(submission)
+    for key, val in overlay.items():
+        if key == "regalados":
+            if not data.get("regalados"):
+                data["regalados"] = val
+            continue
+        if val and not data.get(key):
+            data[key] = val
+    return data
+
+
+def infer_relation_field(name_field: str, relation_field: str) -> str:
+    """Default relation2 when the automation targets the second regalado."""
+    if relation_field != "relacion":
+        return relation_field
+    if name_field in ("nombre_regalado2", "destinatario_nombre2"):
+        return "relacion2"
+    return relation_field
