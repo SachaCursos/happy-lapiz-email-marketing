@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formsApi } from "@/lib/api";
-import { SignupForm, FormSubmission, FormField, FormDesign, FormStep, AbFormVariant, AbFormStats } from "@/lib/types";
+import { SignupForm, FormSubmission, FormField, FormDesign, FormStep, AbFormVariant, AbFormStats, getRegaladosFromSubmission } from "@/lib/types";
 import type { Automation } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import {
@@ -349,6 +349,18 @@ function DesignEditor({
 }
 
 // ── Steps Editor ──────────────────────────────────────────────────────────────
+const REGALADO_FIELD_KEYS = new Set([
+  "para_quien",
+  "destinatario_nombre",
+  "destinatario_edad",
+  "destinatario_cumpleanos",
+  "cual_es_su_fecha_de_nacimiento",
+]);
+
+function stepHasRegaladoFields(step: FormStep) {
+  return step.fields.some((k) => REGALADO_FIELD_KEYS.has(k));
+}
+
 function StepsEditor({
   steps,
   form,
@@ -397,6 +409,7 @@ function StepsEditor({
         description: "Así podemos enviarte lo que más te sirve.",
         fields: giftFields.length > 0 ? giftFields : ["para_quien", "destinatario_nombre", "destinatario_edad", "destinatario_cumpleanos"],
         button_text: form.button_text || "Suscribirme",
+        allow_multiple_regalados: true,
       },
     ]);
   }
@@ -534,6 +547,24 @@ function StepsEditor({
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
+                {!step.coupon_step && stepHasRegaladoFields(step) && (
+                  <div className="col-span-2">
+                    <label className="flex items-center gap-3 cursor-pointer bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={!!step.allow_multiple_regalados}
+                        onChange={(e) => updateStep(idx, { allow_multiple_regalados: e.target.checked })}
+                        className="rounded border-violet-300 text-violet-600 focus:ring-violet-500"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-violet-900">Permitir agregar varios regalados</p>
+                        <p className="text-xs text-violet-700 mt-0.5">
+                          Muestra el botón &quot;Agregar otro regalado&quot; en el paso 2. Cada regalado se guarda en la base de datos.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
                 {!step.coupon_step && (
                 <div className="col-span-2 space-y-2">
                   <label className="block text-xs text-gray-500">Campos activos (arrastra con ↑↓ para ordenar)</label>
@@ -1285,19 +1316,46 @@ export default function FormDetailPage() {
                         <tr className="border-b border-gray-100">
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Regalados</th>
                           {hasCoupon && <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cupón</th>}
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {subsData.submissions.map((s) => (
+                        {subsData.submissions.map((s) => {
+                          const regalados = getRegaladosFromSubmission(s);
+                          return (
                           <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
                             <td className="px-4 py-3 font-mono text-xs text-gray-700">{s.email}</td>
                             <td className="px-4 py-3 text-gray-600 text-xs">{s.name || "—"}</td>
+                            <td className="px-4 py-3 text-xs text-gray-600">
+                              {regalados.length === 0 ? (
+                                <span className="text-gray-300">—</span>
+                              ) : (
+                                <ul className="space-y-1.5">
+                                  {regalados.map((r, i) => (
+                                    <li key={i} className="flex flex-col gap-0.5">
+                                      <span className="font-medium text-gray-800">
+                                        {regalados.length > 1 && (
+                                          <span className="text-violet-600 font-semibold mr-1">#{i + 1}</span>
+                                        )}
+                                        {r.nombre || "—"}
+                                      </span>
+                                      {(r.relacion || r.fecha) && (
+                                        <span className="text-gray-400">
+                                          {[r.relacion, r.fecha].filter(Boolean).join(" · ")}
+                                        </span>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
                             {hasCoupon && <td className="px-4 py-3 text-xs font-mono text-amber-700">{s.coupon_code || "—"}</td>}
                             <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{formatDate(s.created_at)}</td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

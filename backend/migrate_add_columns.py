@@ -32,6 +32,9 @@ migrations = [
     "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS relacion_regalado VARCHAR",
     "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS nombre_regalado VARCHAR",
     "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS fecha_nacimiento_regalado VARCHAR",
+    "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS relacion_regalado2 VARCHAR",
+    "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS nombre_regalado2 VARCHAR",
+    "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS fecha_nacimiento_regalado2 VARCHAR",
     # automations + automation_runs (new tables — create if not exist)
     """CREATE TABLE IF NOT EXISTS automations (
         id SERIAL PRIMARY KEY,

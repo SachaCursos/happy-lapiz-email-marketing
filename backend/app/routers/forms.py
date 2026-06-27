@@ -24,6 +24,68 @@ from app.models.user import User
 
 router = APIRouter()
 
+# Keys used in form extra_data for gift recipients (step 2)
+_REGALADO_EXTRA_KEYS = (
+    "para_quien",
+    "destinatario_nombre",
+    "cual_es_su_fecha_de_nacimiento",
+    "destinatario_cumpleanos",
+)
+
+
+def _parse_regalados(extra_data: dict | None) -> list[dict]:
+    """Normalize gift recipients from extra_data into [{relacion, nombre, fecha}, ...]."""
+    if not extra_data:
+        return []
+
+    raw_list = extra_data.get("regalados")
+    if isinstance(raw_list, list) and raw_list:
+        out = []
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            relacion = (item.get("para_quien") or item.get("relacion") or "").strip()
+            nombre = (
+                item.get("destinatario_nombre")
+                or item.get("nombre_regalado")
+                or item.get("nombre")
+                or ""
+            ).strip()
+            fecha = (
+                item.get("cual_es_su_fecha_de_nacimiento")
+                or item.get("destinatario_cumpleanos")
+                or item.get("fecha_nacimiento_regalado")
+                or ""
+            ).strip()
+            if relacion or nombre or fecha:
+                out.append({"relacion": relacion, "nombre": nombre, "fecha": fecha})
+        return out
+
+    relacion = (extra_data.get("para_quien") or "").strip()
+    nombre = (extra_data.get("destinatario_nombre") or "").strip()
+    fecha = (
+        extra_data.get("cual_es_su_fecha_de_nacimiento")
+        or extra_data.get("destinatario_cumpleanos")
+        or ""
+    ).strip()
+    if relacion or nombre or fecha:
+        return [{"relacion": relacion, "nombre": nombre, "fecha": fecha}]
+    return []
+
+
+def _regalado_column_values(regalados: list[dict]) -> dict:
+    """Map parsed regalados to form_submissions columns (1st and 2nd recipient)."""
+    vals: dict = {}
+    if len(regalados) > 0:
+        vals["relacion_regalado"] = regalados[0]["relacion"] or None
+        vals["nombre_regalado"] = regalados[0]["nombre"] or None
+        vals["fecha_nacimiento_regalado"] = regalados[0]["fecha"] or None
+    if len(regalados) > 1:
+        vals["relacion_regalado2"] = regalados[1]["relacion"] or None
+        vals["nombre_regalado2"] = regalados[1]["nombre"] or None
+        vals["fecha_nacimiento_regalado2"] = regalados[1]["fecha"] or None
+    return vals
+
 
 # ── Authenticated CRUD ────────────────────────────────────────────────────────
 
@@ -248,6 +310,8 @@ def submit_form(
         coupon_code = f.coupon_code
 
     _ed = payload.extra_data or {}
+    regalados = _parse_regalados(_ed)
+    regalado_cols = _regalado_column_values(regalados)
 
     # Duplicate check: one submission per email, unless adding a new unregistered child
     existing_subs = session.exec(
@@ -258,16 +322,29 @@ def submit_form(
     ).all()
 
     if existing_subs:
-        nombre_nuevo = (_ed.get("destinatario_nombre") or "").strip().lower()
-        if nombre_nuevo:
+        nombres_nuevos = [
+            r["nombre"].strip().lower()
+            for r in regalados
+            if r.get("nombre")
+        ]
+        if not nombres_nuevos:
+            nombre_nuevo = (_ed.get("destinatario_nombre") or "").strip().lower()
+            if nombre_nuevo:
+                nombres_nuevos = [nombre_nuevo]
+        for nombre_nuevo in nombres_nuevos:
             already_registered = any(
                 (sub.nombre_regalado or "").strip().lower() == nombre_nuevo
+                or (sub.nombre_regalado2 or "").strip().lower() == nombre_nuevo
                 for sub in existing_subs
             )
             if already_registered:
                 existing_coupon = next((s.coupon_code for s in existing_subs if s.coupon_code), None) or coupon_code
                 session.commit()
                 return {"ok": False, "already_submitted": True, "coupon_code": existing_coupon}
+
+    # Persist 3+ recipients in extra_data JSON
+    if len(regalados) > 2:
+        _ed = {**_ed, "regalados_extra": regalados[2:]}
 
     session.add(FormSubmission(
         form_id=form_id,
@@ -278,9 +355,12 @@ def submit_form(
         extra_data=_ed or None,
         coupon_code=coupon_code,
         ab_variant=payload.ab_variant or None,
-        relacion_regalado=_ed.get("para_quien") or None,
-        nombre_regalado=_ed.get("destinatario_nombre") or None,
-        fecha_nacimiento_regalado=_ed.get("cual_es_su_fecha_de_nacimiento") or None,
+        relacion_regalado=regalado_cols.get("relacion_regalado"),
+        nombre_regalado=regalado_cols.get("nombre_regalado"),
+        fecha_nacimiento_regalado=regalado_cols.get("fecha_nacimiento_regalado"),
+        relacion_regalado2=regalado_cols.get("relacion_regalado2"),
+        nombre_regalado2=regalado_cols.get("nombre_regalado2"),
+        fecha_nacimiento_regalado2=regalado_cols.get("fecha_nacimiento_regalado2"),
     ))
     session.commit()
 
@@ -364,6 +444,10 @@ def _trigger_form_submitted_automations(
         # Detect recipient gender from relationship field, then fall back to recipient name
         para_quien = extra_data.get("para_quien", "")
         nombre_regalado = extra_data.get("destinatario_nombre", "")
+        regalados = _parse_regalados(extra_data)
+        if regalados:
+            para_quien = regalados[0]["relacion"] or para_quien
+            nombre_regalado = regalados[0]["nombre"] or nombre_regalado
         genero_regalado = (
             _detect_gender_from_para_quien(para_quien)
             or _detect_name_gender(nombre_regalado)
@@ -374,10 +458,21 @@ def _trigger_form_submitted_automations(
             "email": email,
             "coupon_code": coupon_code or "",
             "nombre_regalado": nombre_regalado,
-            "cual_es_su_fecha_de_nacimiento": extra_data.get("cual_es_su_fecha_de_nacimiento", ""),
+            "cual_es_su_fecha_de_nacimiento": (
+                regalados[0]["fecha"] if regalados else extra_data.get("cual_es_su_fecha_de_nacimiento", "")
+            ),
             "genero_regalado": genero_regalado or "",
             **{k: v for k, v in extra_data.items()},
         }
+        if regalados:
+            extra["regalados"] = [
+                {
+                    "para_quien": r["relacion"],
+                    "destinatario_nombre": r["nombre"],
+                    "cual_es_su_fecha_de_nacimiento": r["fecha"],
+                }
+                for r in regalados
+            ]
         enrollment = AutomationEnrollment(
             automation_id=auto.id,
             contact_email=email,
@@ -630,6 +725,9 @@ def _build_embed_js(cfg: dict) -> str:
         '#hb-popup-btn{{width:100%;padding:12px;background:linear-gradient(135deg,' + btnBg + ',' + btnBg2 + ');color:' + btnTxt + ';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .2s;margin-top:4px;font-family:inherit;}}',
         '#hb-popup-btn:hover{{opacity:0.88;}}',
         '#hb-popup-btn:disabled{{opacity:0.5;cursor:not-allowed;}}',
+        '.hb-add-regalado-btn{{width:100%;padding:10px;background:transparent;color:' + btnBg + ';border:1.5px solid ' + btnBg + ';border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px;font-family:inherit;transition:background .2s,color .2s;}}',
+        '.hb-add-regalado-btn:hover{{background:' + btnBg + ';color:' + btnTxt + ';}}',
+        '.hb-regalados-badge{{font-size:12px;color:#16a34a;text-align:center;margin-bottom:10px;font-weight:600;}}',
         '#hb-popup-success{{display:none;text-align:center;padding:8px 0 4px;}}',
         '.hb-coupon-box{{margin:4px 0 12px;padding:14px 20px;background:#f0f9ff;border:2px dashed ' + btnBg + ';border-radius:12px;text-align:center;}}',
         '#hb-popup-fine{{margin:12px 0 0;color:#94a3b8;font-size:11px;text-align:center;}}',
@@ -752,8 +850,17 @@ def _build_embed_js(cfg: dict) -> str:
               '<a id="hb-coupon-link" href="https://happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
               '</div>';
           }} else {{
+            var showAddRegalado = !!s.allow_multiple_regalados;
+            var regaladoBadge = showAddRegalado
+              ? '<p class="hb-regalados-badge" id="hb-regalados-badge-'+idx+'" style="display:none"></p>'
+              : '';
+            var addRegaladoBtn = showAddRegalado
+              ? '<button type="button" class="hb-add-regalado-btn" data-step="'+idx+'">+ Agregar otro regalado</button>'
+              : '';
             stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
+              regaladoBadge +
               fieldsHtml +
+              addRegaladoBtn +
               '<button id="hb-popup-btn" type="button" data-step="'+idx+'" data-final="'+(isFinal?'1':'0')+'">' + btnText + '</button>' +
               '</div>';
           }}
@@ -838,6 +945,87 @@ def _build_embed_js(cfg: dict) -> str:
 
         var currentStep = 0;
         var collectedData = {{ source_url: window.location.href, extra_data: {{}} }};
+        var savedRegalados = [];
+
+        var REGALADO_KEYS = ['para_quien','destinatario_nombre','cual_es_su_fecha_de_nacimiento','destinatario_cumpleanos','destinatario_edad'];
+
+        function validateStepEl(stepEl) {{
+          if (!stepEl) return true;
+          var invalid = false;
+          stepEl.querySelectorAll('input[required],select[required],textarea[required]').forEach(function(el) {{
+            if (!el.value.trim()) {{ el.style.borderColor = '#dc2626'; invalid = true; }}
+            else el.style.borderColor = '';
+          }});
+          stepEl.querySelectorAll('.hb-date-wrap[data-required]').forEach(function(wrap) {{
+            var hidden = wrap.querySelector('input[type="hidden"]');
+            if (!hidden || !hidden.value) {{
+              wrap.querySelectorAll('.hb-date-sel').forEach(function(s) {{ s.style.borderColor = '#dc2626'; }});
+              invalid = true;
+            }}
+          }});
+          return !invalid;
+        }}
+
+        function extractRegaladoFromStep(stepEl) {{
+          var r = {{}};
+          if (!stepEl) return r;
+          var otroValues = {{}};
+          stepEl.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el) {{
+            if (el.name && el.name.endsWith('_otro') && el.value.trim()) {{
+              otroValues[el.name.slice(0, -5)] = el.value.trim();
+            }}
+          }});
+          stepEl.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el) {{
+            var n = el.name, v = el.value;
+            if (!n || n.endsWith('_otro')) return;
+            if ((v.toLowerCase() === 'otro' || v.toLowerCase() === 'otra') && otroValues[n]) v = otroValues[n];
+            if (REGALADO_KEYS.indexOf(n) !== -1 && v) r[n] = v;
+          }});
+          return r;
+        }}
+
+        function clearRegaladoFields(stepEl) {{
+          if (!stepEl) return;
+          stepEl.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el) {{
+            if (!el.name || el.type === 'hidden') return;
+            el.value = '';
+            el.style.borderColor = '';
+          }});
+          stepEl.querySelectorAll('.hb-date-sel').forEach(function(s) {{ s.selectedIndex = 0; s.style.borderColor = ''; }});
+          stepEl.querySelectorAll('.hb-date-wrap input[type="hidden"]').forEach(function(h) {{ h.value = ''; }});
+          stepEl.querySelectorAll('.hb-otro-inp').forEach(function(inp) {{ inp.style.display = 'none'; inp.value = ''; inp.required = false; }});
+        }}
+
+        function updateRegaladosBadge(stepIdx) {{
+          var badge = document.getElementById('hb-regalados-badge-' + stepIdx);
+          if (!badge) return;
+          if (savedRegalados.length > 0) {{
+            badge.textContent = savedRegalados.length + ' regalado' + (savedRegalados.length > 1 ? 's' : '') + ' agregado' + (savedRegalados.length > 1 ? 's' : '');
+            badge.style.display = 'block';
+          }} else {{
+            badge.style.display = 'none';
+            badge.textContent = '';
+          }}
+        }}
+
+        function mergeRegaladosIntoPayload() {{
+          var stepCfgs = (C.steps && C.steps.length > 0) ? C.steps : [];
+          var regaladoStepIdx = -1;
+          for (var _ri = 0; _ri < stepCfgs.length; _ri++) {{
+            if (stepCfgs[_ri].allow_multiple_regalados) {{ regaladoStepIdx = _ri; break; }}
+          }}
+          if (regaladoStepIdx < 0) return;
+          var stepEl = document.getElementById('hb-step-' + regaladoStepIdx);
+          var currentReg = extractRegaladoFromStep(stepEl);
+          var allRegs = savedRegalados.slice();
+          if (Object.keys(currentReg).length) allRegs.push(currentReg);
+          if (!allRegs.length) return;
+          collectedData.extra_data = collectedData.extra_data || {{}};
+          collectedData.extra_data.regalados = allRegs;
+          collectedData.extra_data.para_quien = allRegs[0].para_quien || '';
+          collectedData.extra_data.destinatario_nombre = allRegs[0].destinatario_nombre || '';
+          collectedData.extra_data.cual_es_su_fecha_de_nacimiento = allRegs[0].cual_es_su_fecha_de_nacimiento || allRegs[0].destinatario_cumpleanos || '';
+        }}
 
         function collectStep(stepEl) {{
           var inputs = stepEl.querySelectorAll('input[name],select[name],textarea[name]');
@@ -915,6 +1103,22 @@ def _build_embed_js(cfg: dict) -> str:
             return;
           }}
 
+          var addRegBtn = e.target.closest('.hb-add-regalado-btn');
+          if (addRegBtn) {{
+            var addStepIdx = parseInt(addRegBtn.dataset.step, 10);
+            var addStepEl = document.getElementById('hb-step-' + addStepIdx);
+            if (!validateStepEl(addStepEl)) return;
+            var reg = extractRegaladoFromStep(addStepEl);
+            if (!Object.keys(reg).length) return;
+            savedRegalados.push(reg);
+            clearRegaladoFields(addStepEl);
+            updateRegaladosBadge(addStepIdx);
+            var prevLabel = addRegBtn.textContent;
+            addRegBtn.textContent = '✓ Agregado — completa el siguiente';
+            setTimeout(function() {{ addRegBtn.textContent = prevLabel; }}, 2200);
+            return;
+          }}
+
           var btn = e.target.closest('#hb-popup-btn');
           if (!btn) return;
 
@@ -922,23 +1126,7 @@ def _build_embed_js(cfg: dict) -> str:
           var isFinal  = btn.dataset.final === '1';
           var stepEl   = document.getElementById('hb-step-' + stepIdx);
 
-          // Validate required fields in this step
-          var invalid = false;
-          if (stepEl) {{
-            stepEl.querySelectorAll('input[required],select[required],textarea[required]').forEach(function(el) {{
-              if (!el.value.trim()) {{ el.style.borderColor = '#dc2626'; invalid = true; }}
-              else el.style.borderColor = '';
-            }});
-            // Validate date combo fields
-            stepEl.querySelectorAll('.hb-date-wrap[data-required]').forEach(function(wrap) {{
-              var hidden = wrap.querySelector('input[type="hidden"]');
-              if (!hidden || !hidden.value) {{
-                wrap.querySelectorAll('.hb-date-sel').forEach(function(s) {{ s.style.borderColor = '#dc2626'; }});
-                invalid = true;
-              }}
-            }});
-          }}
-          if (invalid) return;
+          if (!validateStepEl(stepEl)) return;
 
           if (stepEl) collectStep(stepEl);
 
@@ -949,6 +1137,7 @@ def _build_embed_js(cfg: dict) -> str:
           }}
 
           // Final step: submit
+          mergeRegaladosIntoPayload();
           btn.disabled = true;
           btn.textContent = 'Enviando…';
 

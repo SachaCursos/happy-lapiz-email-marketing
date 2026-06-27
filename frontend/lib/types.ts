@@ -170,6 +170,7 @@ export interface FormStep {
   fields: string[];
   button_text: string;
   coupon_step?: boolean;   // last step shown after submit, displays the generated coupon
+  allow_multiple_regalados?: boolean;  // step 2: "Agregar otro regalado" button
 }
 
 export interface AbFormVariant {
@@ -223,9 +224,62 @@ export interface FormSubmission {
   name: string | null;
   phone: string | null;
   source_url: string | null;
-  extra_data: Record<string, string> | null;
+  extra_data: Record<string, unknown> | null;
   coupon_code: string | null;
+  ab_variant?: string | null;
+  relacion_regalado?: string | null;
+  nombre_regalado?: string | null;
+  fecha_nacimiento_regalado?: string | null;
+  relacion_regalado2?: string | null;
+  nombre_regalado2?: string | null;
+  fecha_nacimiento_regalado2?: string | null;
   created_at: string;
+}
+
+export interface RegaladoEntry {
+  relacion: string;
+  nombre: string;
+  fecha: string;
+}
+
+/** Extract all gift recipients from a form submission (columns + extra_data). */
+export function getRegaladosFromSubmission(s: FormSubmission): RegaladoEntry[] {
+  const ed = s.extra_data;
+  if (ed?.regalados && Array.isArray(ed.regalados)) {
+    return (ed.regalados as Record<string, string>[])
+      .map((r) => ({
+        relacion: r.para_quien || r.relacion || "",
+        nombre: r.destinatario_nombre || r.nombre || r.nombre_regalado || "",
+        fecha: r.cual_es_su_fecha_de_nacimiento || r.destinatario_cumpleanos || r.fecha || "",
+      }))
+      .filter((r) => r.nombre || r.relacion);
+  }
+
+  const out: RegaladoEntry[] = [];
+  if (s.nombre_regalado || s.relacion_regalado) {
+    out.push({
+      relacion: s.relacion_regalado || "",
+      nombre: s.nombre_regalado || "",
+      fecha: s.fecha_nacimiento_regalado || "",
+    });
+  }
+  if (s.nombre_regalado2 || s.relacion_regalado2) {
+    out.push({
+      relacion: s.relacion_regalado2 || "",
+      nombre: s.nombre_regalado2 || "",
+      fecha: s.fecha_nacimiento_regalado2 || "",
+    });
+  }
+  if (ed?.regalados_extra && Array.isArray(ed.regalados_extra)) {
+    for (const r of ed.regalados_extra as Record<string, string>[]) {
+      out.push({
+        relacion: r.relacion || r.para_quien || "",
+        nombre: r.nombre || r.destinatario_nombre || "",
+        fecha: r.fecha || r.cual_es_su_fecha_de_nacimiento || "",
+      });
+    }
+  }
+  return out.filter((r) => r.nombre || r.relacion);
 }
 
 export type AutomationTrigger =

@@ -75,6 +75,9 @@ def _run_migrations():
             created_by INTEGER,
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
+        "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS relacion_regalado2 VARCHAR",
+        "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS nombre_regalado2 VARCHAR",
+        "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS fecha_nacimiento_regalado2 VARCHAR",
         """CREATE TABLE IF NOT EXISTS coupon_sends (
             id SERIAL PRIMARY KEY,
             coupon_campaign_id INTEGER NOT NULL REFERENCES coupon_campaigns(id),
