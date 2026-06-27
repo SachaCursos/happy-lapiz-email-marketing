@@ -15,7 +15,9 @@ router = APIRouter()
 
 @router.get("", response_model=List[TemplateRead])
 def list_templates(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return session.exec(select(Template)).all()
+    return session.exec(
+        select(Template).order_by(Template.created_at.desc(), Template.id.desc())
+    ).all()
 
 
 @router.post("", response_model=TemplateRead, status_code=201)
