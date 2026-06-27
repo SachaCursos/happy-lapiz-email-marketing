@@ -1,3 +1,4 @@
+import html
 import json
 import random
 import string
@@ -5,8 +6,8 @@ import textwrap
 from datetime import datetime
 from typing import List
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlmodel import Session, select
 from sqlalchemy import text
 
@@ -512,8 +513,24 @@ def _trigger_form_submitted_automations(
     session.commit()
 
 
+@router.get("/{form_id}/page", response_class=HTMLResponse)
+def form_landing_page(form_id: int, session: Session = Depends(get_session)):
+    """Página pública del formulario — para enlaces en campañas de email."""
+    f = session.get(SignupForm, form_id)
+    if not f or f.status != "active":
+        raise HTTPException(status_code=404, detail="Formulario no disponible")
+    return HTMLResponse(
+        _build_form_landing_page(f),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
 @router.get("/{form_id}/embed.js", response_class=PlainTextResponse)
-def embed_js(form_id: int, session: Session = Depends(get_session)):
+def embed_js(
+    form_id: int,
+    standalone: bool = Query(False),
+    session: Session = Depends(get_session),
+):
     f = session.get(SignupForm, form_id)
     if not f or f.status != "active":
         return PlainTextResponse("/* form not found */", media_type="application/javascript")
@@ -537,6 +554,7 @@ def embed_js(form_id: int, session: Session = Depends(get_session)):
         "steps": f.steps_config or [],
         "ab_variants": f.ab_variants or [],
         "api": settings.BACKEND_PUBLIC_URL,
+        "standalone": standalone,
     }
 
     js = _build_embed_js(cfg)
@@ -545,6 +563,96 @@ def embed_js(form_id: int, session: Session = Depends(get_session)):
         media_type="application/javascript",
         headers={**_cors_headers(), "Cache-Control": "no-store, no-cache, must-revalidate"},
     )
+
+
+def _build_form_landing_page(f: SignupForm) -> str:
+    api_base = settings.BACKEND_PUBLIC_URL.rstrip("/")
+    logo = (
+        "https://cdn.shopify.com/s/files/1/0556/5343/3495/files/"
+        "LOGO_HappyLapiz.png?v=1621889822"
+    )
+    title = html.escape(f.title)
+    desc = html.escape(f.description or "")
+    script_url = f"{api_base}/api/forms/{f.id}/embed.js?standalone=1"
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title} | Happy Lápiz</title>
+  <meta name="description" content="{desc or 'Cuéntanos para quién compras tus regalos en Happy Lápiz.'}" />
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #f0f9ff 0%, #f8fafc 40%, #fff 100%);
+      color: #1e293b;
+    }}
+    .hl-top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      max-width: 520px;
+      margin: 0 auto;
+    }}
+    .hl-top img {{ height: 36px; width: auto; }}
+    .hl-back {{
+      font-size: 13px;
+      color: #0369a1;
+      text-decoration: none;
+      font-weight: 600;
+    }}
+    .hl-back:hover {{ text-decoration: underline; }}
+    .hl-hero {{
+      text-align: center;
+      padding: 8px 20px 0;
+      max-width: 520px;
+      margin: 0 auto;
+    }}
+    .hl-hero h1 {{
+      margin: 0 0 8px;
+      font-size: 1.35rem;
+      line-height: 1.3;
+      color: #0f172a;
+    }}
+    .hl-hero p {{
+      margin: 0;
+      font-size: 14px;
+      color: #64748b;
+      line-height: 1.5;
+    }}
+    #hb-landing {{
+      max-width: 480px;
+      margin: 20px auto 40px;
+      padding: 0 16px;
+    }}
+    .hb-standalone-wrap #hb-popup-box {{
+      box-shadow: 0 8px 32px rgba(2, 132, 199, 0.12);
+      border: 1px solid #e2e8f0;
+    }}
+    .hb-standalone-wrap #hb-popup-close {{ display: none !important; }}
+  </style>
+</head>
+<body>
+  <header class="hl-top">
+    <a href="https://www.happylapiz.cl" title="Happy Lápiz">
+      <img src="{logo}" alt="Happy Lápiz" />
+    </a>
+    <a class="hl-back" href="https://www.happylapiz.cl">← Volver a la tienda</a>
+  </header>
+  <div class="hl-hero">
+    <h1>{title}</h1>
+    {f'<p>{desc}</p>' if desc else ''}
+  </div>
+  <main id="hb-landing"></main>
+  <script>window.HB_FORM_CONTAINER = 'hb-landing';</script>
+  <script src="{script_url}" defer></script>
+</body>
+</html>"""
 
 
 # ── Tracking pixel ───────────────────────────────────────────────────────────
@@ -678,8 +786,8 @@ def _build_embed_js(cfg: dict) -> str:
 
       // Never show again if already submitted
       if (_ls.getItem(STORE_KEY) === 'submitted') return;
-      // Don't show again in this browser session if already dismissed
-      if (_ss.getItem(STORE_KEY + '_d')) return;
+      // Don't show again in this browser session if already dismissed (popup only)
+      if (!C.standalone && _ss.getItem(STORE_KEY + '_d')) return;
 
       // ── A/B variant selection ─────────────────────────────────────────────
       var _abVariant = null;
@@ -931,23 +1039,37 @@ def _build_embed_js(cfg: dict) -> str:
 
       // ── Show popup ──────────────────────────────────────────────────────────
       function showPopup() {{
-        if (document.getElementById('hb-popup-overlay')) return;
+        if (document.getElementById('hb-popup-overlay') || document.getElementById('hb-popup-box')) return;
 
-        var overlay = document.createElement('div');
-        overlay.id = 'hb-popup-overlay';
         var box = document.createElement('div');
         box.id = 'hb-popup-box';
 
         if (C.html_override) {{
-          overlay.classList.add('hb-centered');
           box.innerHTML = C.html_override;
-          overlay.addEventListener('click', function(e) {{ if (e.target === overlay) closePopup(); }});
         }} else {{
           box.innerHTML = buildPopup();
         }}
 
-        overlay.appendChild(box);
-        document.body.appendChild(overlay);
+        var containerId = C.standalone && window.HB_FORM_CONTAINER;
+        var container = containerId ? document.getElementById(containerId) : null;
+
+        if (container) {{
+          var wrap = document.createElement('div');
+          wrap.className = 'hb-standalone-wrap';
+          wrap.appendChild(box);
+          container.appendChild(wrap);
+        }} else {{
+          var overlay = document.createElement('div');
+          overlay.id = 'hb-popup-overlay';
+          if (C.html_override || C.standalone) {{
+            overlay.classList.add('hb-centered');
+            if (!C.standalone) {{
+              overlay.addEventListener('click', function(e) {{ if (e.target === overlay) closePopup(); }});
+            }}
+          }}
+          overlay.appendChild(box);
+          document.body.appendChild(overlay);
+        }}
 
         // Wire "Otro/Otra" select fields: show text input when selected
         box.querySelectorAll('select.hb-otro-sel').forEach(function(sel) {{
@@ -974,7 +1096,27 @@ def _build_embed_js(cfg: dict) -> str:
         }});
 
         var closeBtn = document.getElementById('hb-popup-close');
-        if (closeBtn) closeBtn.addEventListener('click', closePopup);
+        if (closeBtn) {{
+          if (C.standalone) closeBtn.style.display = 'none';
+          else closeBtn.addEventListener('click', closePopup);
+        }}
+
+        function prefillFromUrl() {{
+          try {{
+            var params = new URLSearchParams(window.location.search);
+            var emailVal = params.get('email') || params.get('e') || '';
+            var nameVal = params.get('name') || params.get('n') || '';
+            if (emailVal) {{
+              var emailInp = box.querySelector('input[name="email"]');
+              if (emailInp && !emailInp.value) emailInp.value = decodeURIComponent(emailVal.replace(/\\+/g, ' '));
+            }}
+            if (nameVal) {{
+              var nameInp = box.querySelector('input[name="name"]');
+              if (nameInp && !nameInp.value) nameInp.value = decodeURIComponent(nameVal.replace(/\\+/g, ' '));
+            }}
+          }} catch (e) {{}}
+        }}
+        if (C.standalone) prefillFromUrl();
 
         var currentStep = 0;
         var collectedData = {{ source_url: window.location.href, extra_data: {{}} }};
@@ -1269,6 +1411,7 @@ def _build_embed_js(cfg: dict) -> str:
       }}
 
       function closePopup() {{
+        if (C.standalone) return;
         var el = document.getElementById('hb-popup-overlay');
         if (el) el.parentNode.removeChild(el);
         _ss.setItem(STORE_KEY + '_d', '1');
@@ -1286,8 +1429,15 @@ def _build_embed_js(cfg: dict) -> str:
         }}
       }}
 
-      // Triggers: activate delay AND/OR scroll (whichever fires first shows the popup)
-      if (C.trigger === 'exit_intent') {{
+      // Triggers: standalone shows immediately; popup uses delay / scroll / exit intent
+      if (C.standalone) {{
+        function _showStandalone() {{ showPopup(); }}
+        if (document.readyState === 'loading') {{
+          document.addEventListener('DOMContentLoaded', _showStandalone);
+        }} else {{
+          _showStandalone();
+        }}
+      }} else if (C.trigger === 'exit_intent') {{
         document.addEventListener('mouseleave', function h(e) {{
           if (e.clientY <= 0) {{ showPopup(); document.removeEventListener('mouseleave', h); }}
         }});

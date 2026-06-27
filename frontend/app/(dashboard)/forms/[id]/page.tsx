@@ -10,7 +10,7 @@ import { formatDate } from "@/lib/utils";
 import {
   ArrowLeft, Copy, Check, Users, Code, Plus, Trash2,
   ChevronUp, ChevronDown, Save, Eye, Palette, Layers,
-  Tag, Settings, GripVertical, FlaskConical,
+  Tag, Settings, GripVertical, FlaskConical, Link2, ExternalLink,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -1261,6 +1261,8 @@ export default function FormDetailPage() {
   const formId = Number(id);
   const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
+  const [copiedCampaign, setCopiedCampaign] = useState(false);
+  const [copiedCampaignEmail, setCopiedCampaignEmail] = useState(false);
   const [activeTab, setActiveTab] = useState<"install" | "design" | "steps" | "fields" | "coupon" | "html" | "ab">("install");
   const [previewStep, setPreviewStep] = useState(0);
 
@@ -1288,11 +1290,24 @@ export default function FormDetailPage() {
   const [localSteps, setLocalSteps] = useState<FormStep[] | null | "unset">("unset");
 
   const embedCode = `<script src="${BACKEND_URL}/api/forms/${formId}/embed.js" async></script>`;
+  const campaignUrl = `${BACKEND_URL}/api/forms/${formId}/page`;
+  const campaignUrlWithEmail = `${campaignUrl}?email={{ email }}`;
 
   function copyEmbed() {
     navigator.clipboard.writeText(embedCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function copyCampaignLink(withEmail: boolean) {
+    navigator.clipboard.writeText(withEmail ? campaignUrlWithEmail : campaignUrl);
+    if (withEmail) {
+      setCopiedCampaignEmail(true);
+      setTimeout(() => setCopiedCampaignEmail(false), 2000);
+    } else {
+      setCopiedCampaign(true);
+      setTimeout(() => setCopiedCampaign(false), 2000);
+    }
   }
 
   if (isLoading) return <div className="p-8"><div className="h-5 bg-gray-200 rounded w-40 animate-pulse mb-4" /><div className="h-8 bg-gray-200 rounded w-64 animate-pulse" /></div>;
@@ -1378,6 +1393,59 @@ export default function FormDetailPage() {
                 </div>
                 <p className="text-xs text-gray-500 mb-3">Pega esto antes del <code className="text-gray-400">&lt;/body&gt;</code> de tu sitio:</p>
                 <pre className="text-xs text-green-400 font-mono break-all whitespace-pre-wrap">{embedCode}</pre>
+              </div>
+
+              <div className="bg-white border border-sky-200 rounded-xl p-5">
+                <div className="flex items-center gap-2 text-sky-800 mb-2">
+                  <Link2 size={16} />
+                  <span className="text-sm font-semibold">Enlace para campañas de email</span>
+                </div>
+                <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+                  Los correos no pueden mostrar el formulario completo, pero puedes enviar a tus clientes a esta página
+                  con el mismo diseño y campos. Ideal para recuperar datos de regalados de clientes antiguos.
+                </p>
+                <div className="space-y-3">
+                  <div className="bg-sky-50 border border-sky-100 rounded-lg p-3">
+                    <p className="text-[11px] font-medium text-sky-700 uppercase tracking-wide mb-1">Enlace general</p>
+                    <div className="flex items-start gap-2">
+                      <code className="text-xs text-gray-800 break-all flex-1">{campaignUrl}</code>
+                      <button
+                        onClick={() => copyCampaignLink(false)}
+                        className="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-white border border-sky-200 rounded-md text-xs text-sky-700 hover:bg-sky-50"
+                      >
+                        {copiedCampaign ? <Check size={11} /> : <Copy size={11} />}
+                        {copiedCampaign ? "Copiado" : "Copiar"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="bg-violet-50 border border-violet-100 rounded-lg p-3">
+                    <p className="text-[11px] font-medium text-violet-700 uppercase tracking-wide mb-1">
+                      Con email prellenado (recomendado)
+                    </p>
+                    <div className="flex items-start gap-2">
+                      <code className="text-xs text-gray-800 break-all flex-1">{campaignUrlWithEmail}</code>
+                      <button
+                        onClick={() => copyCampaignLink(true)}
+                        className="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-white border border-violet-200 rounded-md text-xs text-violet-700 hover:bg-violet-50"
+                      >
+                        {copiedCampaignEmail ? <Check size={11} /> : <Copy size={11} />}
+                        {copiedCampaignEmail ? "Copiado" : "Copiar"}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-violet-600 mt-2">
+                      Usa esta URL en el botón de tu campaña. La variable <code className="bg-white/80 px-1 rounded">{"{{ email }}"}</code> se reemplaza automáticamente por cada contacto.
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href={campaignUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 mt-4 text-xs font-medium text-sky-700 hover:text-sky-900"
+                >
+                  <ExternalLink size={12} />
+                  Ver página de ejemplo
+                </a>
               </div>
 
               {/* Submissions table */}
