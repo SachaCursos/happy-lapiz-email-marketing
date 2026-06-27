@@ -338,7 +338,11 @@ def submit_form(
                 for sub in existing_subs
             )
             if already_registered:
-                existing_coupon = next((s.coupon_code for s in existing_subs if s.coupon_code), None) or coupon_code
+                existing_coupon = next((s.coupon_code for s in existing_subs if s.coupon_code), None)
+                if not existing_coupon and f.coupon_campaign_id:
+                    existing_coupon = _generate_dynamic_coupon(session, f.coupon_campaign_id, email)
+                elif not existing_coupon and f.coupon_code:
+                    existing_coupon = f.coupon_code
                 session.commit()
                 return {"ok": False, "already_submitted": True, "coupon_code": existing_coupon}
 
@@ -597,6 +601,12 @@ def _build_embed_js(cfg: dict) -> str:
     input_bdr   = d.get("input_border", "#e2e8f0")
     radius      = int(d.get("border_radius", 16))
     font        = d.get("font", "system-ui")
+    txt_coupon_label   = json.dumps(d.get("coupon_label", "Tu cupón"), ensure_ascii=False)
+    txt_copy_btn       = json.dumps(d.get("copy_button_text", "Copiar"), ensure_ascii=False)
+    txt_coupon_hint    = json.dumps(d.get("coupon_hint", "Úsalo en tu próxima compra"), ensure_ascii=False)
+    txt_privacy        = json.dumps(d.get("privacy_text", "Respetamos tu privacidad. Puedes darte de baja cuando quieras."), ensure_ascii=False)
+    txt_add_regalado   = json.dumps(d.get("add_regalado_button_text", "+ Agregar otro regalado"), ensure_ascii=False)
+    txt_add_regalado_ok = json.dumps(d.get("add_regalado_added_text", "✓ Agregado — completa el siguiente"), ensure_ascii=False)
 
     return textwrap.dedent(f"""
     (function() {{
@@ -839,23 +849,24 @@ def _build_embed_js(cfg: dict) -> str:
             // Coupon step: shown after submit, not a real form step
             stepsHtml += '<div class="hb-step" id="hb-step-'+idx+'" style="text-align:center;padding-top:4px">' +
               '<div style="font-size:36px;margin-bottom:8px">🎉</div>' +
-              '<div class="hb-coupon-box" id="hb-coupon-box">' +
-              '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+              '<div class="hb-coupon-box">' +
+              '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">'+{txt_coupon_label}+'</p>' +
               '<div style="display:flex;align-items:center;justify-content:center;gap:10px">' +
-              '<p style="margin:0;font-size:26px;font-weight:900;color:'+btnBg+';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
-              '<button id="hb-copy-btn" type="button" style="background:none;border:1.5px solid '+btnBg+';border-radius:6px;padding:5px 10px;cursor:pointer;color:'+btnBg+';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">Copiar</button>' +
+              '<p style="margin:0;font-size:26px;font-weight:900;color:'+btnBg+';letter-spacing:4px;min-height:32px" class="hb-coupon-code-display">' + (C.coupon_code||'') + '</p>' +
+              '<button class="hb-copy-btn" type="button" style="background:none;border:1.5px solid '+btnBg+';border-radius:6px;padding:5px 10px;cursor:pointer;color:'+btnBg+';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">'+{txt_copy_btn}+'</button>' +
               '</div>' +
               (s.description ? '<p style="margin:8px 0 0;font-size:13px;color:#475569">'+s.description+'</p>' : '') +
               '</div>' +
-              '<a id="hb-coupon-link" href="https://happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
+              '<a class="hb-coupon-link" href="https://www.happylapiz.cl" target="_blank" style="display:block;width:100%;box-sizing:border-box;padding:12px;background:linear-gradient(135deg,'+btnBg+','+btnBg2+');color:'+btnTxt+';border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;font-family:inherit;text-decoration:none;text-align:center">' + btnText + '</a>' +
               '</div>';
           }} else {{
-            var showAddRegalado = !!s.allow_multiple_regalados;
+            var addBtnLabel = s.add_regalado_button_text || {txt_add_regalado};
+            var showAddRegalado = !!s.allow_multiple_regalados && addBtnLabel;
             var regaladoBadge = showAddRegalado
               ? '<p class="hb-regalados-badge" id="hb-regalados-badge-'+idx+'" style="display:none"></p>'
               : '';
             var addRegaladoBtn = showAddRegalado
-              ? '<button type="button" class="hb-add-regalado-btn" data-step="'+idx+'">+ Agregar otro regalado</button>'
+              ? '<button type="button" class="hb-add-regalado-btn" data-step="'+idx+'">'+addBtnLabel+'</button>'
               : '';
             stepsHtml += '<div class="hb-step'+(idx===0?' hb-active':'')+'" id="hb-step-'+idx+'">' +
               regaladoBadge +
@@ -866,14 +877,15 @@ def _build_embed_js(cfg: dict) -> str:
           }}
         }});
 
-        var couponPlaceholder = (C.coupon_code || C.has_dynamic_coupon)
-          ? '<div class="hb-coupon-box" id="hb-coupon-box" style="display:none">' +
-            '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">Tu cupón</p>' +
+        var hasCouponStep = steps.some(function(s) {{ return !!s.coupon_step; }});
+        var couponPlaceholder = !hasCouponStep && (C.coupon_code || C.has_dynamic_coupon)
+          ? '<div class="hb-coupon-box" style="display:none">' +
+            '<p style="margin:0 0 8px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-weight:700">'+{txt_coupon_label}+'</p>' +
             '<div style="display:flex;align-items:center;justify-content:center;gap:10px">' +
-            '<p style="margin:0;font-size:26px;font-weight:900;color:' + btnBg + ';letter-spacing:4px" id="hb-coupon-code">' + (C.coupon_code||'') + '</p>' +
-            '<button id="hb-copy-btn" type="button" style="background:none;border:1.5px solid ' + btnBg + ';border-radius:6px;padding:5px 10px;cursor:pointer;color:' + btnBg + ';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">Copiar</button>' +
+            '<p style="margin:0;font-size:26px;font-weight:900;color:' + btnBg + ';letter-spacing:4px" class="hb-coupon-code-display">' + (C.coupon_code||'') + '</p>' +
+            '<button class="hb-copy-btn" type="button" style="background:none;border:1.5px solid ' + btnBg + ';border-radius:6px;padding:5px 10px;cursor:pointer;color:' + btnBg + ';font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap">'+{txt_copy_btn}+'</button>' +
             '</div>' +
-            '<p style="margin:8px 0 0;font-size:12px;color:#64748b">Úsalo en tu próxima compra</p>' +
+            '<p style="margin:8px 0 0;font-size:12px;color:#64748b">'+{txt_coupon_hint}+'</p>' +
             '</div>'
           : '';
 
@@ -891,7 +903,7 @@ def _build_embed_js(cfg: dict) -> str:
           '    <p style="color:#166534;font-weight:700;font-size:15px;margin:0 0 12px">' + C.success_message + '</p>' +
           couponPlaceholder +
           '  </div>' +
-          '  <p id="hb-popup-fine">Respetamos tu privacidad. Puedes darte de baja cuando quieras.</p>' +
+          '  <p id="hb-popup-fine">'+{txt_privacy}+'</p>' +
           '</div>'
         );
       }}
@@ -1008,6 +1020,25 @@ def _build_embed_js(cfg: dict) -> str:
           }}
         }}
 
+        function setCouponUI(code) {{
+          if (!code) return;
+          document.querySelectorAll('.hb-coupon-code-display').forEach(function(el) {{
+            el.textContent = code;
+          }});
+          var discountUrl = 'https://www.happylapiz.cl/discount/' + encodeURIComponent(code) + '?redirect=%2F';
+          document.querySelectorAll('.hb-coupon-link').forEach(function(linkEl) {{
+            linkEl.href = discountUrl;
+            if (!linkEl.dataset.hbBound) {{
+              linkEl.dataset.hbBound = '1';
+              linkEl.addEventListener('click', function() {{
+                try {{ localStorage.setItem('hb_coupon_activated', '1'); }} catch(e) {{}}
+              }});
+            }}
+          }});
+          var successBox = document.querySelector('#hb-popup-success .hb-coupon-box');
+          if (successBox) successBox.style.display = 'block';
+        }}
+
         function mergeRegaladosIntoPayload() {{
           var stepCfgs = (C.steps && C.steps.length > 0) ? C.steps : [];
           var regaladoStepIdx = -1;
@@ -1070,18 +1101,20 @@ def _build_embed_js(cfg: dict) -> str:
 
         document.addEventListener('click', function handler(e) {{
           // Copy coupon button
-          var copyBtn = e.target.closest('#hb-copy-btn');
+          var copyBtn = e.target.closest('.hb-copy-btn');
           if (copyBtn) {{
-            var codeEl = document.getElementById('hb-coupon-code');
+            var box = copyBtn.closest('.hb-coupon-box') || copyBtn.parentElement;
+            var codeEl = box ? box.querySelector('.hb-coupon-code-display') : null;
             var code = codeEl ? codeEl.textContent.trim() : '';
             if (code) {{
+              var copyLabel = {txt_copy_btn};
               var done = function() {{
                 copyBtn.textContent = '¡Copiado!';
                 copyBtn.style.background = '#16a34a';
                 copyBtn.style.borderColor = '#16a34a';
                 copyBtn.style.color = '#fff';
                 setTimeout(function() {{
-                  copyBtn.textContent = 'Copiar';
+                  copyBtn.textContent = copyLabel;
                   copyBtn.style.background = 'none';
                   copyBtn.style.borderColor = '';
                   copyBtn.style.color = '';
@@ -1114,7 +1147,7 @@ def _build_embed_js(cfg: dict) -> str:
             clearRegaladoFields(addStepEl);
             updateRegaladosBadge(addStepIdx);
             var prevLabel = addRegBtn.textContent;
-            addRegBtn.textContent = '✓ Agregado — completa el siguiente';
+            addRegBtn.textContent = {txt_add_regalado_ok};
             setTimeout(function() {{ addRegBtn.textContent = prevLabel; }}, 2200);
             return;
           }}
@@ -1150,10 +1183,15 @@ def _build_embed_js(cfg: dict) -> str:
             headers: {{ 'Content-Type': 'application/json' }},
             body: JSON.stringify(payload),
           }})
-          .then(function(r) {{ return r.json(); }})
+          .then(function(r) {{
+            return r.json().then(function(data) {{
+              if (!r.ok) throw new Error((data && data.detail) ? String(data.detail) : 'submit_failed');
+              return data;
+            }});
+          }})
           .then(function(res) {{
-            var code = res.coupon_code || C.coupon_code || '';
             if (res.already_submitted) {{
+              var code = res.coupon_code || C.coupon_code || '';
               btn.disabled = false;
               btn.textContent = C.button_text;
               document.getElementById('hb-popup-form').style.display = 'none';
@@ -1165,10 +1203,19 @@ def _build_embed_js(cfg: dict) -> str:
                   (code ? '<p style="font-size:13px;color:#555;margin:0">Tu cupón: <strong style="color:' + btnBg + ';font-size:18px;letter-spacing:2px">' + code + '</strong></p>' : '');
                 sucEl.style.display = 'block';
               }}
+              if (code) setCouponUI(code);
               _ls.setItem(STORE_KEY, 'submitted');
               setTimeout(closePopup, 6000);
               return;
             }}
+            if (!res.ok) {{
+              btn.disabled = false;
+              btn.textContent = C.button_text;
+              btn.style.background = '#dc2626';
+              setTimeout(function() {{ btn.style.background = ''; }}, 3000);
+              return;
+            }}
+            var code = res.coupon_code || C.coupon_code || '';
             // Check if there's a coupon step to advance to
             var couponStepIdx = -1;
             if (C.steps && C.steps.length > 0) {{
@@ -1177,30 +1224,17 @@ def _build_embed_js(cfg: dict) -> str:
               }}
             }}
             if (couponStepIdx >= 0) {{
-              // Advance to coupon step (step is inside the form — do NOT hide the form)
               advanceStep(couponStepIdx);
               if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
-              if (code) {{
-                var codeEl = document.getElementById('hb-coupon-code');
-                if (codeEl) codeEl.textContent = code;
-                var linkEl = document.getElementById('hb-coupon-link');
-                if (linkEl) {{
-                  linkEl.href = 'https://happylapiz.cl/discount/' + encodeURIComponent(code) + '?redirect=%2F';
-                  linkEl.addEventListener('click', function() {{ try {{ localStorage.setItem('hb_coupon_activated','1'); }} catch(e) {{}} }});
-                }}
-              }}
+              btn.disabled = false;
+              btn.textContent = C.button_text;
+              if (code) setCouponUI(code);
             }} else {{
-              // No coupon step: show regular success screen
               document.getElementById('hb-popup-form').style.display = 'none';
               if (document.getElementById('hb-popup-progress')) document.getElementById('hb-popup-progress').style.display = 'none';
               var suc = document.getElementById('hb-popup-success');
               if (suc) suc.style.display = 'block';
-              if (code) {{
-                var box2 = document.getElementById('hb-coupon-box');
-                var codeEl2 = document.getElementById('hb-coupon-code');
-                if (box2) box2.style.display = 'block';
-                if (codeEl2) codeEl2.textContent = code;
-              }}
+              if (code) setCouponUI(code);
             }}
             _ls.setItem(STORE_KEY, 'submitted');
             setTimeout(closePopup, 10000);

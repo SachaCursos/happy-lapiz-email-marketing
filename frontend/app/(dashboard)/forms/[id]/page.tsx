@@ -30,6 +30,12 @@ const DEFAULT_DESIGN: FormDesign = {
   input_border: "#e2e8f0",
   border_radius: 16,
   font: "system-ui",
+  coupon_label: "Tu cupón",
+  copy_button_text: "Copiar",
+  coupon_hint: "Úsalo en tu próxima compra",
+  privacy_text: "Respetamos tu privacidad. Puedes darte de baja cuando quieras.",
+  add_regalado_button_text: "+ Agregar otro regalado",
+  add_regalado_added_text: "✓ Agregado — completa el siguiente",
 };
 
 const HAPPY_LAPIZ_DESIGN: FormDesign = {
@@ -321,6 +327,71 @@ function DesignEditor({
       </div>
 
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+        <p className="text-sm font-semibold text-gray-700">Textos del popup</p>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">Etiqueta del cupón</label>
+          <input
+            type="text"
+            value={design.coupon_label ?? ""}
+            onChange={(e) => set("coupon_label", e.target.value)}
+            placeholder="Tu cupón"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+        </div>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">Botón copiar cupón</label>
+          <input
+            type="text"
+            value={design.copy_button_text ?? ""}
+            onChange={(e) => set("copy_button_text", e.target.value)}
+            placeholder="Copiar"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+        </div>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">Texto debajo del cupón</label>
+          <input
+            type="text"
+            value={design.coupon_hint ?? ""}
+            onChange={(e) => set("coupon_hint", e.target.value)}
+            placeholder="Úsalo en tu próxima compra"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+        </div>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">Texto de privacidad (pie)</label>
+          <input
+            type="text"
+            value={design.privacy_text ?? ""}
+            onChange={(e) => set("privacy_text", e.target.value)}
+            placeholder="Respetamos tu privacidad..."
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+        </div>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">Botón agregar regalado (por defecto)</label>
+          <input
+            type="text"
+            value={design.add_regalado_button_text ?? ""}
+            onChange={(e) => set("add_regalado_button_text", e.target.value)}
+            placeholder="+ Agregar otro regalado"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <p className="text-xs text-gray-400 mt-1">Personalizable por paso. Si está vacío, se usa el texto de la pestaña Diseño.</p>
+        </div>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">Confirmación al agregar regalado</label>
+          <input
+            type="text"
+            value={design.add_regalado_added_text ?? ""}
+            onChange={(e) => set("add_regalado_added_text", e.target.value)}
+            placeholder="✓ Agregado — completa el siguiente"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
         <p className="text-sm font-semibold text-gray-700">Tipografía</p>
         <div>
           <label className="text-sm text-gray-600 block mb-1.5">Fuente</label>
@@ -548,7 +619,7 @@ function StepsEditor({
                   />
                 </div>
                 {!step.coupon_step && stepHasRegaladoFields(step) && (
-                  <div className="col-span-2">
+                  <div className="col-span-2 space-y-3">
                     <label className="flex items-center gap-3 cursor-pointer bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
                       <input
                         type="checkbox"
@@ -559,10 +630,22 @@ function StepsEditor({
                       <div>
                         <p className="text-sm font-medium text-violet-900">Permitir agregar varios regalados</p>
                         <p className="text-xs text-violet-700 mt-0.5">
-                          Muestra el botón &quot;Agregar otro regalado&quot; en el paso 2. Cada regalado se guarda en la base de datos.
+                          Muestra un botón secundario para guardar el regalado actual y agregar otro.
                         </p>
                       </div>
                     </label>
+                    {step.allow_multiple_regalados && (
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Texto del botón (opcional — usa el del diseño si está vacío)</label>
+                        <input
+                          type="text"
+                          value={step.add_regalado_button_text ?? ""}
+                          onChange={(e) => updateStep(idx, { add_regalado_button_text: e.target.value || undefined })}
+                          placeholder="Ej: Añadir otro niño"
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
                 {!step.coupon_step && (

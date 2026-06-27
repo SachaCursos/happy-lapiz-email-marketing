@@ -161,6 +161,13 @@ export interface FormDesign {
   input_border: string;
   border_radius: number;
   font: string;
+  /** Textos personalizables del popup */
+  coupon_label?: string;
+  copy_button_text?: string;
+  coupon_hint?: string;
+  privacy_text?: string;
+  add_regalado_button_text?: string;
+  add_regalado_added_text?: string;
 }
 
 export interface FormStep {
@@ -170,7 +177,9 @@ export interface FormStep {
   fields: string[];
   button_text: string;
   coupon_step?: boolean;   // last step shown after submit, displays the generated coupon
-  allow_multiple_regalados?: boolean;  // step 2: "Agregar otro regalado" button
+  allow_multiple_regalados?: boolean;
+  /** Texto del botón para agregar otro regalado (sobreescribe el del diseño) */
+  add_regalado_button_text?: string;
 }
 
 export interface AbFormVariant {
