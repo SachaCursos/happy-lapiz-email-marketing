@@ -376,8 +376,40 @@ def _ensure_shopify_products_table() -> None:
                 "UNIQUE (shopify_id)"
             ))
 
+        _repair_shopify_products_id_sequence(conn)
 
-def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict], str | None]:
+
+def _repair_shopify_products_id_sequence(conn) -> None:
+    """Ensure shopify_products.id auto-increments (legacy tables may lack SERIAL default)."""
+    has_id = conn.execute(text(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_name = 'shopify_products' AND column_name = 'id'"
+    )).scalar()
+    if not has_id:
+        return
+
+    seq = conn.execute(text(
+        "SELECT pg_get_serial_sequence('shopify_products', 'id')"
+    )).scalar()
+
+    if not seq:
+        conn.execute(text("CREATE SEQUENCE IF NOT EXISTS shopify_products_id_seq"))
+        conn.execute(text(
+            "ALTER TABLE shopify_products "
+            "ALTER COLUMN id SET DEFAULT nextval('shopify_products_id_seq')"
+        ))
+        conn.execute(text(
+            "ALTER SEQUENCE shopify_products_id_seq OWNED BY shopify_products.id"
+        ))
+        seq = "shopify_products_id_seq"
+
+    max_id = conn.execute(text(
+        "SELECT MAX(id) FROM shopify_products"
+    )).scalar()
+    if max_id is None:
+        conn.execute(text(f"SELECT setval('{seq}', 1, false)"))
+    else:
+        conn.execute(text(f"SELECT setval('{seq}', :max_id, true)"), {"max_id": int(max_id)})
     """Fetch active products from Shopify Admin GraphQL (includes totalInventory)."""
     gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
     headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}

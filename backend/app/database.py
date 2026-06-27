@@ -136,6 +136,17 @@ def _run_migrations():
         )""",
         "CREATE INDEX IF NOT EXISTS idx_evergreen_enrollments_due ON evergreen_enrollments(status, next_send_at)",
         "ALTER TABLE shopify_products ADD COLUMN IF NOT EXISTS inventory_total INTEGER NOT NULL DEFAULT 0",
+        """DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'shopify_products' AND column_name = 'id'
+            ) AND pg_get_serial_sequence('shopify_products', 'id') IS NULL THEN
+                CREATE SEQUENCE IF NOT EXISTS shopify_products_id_seq;
+                ALTER TABLE shopify_products
+                    ALTER COLUMN id SET DEFAULT nextval('shopify_products_id_seq');
+                ALTER SEQUENCE shopify_products_id_seq OWNED BY shopify_products.id;
+            END IF;
+        END $$""",
         """CREATE TABLE IF NOT EXISTS automation_calendar_state (
             automation_id INTEGER NOT NULL,
             month_key VARCHAR(7) NOT NULL,
