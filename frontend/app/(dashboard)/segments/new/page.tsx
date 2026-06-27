@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { segmentsApi, contactsApi } from "@/lib/api";
-import { SegmentConditions, SegmentRule } from "@/lib/types";
+import { segmentsApi, contactsApi, formsApi } from "@/lib/api";
+import { SegmentConditions, SegmentRule, SignupForm } from "@/lib/types";
 import { ArrowLeft, Plus, Trash2, Search, X, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -22,6 +22,7 @@ const FIELDS = [
   { value: "ultima_visita",        label: "Última visita web",      type: "date" },
   { value: "smile_points",         label: "Puntos de fidelidad",    type: "number" },
   { value: "has_gift_recipient",   label: "Tiene regalado registrado", type: "boolean" },
+  { value: "has_form_submission",  label: "Rellenó formulario",        type: "form_submission" },
 ];
 
 const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
@@ -48,6 +49,24 @@ const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
 
 function emptyRule(): SegmentRule {
   return { field: "orders_count", op: "gte", value: 1 };
+}
+
+function defaultFormSubmissionValue(formId?: number): { form_id: number; submitted: boolean } {
+  return { form_id: formId ?? 1, submitted: false };
+}
+
+function parseFormSubmissionValue(
+  value: unknown,
+  defaultFormId?: number,
+): { form_id: number; submitted: boolean } {
+  if (value && typeof value === "object" && "form_id" in value) {
+    const v = value as { form_id?: unknown; submitted?: unknown };
+    return {
+      form_id: Number(v.form_id) || defaultFormId || 1,
+      submitted: v.submitted === true || v.submitted === "true",
+    };
+  }
+  return defaultFormSubmissionValue(defaultFormId);
 }
 
 interface ContactOption { id: number; name: string; email: string; }
@@ -145,6 +164,13 @@ export default function NewSegmentPage() {
   const [description, setDescription] = useState("");
   const [mode, setMode] = useState<"conditions" | "manual">("conditions");
   const [operator, setOperator] = useState<"AND" | "OR">("AND");
+  const { data: signupForms = [] } = useQuery<SignupForm[]>({
+    queryKey: ["forms"],
+    queryFn: () => formsApi.list().then((r) => r.data),
+    staleTime: 60_000,
+  });
+
+  const defaultFormId = signupForms[0]?.id;
   const [rules, setRules] = useState<SegmentRule[]>([emptyRule()]);
   const [manualContacts, setManualContacts] = useState<ContactOption[]>([]);
 
@@ -260,27 +286,84 @@ export default function NewSegmentPage() {
               {rules.map((rule, i) => {
                 const fieldType = getFieldType(rule.field);
                 const ops = OPS_BY_TYPE[fieldType] ?? OPS_BY_TYPE.string;
+                const formSubmissionValue = parseFormSubmissionValue(rule.value, defaultFormId);
                 return (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex items-center gap-2 flex-wrap">
                     <select
                       value={rule.field}
-                      onChange={(e) => updateRule(i, { field: e.target.value, op: OPS_BY_TYPE[getFieldType(e.target.value)]?.[0]?.value ?? "eq", value: "" })}
+                      onChange={(e) => {
+                        const nextField = e.target.value;
+                        const nextType = getFieldType(nextField);
+                        const nextValue =
+                          nextField === "has_form_submission"
+                            ? defaultFormSubmissionValue(defaultFormId)
+                            : nextType === "boolean"
+                              ? true
+                              : "";
+                        updateRule(i, {
+                          field: nextField,
+                          op: OPS_BY_TYPE[nextType]?.[0]?.value ?? "eq",
+                          value: nextValue,
+                        });
+                      }}
                       className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
                     >
                       {FIELDS.map((f) => (
                         <option key={f.value} value={f.value}>{f.label}</option>
                       ))}
                     </select>
-                    <select
-                      value={rule.op}
-                      onChange={(e) => updateRule(i, { op: e.target.value })}
-                      className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
-                    >
-                      {ops.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                    {fieldType === "boolean" ? (
+                    {fieldType !== "form_submission" && (
+                      <select
+                        value={rule.op}
+                        onChange={(e) => updateRule(i, { op: e.target.value })}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                      >
+                        {ops.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    {fieldType === "form_submission" ? (
+                      <>
+                        <select
+                          value={formSubmissionValue.form_id}
+                          onChange={(e) =>
+                            updateRule(i, {
+                              op: "eq",
+                              value: {
+                                ...formSubmissionValue,
+                                form_id: Number(e.target.value),
+                              },
+                            })
+                          }
+                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white min-w-[180px]"
+                        >
+                          {signupForms.length === 0 ? (
+                            <option value={1}>Cargando formularios…</option>
+                          ) : (
+                            signupForms.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))
+                          )}
+                        </select>
+                        <select
+                          value={formSubmissionValue.submitted ? "true" : "false"}
+                          onChange={(e) =>
+                            updateRule(i, {
+                              op: "eq",
+                              value: {
+                                ...formSubmissionValue,
+                                submitted: e.target.value === "true",
+                              },
+                            })
+                          }
+                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                        >
+                          <option value="true">Sí, lo rellenó</option>
+                          <option value="false">No, no lo ha rellenado</option>
+                        </select>
+                      </>
+                    ) : fieldType === "boolean" ? (
                       <select
                         value={String(rule.value)}
                         onChange={(e) => updateRule(i, { value: e.target.value === "true" })}

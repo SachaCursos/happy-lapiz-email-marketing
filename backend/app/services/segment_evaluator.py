@@ -63,6 +63,33 @@ def _build_clause(node: dict) -> Optional[Any]:
         else:
             return text("contacts.email NOT IN (SELECT email FROM gift_recipients)")
 
+    # Condición especial: rellenó (o no) un formulario concreto
+    # value: { "form_id": 1, "submitted": true|false }
+    if field == "has_form_submission":
+        if not isinstance(value, dict):
+            return None
+        try:
+            form_id = int(value.get("form_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if form_id <= 0:
+            return None
+        submitted_raw = value.get("submitted", True)
+        if isinstance(submitted_raw, str):
+            submitted = submitted_raw.lower() in ("true", "1", "yes", "sí", "si")
+        else:
+            submitted = bool(submitted_raw)
+        subq = (
+            "SELECT DISTINCT LOWER(email) FROM form_submissions WHERE form_id = :form_id"
+        )
+        if submitted:
+            return text(
+                f"LOWER(contacts.email) IN ({subq})"
+            ).bindparams(form_id=form_id)
+        return text(
+            f"LOWER(contacts.email) NOT IN ({subq})"
+        ).bindparams(form_id=form_id)
+
     # Soporte para custom_fields.{clave} — p. ej. custom_fields.es_mama
     if field and field.startswith("custom_fields."):
         key = field[len("custom_fields."):]
