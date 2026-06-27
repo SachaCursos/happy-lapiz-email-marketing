@@ -141,12 +141,21 @@ export interface CampaignConversions {
 
 export type EvergreenStatus = "active" | "paused";
 
+export interface EvergreenStep {
+  step: number;
+  delay_hours: number;
+  subject: string;
+  template_id: number;
+  preview_text?: string | null;
+}
+
 export interface EvergreenCampaign {
   id: number;
   name: string;
   subject: string;
   preview_text: string | null;
   template_id: number;
+  steps: EvergreenStep[] | null;
   segment_id: number | null;
   exclude_segment_ids: number[] | null;
   sort_order: number;

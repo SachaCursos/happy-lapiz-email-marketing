@@ -105,8 +105,8 @@ export default function EvergreenPage() {
 
       {runNowMutation.isSuccess && (
         <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
-          Job ejecutado: {runNowMutation.data?.data?.sent ?? 0} envíos realizados de{" "}
-          {runNowMutation.data?.data?.contacts_checked ?? 0} contactos revisados.
+          Job ejecutado: {(runNowMutation.data?.data?.entry?.sent ?? 0)} inicios +{" "}
+          {(runNowMutation.data?.data?.followups?.sent ?? 0)} seguimientos enviados.
         </div>
       )}
 
@@ -184,6 +184,9 @@ export default function EvergreenPage() {
                     </span>
                   ) : (
                     <span>Una sola vez</span>
+                  )}
+                  {(eg.steps?.length ?? 1) > 1 && (
+                    <span>{eg.steps!.length} correos en secuencia</span>
                   )}
                 </div>
                 <div className="mt-2">

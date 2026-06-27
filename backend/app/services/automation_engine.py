@@ -1477,8 +1477,9 @@ def start_scheduler() -> None:
             try:
                 _run_with_timeout(run_automations, 120, "run_automations")
                 _run_with_timeout(run_scheduled_campaigns, 120, "run_scheduled_campaigns")
-                from app.services.evergreen_engine import run_evergreen_campaigns
+                from app.services.evergreen_engine import run_evergreen_campaigns, process_evergreen_followups
                 _run_with_timeout(run_evergreen_campaigns, 300, "run_evergreen_campaigns")
+                _run_with_timeout(process_evergreen_followups, 120, "evergreen_followups")
                 _run_with_timeout(sync_contacts_from_shopify_orders, 90, "sync_shopify")
             except Exception as exc:
                 logger.exception("Automation scheduler error: %s", exc)

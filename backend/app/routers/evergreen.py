@@ -16,6 +16,7 @@ from app.models.evergreen import (
     EvergreenCampaignUpdate,
     EvergreenSend,
     EvergreenStats,
+    normalize_evergreen_steps,
 )
 from app.models.template import Template
 from app.models.user import User
@@ -27,7 +28,7 @@ from app.services.email_sender import (
     render_template_text,
     uses_regalado_vars,
 )
-from app.services.evergreen_engine import run_evergreen_campaigns
+from app.services.evergreen_engine import run_evergreen_campaigns, process_evergreen_followups
 
 router = APIRouter()
 
@@ -54,6 +55,13 @@ def create_evergreen(
 ):
     max_order = session.exec(select(func.max(EvergreenCampaign.sort_order))).one() or 0
     data = payload.model_dump()
+    steps = normalize_evergreen_steps(
+        data["subject"],
+        data["template_id"],
+        data.get("preview_text"),
+        data.get("steps"),
+    )
+    data["steps"] = steps
     eg = EvergreenCampaign(**data, sort_order=max_order + 1, created_by=current_user.id)
     session.add(eg)
     session.commit()
@@ -81,7 +89,9 @@ def reorder_evergreen(
 @router.post("/run-now")
 def run_evergreen_now(_: User = Depends(require_editor)):
     """Manual trigger for the daily evergreen dispatcher (admin/debug)."""
-    return run_evergreen_campaigns(force=True)
+    entry = run_evergreen_campaigns(force=True)
+    followups = process_evergreen_followups()
+    return {"entry": entry, "followups": followups}
 
 
 @router.get("/{evergreen_id}", response_model=EvergreenCampaignRead)
@@ -106,8 +116,16 @@ def update_evergreen(
     eg = session.get(EvergreenCampaign, evergreen_id)
     if not eg:
         raise HTTPException(status_code=404, detail="Campaña evergreen no encontrada")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    for k, v in updates.items():
         setattr(eg, k, v)
+    if any(k in updates for k in ("subject", "template_id", "preview_text", "steps")):
+        eg.steps = normalize_evergreen_steps(
+            eg.subject,
+            eg.template_id,
+            eg.preview_text,
+            eg.steps,
+        )
     from datetime import datetime
     eg.updated_at = datetime.utcnow()
     session.add(eg)

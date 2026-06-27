@@ -7,6 +7,12 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { evergreenApi, segmentsApi, templatesApi } from "@/lib/api";
 import { EvergreenCampaign, EvergreenStats, Segment, Template } from "@/lib/types";
+import {
+  EvergreenFollowUpSteps,
+  EvergreenStepForm,
+  buildStepsPayload,
+  followUpsFromSteps,
+} from "@/components/EvergreenFollowUpSteps";
 
 export default function EvergreenDetailPage({ params }: { params: { id: string } }) {
   const id = parseInt(params.id);
@@ -33,6 +39,7 @@ export default function EvergreenDetailPage({ params }: { params: { id: string }
     queryFn: () => templatesApi.list().then((r) => r.data),
   });
 
+  const [followUps, setFollowUps] = useState<EvergreenStepForm[]>([]);
   const [form, setForm] = useState({
     name: "",
     subject: "",
@@ -62,6 +69,7 @@ export default function EvergreenDetailPage({ params }: { params: { id: string }
         require_open_in_last_n: eg.require_open_in_last_n,
         status: eg.status,
       });
+      setFollowUps(followUpsFromSteps(eg.steps));
     }
   }, [eg]);
 
@@ -72,6 +80,12 @@ export default function EvergreenDetailPage({ params }: { params: { id: string }
         subject: form.subject,
         preview_text: form.preview_text || undefined,
         template_id: form.template_id,
+        steps: buildStepsPayload(
+          form.subject,
+          form.template_id,
+          form.preview_text,
+          followUps,
+        ),
         segment_id: form.segment_id || null,
         exclude_segment_ids: form.exclude_segment_ids.length
           ? form.exclude_segment_ids
@@ -142,7 +156,7 @@ export default function EvergreenDetailPage({ params }: { params: { id: string }
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Asunto</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Asunto del 1.er correo</label>
           <input
             value={form.subject}
             onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}
@@ -151,7 +165,7 @@ export default function EvergreenDetailPage({ params }: { params: { id: string }
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla del 1.er correo</label>
           <select
             value={form.template_id}
             onChange={(e) => setForm((f) => ({ ...f, template_id: Number(e.target.value) }))}
@@ -205,6 +219,12 @@ export default function EvergreenDetailPage({ params }: { params: { id: string }
             </div>
           </div>
         )}
+
+        <EvergreenFollowUpSteps
+          followUps={followUps}
+          onChange={setFollowUps}
+          templates={templates}
+        />
 
         <div className="grid sm:grid-cols-2 gap-4">
           <div>

@@ -122,6 +122,19 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS idx_evergreen_sends_evergreen ON evergreen_sends(evergreen_id)",
         "CREATE INDEX IF NOT EXISTS idx_evergreen_sends_contact ON evergreen_sends(contact_id)",
         "CREATE INDEX IF NOT EXISTS idx_evergreen_sends_resend ON evergreen_sends(resend_id)",
+        "ALTER TABLE evergreen_campaigns ADD COLUMN IF NOT EXISTS steps JSONB",
+        "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS step_number INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS enrollment_id INTEGER",
+        """CREATE TABLE IF NOT EXISTS evergreen_enrollments (
+            id SERIAL PRIMARY KEY,
+            evergreen_id INTEGER NOT NULL REFERENCES evergreen_campaigns(id),
+            contact_id INTEGER NOT NULL REFERENCES contacts(id),
+            started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            next_step INTEGER NOT NULL DEFAULT 2,
+            next_send_at TIMESTAMP NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'active'
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_evergreen_enrollments_due ON evergreen_enrollments(status, next_send_at)",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

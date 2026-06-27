@@ -12,7 +12,12 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.database import engine
 from app.models.contact import Contact
-from app.models.evergreen import EvergreenCampaign, EvergreenSend
+from app.models.evergreen import (
+    EvergreenCampaign,
+    EvergreenEnrollment,
+    EvergreenSend,
+    get_evergreen_steps,
+)
 from app.models.segment import Segment
 from app.models.template import Template
 from app.services.email_sender import (
@@ -119,42 +124,63 @@ def _in_segment(session: Session, contact: Contact, eg: EvergreenCampaign) -> bo
     return True
 
 
-def _already_received_evergreen(
+def _has_active_enrollment(session: Session, evergreen_id: int, contact_id: int) -> bool:
+    row = session.exec(
+        select(EvergreenEnrollment).where(
+            EvergreenEnrollment.evergreen_id == evergreen_id,
+            EvergreenEnrollment.contact_id == contact_id,
+            EvergreenEnrollment.status == "active",
+        )
+    ).first()
+    return row is not None
+
+
+def _can_start_evergreen_cycle(
     session: Session,
-    evergreen_id: int,
+    eg: EvergreenCampaign,
     contact_id: int,
-    allow_resend: bool,
-    resend_after_days: int | None,
 ) -> bool:
-    sends = session.exec(
+    if _has_active_enrollment(session, eg.id, contact_id):
+        return False
+
+    step1_sends = session.exec(
         select(EvergreenSend)
         .where(
-            EvergreenSend.evergreen_id == evergreen_id,
+            EvergreenSend.evergreen_id == eg.id,
             EvergreenSend.contact_id == contact_id,
+            EvergreenSend.step_number == 1,
             EvergreenSend.status != "failed",
         )
         .order_by(EvergreenSend.sent_at.desc())
     ).all()
-    if not sends:
-        return False
-    if not allow_resend:
+    if not step1_sends:
         return True
-    if resend_after_days is None:
+    if not eg.allow_resend:
         return False
-    last = sends[0].sent_at
+    if eg.resend_after_days is None:
+        return True
+    last = step1_sends[0].sent_at
     if not last:
-        return True
-    cutoff = datetime.utcnow() - timedelta(days=resend_after_days)
-    return last > cutoff
+        return False
+    cutoff = datetime.utcnow() - timedelta(days=eg.resend_after_days)
+    return last <= cutoff
 
 
-def _send_evergreen_email(
+def _send_evergreen_step(
     session: Session,
     eg: EvergreenCampaign,
     contact: Contact,
-    tpl: Template,
+    step_cfg: dict,
+    *,
+    step_number: int,
+    enrollment_id: int | None = None,
 ) -> EvergreenSend | None:
-    regalado = uses_regalado_vars(tpl.html_content, eg.subject)
+    tpl = session.get(Template, int(step_cfg["template_id"]))
+    if not tpl or not tpl.html_content:
+        return None
+
+    subject_raw = step_cfg["subject"]
+    regalado = uses_regalado_vars(tpl.html_content, subject_raw)
     vars_ = build_contact_template_vars(
         contact,
         session=session,
@@ -170,7 +196,7 @@ def _send_evergreen_email(
         contact.email,
     )
     subject = render_template_text(
-        eg.subject,
+        subject_raw,
         contact,
         vars_=vars_,
         preprocess_regalado=regalado,
@@ -179,6 +205,8 @@ def _send_evergreen_email(
     send = EvergreenSend(
         evergreen_id=eg.id,
         contact_id=contact.id,
+        enrollment_id=enrollment_id,
+        step_number=step_number,
         status="queued",
     )
     session.add(send)
@@ -196,6 +224,7 @@ def _send_evergreen_email(
             "tags": [
                 {"name": "evergreen_id", "value": str(eg.id)},
                 {"name": "contact_id", "value": str(contact.id)},
+                {"name": "evergreen_step", "value": str(step_number)},
             ],
         })
         resend_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
@@ -206,18 +235,137 @@ def _send_evergreen_email(
         session.commit()
         return send
     except Exception as exc:
-        logger.error("Evergreen %d send failed for %s: %s", eg.id, contact.email, exc)
+        logger.error(
+            "Evergreen %d step %d failed for %s: %s",
+            eg.id, step_number, contact.email, exc,
+        )
         send.status = "failed"
         session.add(send)
         session.commit()
         return None
 
 
+def _start_evergreen_cycle(
+    session: Session,
+    eg: EvergreenCampaign,
+    contact: Contact,
+    steps: list[dict],
+) -> bool:
+    """Send step 1 and enroll for follow-ups if configured."""
+    result = _send_evergreen_step(session, eg, contact, steps[0], step_number=1)
+    if not result or result.status != "sent":
+        return False
+
+    if len(steps) > 1:
+        delay = float(steps[1].get("delay_hours", 24))
+        enrollment = EvergreenEnrollment(
+            evergreen_id=eg.id,
+            contact_id=contact.id,
+            started_at=result.sent_at or datetime.utcnow(),
+            next_step=2,
+            next_send_at=(result.sent_at or datetime.utcnow()) + timedelta(hours=delay),
+            status="active",
+        )
+        session.add(enrollment)
+        session.commit()
+    return True
+
+
+def process_evergreen_followups() -> dict:
+    """Send step 2/3 follow-ups when their delay since step 1 has elapsed."""
+    stats = {"checked": 0, "sent": 0, "errors": 0}
+    now = datetime.utcnow()
+
+    with Session(engine) as session:
+        due = session.exec(
+            select(EvergreenEnrollment)
+            .where(
+                EvergreenEnrollment.status == "active",
+                EvergreenEnrollment.next_send_at <= now,
+            )
+        ).all()
+        if not due:
+            return stats
+
+        eg_ids = {e.evergreen_id for e in due}
+        campaigns = {
+            c.id: c
+            for c in session.exec(
+                select(EvergreenCampaign).where(EvergreenCampaign.id.in_(eg_ids))
+            ).all()
+        }
+
+    for enrollment in due:
+        stats["checked"] += 1
+        try:
+            with Session(engine) as session:
+                eg = campaigns.get(enrollment.evergreen_id)
+                if not eg or eg.status != "active":
+                    en = session.get(EvergreenEnrollment, enrollment.id)
+                    if en:
+                        en.status = "completed"
+                        session.add(en)
+                        session.commit()
+                    continue
+
+                contact = session.get(Contact, enrollment.contact_id)
+                if not contact or not contact.opted_in:
+                    en = session.get(EvergreenEnrollment, enrollment.id)
+                    if en:
+                        en.status = "completed"
+                        session.add(en)
+                        session.commit()
+                    continue
+
+                steps = get_evergreen_steps(eg)
+                step_idx = enrollment.next_step - 1
+                if step_idx >= len(steps):
+                    en = session.get(EvergreenEnrollment, enrollment.id)
+                    if en:
+                        en.status = "completed"
+                        session.add(en)
+                        session.commit()
+                    continue
+
+                step_cfg = steps[step_idx]
+                result = _send_evergreen_step(
+                    session,
+                    eg,
+                    contact,
+                    step_cfg,
+                    step_number=enrollment.next_step,
+                    enrollment_id=enrollment.id,
+                )
+                if not result or result.status != "sent":
+                    continue
+
+                stats["sent"] += 1
+                en = session.get(EvergreenEnrollment, enrollment.id)
+                if not en:
+                    continue
+
+                next_step_num = enrollment.next_step + 1
+                if next_step_num <= len(steps):
+                    next_cfg = steps[next_step_num - 1]
+                    delay_from_start = float(next_cfg.get("delay_hours", 0))
+                    en.next_step = next_step_num
+                    en.next_send_at = en.started_at + timedelta(hours=delay_from_start)
+                else:
+                    en.status = "completed"
+                session.add(en)
+                session.commit()
+                time.sleep(RATE_DELAY)
+        except Exception as exc:
+            stats["errors"] += 1
+            logger.exception("Evergreen follow-up error enrollment %d: %s", enrollment.id, exc)
+
+    return stats
+
+
 def run_evergreen_campaigns(force: bool = False) -> dict:
     """
     Daily job: for each inactive contact (>= min_days since any email),
-    send the highest-priority eligible evergreen they haven't received.
-    Runs at most once per UTC day unless force=True.
+    send step 1 of the highest-priority eligible evergreen they haven't started.
     """
     global _last_evergreen_run_date
     today = datetime.utcnow().date()
@@ -240,12 +388,6 @@ def run_evergreen_campaigns(force: bool = False) -> dict:
             select(Contact).where(Contact.opted_in == True)  # noqa: E712
         ).all()
 
-        template_ids = {c.template_id for c in campaigns}
-        templates = {
-            t.id: t
-            for t in session.exec(select(Template).where(Template.id.in_(template_ids))).all()
-        }
-
     for contact in contacts:
         stats["contacts_checked"] += 1
         try:
@@ -264,26 +406,17 @@ def run_evergreen_campaigns(force: bool = False) -> dict:
                     ):
                         continue
 
-                    if _already_received_evergreen(
-                        session,
-                        eg.id,
-                        contact.id,
-                        eg.allow_resend,
-                        eg.resend_after_days,
-                    ):
+                    if not _can_start_evergreen_cycle(session, eg, contact.id):
                         continue
 
-                    tpl = templates.get(eg.template_id)
-                    if not tpl or not tpl.html_content:
-                        continue
-
-                    result = _send_evergreen_email(session, eg, contact, tpl)
-                    if result and result.status == "sent":
+                    steps = get_evergreen_steps(eg)
+                    if _start_evergreen_cycle(session, eg, contact, steps):
                         stats["sent"] += 1
                         logger.info(
-                            "Evergreen '%s' sent to %s",
+                            "Evergreen '%s' step 1 sent to %s (%d steps)",
                             eg.name,
                             contact.email,
+                            len(steps),
                         )
                         time.sleep(RATE_DELAY)
                     break

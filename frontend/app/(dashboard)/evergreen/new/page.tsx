@@ -7,10 +7,16 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { evergreenApi, segmentsApi, templatesApi } from "@/lib/api";
 import { Segment, Template } from "@/lib/types";
+import {
+  EvergreenFollowUpSteps,
+  EvergreenStepForm,
+  buildStepsPayload,
+} from "@/components/EvergreenFollowUpSteps";
 
 export default function NewEvergreenPage() {
   const router = useRouter();
   const qc = useQueryClient();
+  const [followUps, setFollowUps] = useState<EvergreenStepForm[]>([]);
   const [form, setForm] = useState({
     name: "",
     subject: "",
@@ -42,6 +48,12 @@ export default function NewEvergreenPage() {
         subject: form.subject,
         preview_text: form.preview_text || undefined,
         template_id: form.template_id,
+        steps: buildStepsPayload(
+          form.subject,
+          form.template_id,
+          form.preview_text,
+          followUps,
+        ),
         segment_id: form.segment_id || null,
         exclude_segment_ids: form.exclude_segment_ids.length
           ? form.exclude_segment_ids
@@ -98,7 +110,7 @@ export default function NewEvergreenPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Asunto *</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Asunto del 1.er correo *</label>
           <input
             value={form.subject}
             onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}
@@ -108,7 +120,7 @@ export default function NewEvergreenPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla *</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla del 1.er correo *</label>
           <select
             value={form.template_id}
             onChange={(e) => setForm((f) => ({ ...f, template_id: Number(e.target.value) }))}
@@ -163,6 +175,12 @@ export default function NewEvergreenPage() {
             </div>
           </div>
         )}
+
+        <EvergreenFollowUpSteps
+          followUps={followUps}
+          onChange={setFollowUps}
+          templates={templates}
+        />
 
         <div className="border-t border-gray-100 pt-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-3">Reglas de envío</h3>
