@@ -41,6 +41,7 @@ export function buildStepsPayload(
       steps.push({
         ...fu,
         step: i + 2,
+        preview_text: fu.preview_text || undefined,
       });
     }
   });
@@ -152,6 +153,16 @@ export function EvergreenFollowUpSteps({ followUps, onChange, templates }: Props
               value={fu.subject}
               onChange={(e) => update(idx, { subject: e.target.value })}
               placeholder="Ej: ⏰ Solo quedan 24 horas para tu 20% OFF"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Preview text</label>
+            <input
+              value={fu.preview_text}
+              onChange={(e) => update(idx, { preview_text: e.target.value })}
+              placeholder="Ej: Tu cupón vence mañana — no te lo pierdas"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
           </div>

@@ -25,6 +25,7 @@ from app.services.email_sender import (
     _inject_footer,
     _unsub_headers,
     build_contact_template_vars,
+    inject_preheader,
     render_html,
     render_template_text,
     uses_regalado_vars,
@@ -201,6 +202,15 @@ def _send_evergreen_step(
         vars_=vars_,
         preprocess_regalado=regalado,
     )
+    preview_raw = step_cfg.get("preview_text") or ""
+    if preview_raw:
+        preview_text = render_template_text(
+            str(preview_raw),
+            contact,
+            vars_=vars_,
+            preprocess_regalado=regalado,
+        )
+        html = inject_preheader(html, preview_text)
 
     send = EvergreenSend(
         evergreen_id=eg.id,

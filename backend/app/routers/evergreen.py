@@ -24,10 +24,12 @@ from app.services.email_sender import (
     _inject_footer,
     _unsub_headers,
     build_contact_template_vars,
+    inject_preheader,
     render_html,
     render_template_text,
     uses_regalado_vars,
 )
+from app.models.evergreen import get_evergreen_steps
 from app.services.evergreen_engine import run_evergreen_campaigns, process_evergreen_followups
 
 router = APIRouter()
@@ -185,14 +187,16 @@ def send_test_evergreen(
     eg = session.get(EvergreenCampaign, evergreen_id)
     if not eg:
         raise HTTPException(status_code=404, detail="Campaña evergreen no encontrada")
-    tpl = session.get(Template, eg.template_id)
+    steps = get_evergreen_steps(eg)
+    step1 = steps[0]
+    tpl = session.get(Template, int(step1["template_id"]))
     if not tpl or not tpl.html_content:
         raise HTTPException(status_code=400, detail="Plantilla no encontrada")
 
     contact = session.exec(
         select(Contact).where(Contact.email == current_user.email.lower())
     ).first()
-    regalado = uses_regalado_vars(tpl.html_content, eg.subject)
+    regalado = uses_regalado_vars(tpl.html_content, step1["subject"])
 
     if contact:
         vars_ = build_contact_template_vars(
@@ -203,13 +207,19 @@ def send_test_evergreen(
             current_user.email,
         )
         subject = render_template_text(
-            eg.subject, contact, vars_=vars_, preprocess_regalado=regalado
+            step1["subject"], contact, vars_=vars_, preprocess_regalado=regalado
         )
+        preview_raw = step1.get("preview_text") or eg.preview_text or ""
+        if preview_raw:
+            preview_text = render_template_text(
+                str(preview_raw), contact, vars_=vars_, preprocess_regalado=regalado
+            )
+            html = inject_preheader(html, preview_text)
     else:
         from jinja2 import Template as JTemplate
         nombre = current_user.name or current_user.email.split("@")[0]
         html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email)
-        subject = eg.subject
+        subject = step1["subject"]
 
     resend.api_key = settings.RESEND_API_KEY
     try:

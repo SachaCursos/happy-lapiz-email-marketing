@@ -343,6 +343,21 @@ def render_template_text(
     return _env.from_string(raw).render(**ctx)
 
 
+def inject_preheader(html: str, preview_text: str) -> str:
+    """Insert hidden preheader after <body> for inbox preview snippets."""
+    text = (preview_text or "").strip()
+    if not text:
+        return html
+    preheader = (
+        '<span style="display:none;max-height:0;overflow:hidden;'
+        f'font-size:1px;line-height:1px;color:#fff;opacity:0">{text}</span>'
+    )
+    lower = html.lower()
+    if "<body" in lower:
+        return re.sub(r"(<body[^>]*>)", r"\1" + preheader, html, count=1, flags=re.IGNORECASE)
+    return preheader + html
+
+
 def render_html(
     html_content: str,
     contact: Contact,

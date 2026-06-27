@@ -165,6 +165,16 @@ export default function EvergreenDetailPage({ params }: { params: { id: string }
         </div>
 
         <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Preview text</label>
+          <input
+            value={form.preview_text}
+            onChange={(e) => setForm((f) => ({ ...f, preview_text: e.target.value }))}
+            placeholder="Texto de vista previa junto al asunto en el inbox"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+
+        <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla del 1.er correo</label>
           <select
             value={form.template_id}
