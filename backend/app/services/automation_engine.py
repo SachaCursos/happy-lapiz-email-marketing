@@ -763,9 +763,6 @@ def _send_email_step(
             **{k: v for k, v in cf.items() if isinstance(k, str)},
             **(extra_vars or {}),
         }
-        # Only use first name for nombre_regalado (customers sometimes enter full name)
-        if vars_.get("nombre_regalado"):
-            vars_["nombre_regalado"] = vars_["nombre_regalado"].split()[0]
         # If there's a coupon code and a checkout URL, inject checkout_url_with_coupon
         # so templates can use {{ event.extra.checkout_url_with_coupon }} to get the
         # checkout URL with the discount pre-applied (Shopify supports ?discount=CODE).
@@ -853,12 +850,17 @@ def _send_email_step(
             except (ValueError, TypeError):
                 pass
 
+        from app.services.regalado_vars import prepare_regalado_vars, preprocess_regalado_template
+        prepare_regalado_vars(vars_)
+
         _env = Environment(undefined=ChainableUndefined)
-        raw_html = replace_unsub_tag(tpl.html_content, contact.email)
+        raw_html = preprocess_regalado_template(replace_unsub_tag(tpl.html_content, contact.email))
         raw_html = resolve_relative_timers(raw_html)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
 
-        preview_text = _env.from_string(str(step.get("preview_text", ""))).render(**vars_)
+        preview_text = _env.from_string(
+            preprocess_regalado_template(str(step.get("preview_text", "")))
+        ).render(**vars_)
         if preview_text:
             preheader = (
                 f'<span style="display:none;max-height:0;overflow:hidden;'
@@ -872,7 +874,9 @@ def _send_email_step(
         result = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
             "to": [contact.email],
-            "subject": _env.from_string(str(step.get("subject", ""))).render(**vars_),
+            "subject": _env.from_string(
+                preprocess_regalado_template(str(step.get("subject", "")))
+            ).render(**vars_),
             "html": html,
             "headers": _unsub_headers(contact.email),
         })
@@ -1337,6 +1341,8 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
             "dias_para_cumpleanos": days_before,
             "fecha_cumpleanos": str(target),
         }
+        from app.services.regalado_vars import prepare_regalado_vars
+        prepare_regalado_vars(extra_vars)
         _enroll(session, auto, row[1], trigger_key, first_delay, extra_vars)
 
 

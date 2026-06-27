@@ -311,6 +311,17 @@ def submit_form(
 
     _ed = payload.extra_data or {}
     regalados = _parse_regalados(_ed)
+    from app.services.regalado_vars import sanitize_regalados_list
+    regalados = sanitize_regalados_list(regalados)
+    if regalados:
+        _ed = {**_ed, "regalados": [
+            {
+                "para_quien": r["relacion"],
+                "destinatario_nombre": r["nombre"],
+                "cual_es_su_fecha_de_nacimiento": r["fecha"],
+            }
+            for r in regalados
+        ]}
     regalado_cols = _regalado_column_values(regalados)
 
     # Duplicate check: one submission per email, unless adding a new unregistered child
@@ -477,6 +488,16 @@ def _trigger_form_submitted_automations(
                 }
                 for r in regalados
             ]
+            if len(regalados) > 0:
+                extra["relacion_regalado"] = regalados[0]["relacion"]
+                extra["nombre_regalado"] = regalados[0]["nombre"]
+                extra["fecha_nacimiento_regalado"] = regalados[0]["fecha"]
+            if len(regalados) > 1:
+                extra["relacion_regalado2"] = regalados[1]["relacion"]
+                extra["nombre_regalado2"] = regalados[1]["nombre"]
+                extra["fecha_nacimiento_regalado2"] = regalados[1]["fecha"]
+        from app.services.regalado_vars import prepare_regalado_vars
+        prepare_regalado_vars(extra)
         enrollment = AutomationEnrollment(
             automation_id=auto.id,
             contact_email=email,

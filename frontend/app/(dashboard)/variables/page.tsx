@@ -39,13 +39,17 @@ const GROUPS: VarGroup[] = [
     color: "bg-pink-50 border-pink-200",
     description: "Datos capturados en formularios de Happy Lápiz (regalo, cumpleaños, etc.). Se guardan en custom_fields del contacto y están disponibles en automatizaciones de cumpleaños y post-formulario.",
     vars: [
-      { tag: "{{ nombre_regalado }}",      description: "Nombre del niño/a que recibirá el regalo",          example: "Matías" },
-      { tag: "{{ relacion }}",             description: "Relación entre quien regala y el regalado",         example: "hijo" },
-      { tag: "{{ fecha_nacimiento }}",     description: "Fecha de nacimiento del niño/a (YYYY-MM-DD)",       example: "2019-06-15" },
+      { tag: "{{ nombre_regalado }}",      description: "1.er regalado: nombre válido, o relación en forma «tu hijo/a» si el nombre es inválido", example: "Matías" },
+      { tag: "{{ relacion }}",             description: "Relación del 1.er regalado en forma «tu» (Mi hijo → tu hijo)", example: "tu hijo" },
+      { tag: "{{ fecha_nacimiento }}",     description: "Fecha de nacimiento del 1.er regalado (YYYY-MM-DD)",       example: "2019-06-15" },
+      { tag: "{{ nombre_regalado2 }}",     description: "2.º regalado: nombre válido o relación en forma «tu»",      example: "Felipe" },
+      { tag: "{{ relacion2 }}",            description: "Relación del 2.º regalado en forma «tu»",                    example: "tu hija" },
+      { tag: "{{ fecha_nacimiento2 }}",    description: "Fecha de nacimiento del 2.º regalado",                     example: "2021-03-10" },
+      { tag: "{{ nombres_regalados }}",    description: "Todos los regalados unidos con «y» (Matías y Felipe)",       example: "Matías y Felipe" },
       { tag: "{{ dias_para_cumpleanos }}", description: "Días que faltan para el cumpleaños (automatización)", example: "30" },
       { tag: "{{ fecha_cumpleanos }}",     description: "Fecha exacta del próximo cumpleaños",               example: "2026-06-15" },
       { tag: "{{ custom_fields.nombre_regalado }}", description: "Acceso directo al campo personalizado (forma alternativa)", example: "Matías" },
-      { tag: "{{ custom_fields.relacion }}",        description: "Forma alternativa de acceder a la relación",              example: "hijo" },
+      { tag: "{{ custom_fields.relacion }}",        description: "Forma alternativa de acceder a la relación",              example: "tu hijo" },
     ],
   },
   {
@@ -137,6 +141,14 @@ const JINJA2_EXAMPLES = [
 {% elif dias_para_cumpleanos == 7 %}
   ¡Esta semana es el cumpleaños de {{ nombre_regalado }}!
 {% endif %}`,
+  },
+  {
+    title: "Varios regalados con «y»",
+    description: "Usa nombres_regalados para unir automáticamente, o deja las dos variables juntas.",
+    code: `Vamos a regalonear juntos a {{ nombres_regalados }}.
+
+{# También funciona así (se convierte automáticamente): #}
+Vamos a regalonear juntos a {{ nombre_regalado }} {{ nombre_regalado2 }}.`,
   },
   {
     title: "Bucle de productos recomendados",

@@ -86,10 +86,14 @@ const TEMPLATE_VARS: { group: string; vars: { key: string; desc: string; raw?: b
   {
     group: "Cumpleaños / Regalón",
     vars: [
-      { key: "nombre_regalado",               desc: "Nombre del niño/destinatario del regalo (custom_fields)" },
+      { key: "nombre_regalado",                desc: "1.er regalado (nombre o «tu hijo/a» si el nombre es inválido)" },
+      { key: "relacion",                       desc: "Relación del 1.er regalado en forma «tu»" },
+      { key: "nombre_regalado2",               desc: "2.º regalado (nombre o relación en forma «tu»)" },
+      { key: "relacion2",                      desc: "Relación del 2.º regalado en forma «tu»" },
+      { key: "nombres_regalados",              desc: "Todos los regalados unidos con «y»" },
       { key: "dias_para_cumpleanos",           desc: "Días que faltan para el cumpleaños" },
-      { key: "fecha_cumpleanos",              desc: "Fecha del próximo cumpleaños" },
-      { key: "edad_regalon",                  desc: "Edad del regalón (custom_fields.edad_regalon)" },
+      { key: "fecha_cumpleanos",               desc: "Fecha del próximo cumpleaños" },
+      { key: "edad_regalon",                   desc: "Edad del regalón (custom_fields.edad_regalon)" },
       { key: "productos_recomendados_edad_html", desc: "Grilla HTML de productos para la edad del regalón, sin los ya comprados" },
     ],
   },
