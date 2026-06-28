@@ -118,6 +118,7 @@ export function applyHeroTypography(html: string, patch: Partial<HeroTypography>
   }
 }
 
+export function syncTextBlockColor(html: string, color: string): string {
   if (!html?.trim()) return html;
   try {
     const doc = new DOMParser().parseFromString(`<div id="tb-root">${html}</div>`, "text/html");
