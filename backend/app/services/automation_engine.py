@@ -29,7 +29,7 @@ from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
-from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre, replace_unsub_tag, resolve_relative_timers
+from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre, replace_unsub_tag, resolve_relative_timers, recover_stuck_sending_campaigns
 from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment
 
@@ -1541,7 +1541,9 @@ def run_scheduled_campaigns() -> None:
                 already_sent = set(session.exec(
                     select(CampaignSend.contact_id).where(
                         CampaignSend.campaign_id == campaign.id,
-                        CampaignSend.status != "failed",
+                        CampaignSend.status.in_((
+                            "sent", "delivered", "opened", "clicked", "bounced", "complained",
+                        )),
                     )
                 ).all())
                 to_send = [c for c in contacts if c.id not in already_sent]
@@ -1603,6 +1605,7 @@ def start_scheduler() -> None:
             try:
                 _run_with_timeout(run_automations, 120, "run_automations")
                 _run_with_timeout(run_scheduled_campaigns, 120, "run_scheduled_campaigns")
+                _run_with_timeout(recover_stuck_sending_campaigns, 120, "recover_stuck_campaigns")
                 from app.services.evergreen_engine import run_evergreen_campaigns, process_evergreen_followups
                 _run_with_timeout(run_evergreen_campaigns, 300, "run_evergreen_campaigns")
                 _run_with_timeout(process_evergreen_followups, 120, "evergreen_followups")

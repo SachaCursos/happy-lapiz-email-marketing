@@ -17,6 +17,8 @@ from app.models.template import Template
 from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipients
 from app.services.email_sender import (
     send_campaign_sync,
+    CAMPAIGN_SEND_ATTEMPTED,
+    count_attempted_campaign_sends,
     _inject_footer,
     _unsub_headers,
     build_contact_template_vars,
@@ -133,7 +135,7 @@ def send_campaign_now(
     c = session.get(Campaign, campaign_id)
     if not c:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
-    if c.status not in ("draft", "scheduled", "sent"):
+    if c.status not in ("draft", "scheduled", "sent", "sending"):
         raise HTTPException(status_code=400, detail=f"Estado inválido para envío: {c.status}")
 
     seg = session.get(Segment, c.segment_id)
@@ -149,12 +151,12 @@ def send_campaign_now(
             else "Todos los contactos del segmento están excluidos",
         )
 
-    # Excluir contactos que ya recibieron esta campaña; los "failed" sí pueden reintentarse
+    # Excluir contactos que ya recibieron esta campaña; queued/failed pueden reintentarse
     already_sent = set(
         session.exec(
             select(CampaignSend.contact_id).where(
                 CampaignSend.campaign_id == campaign_id,
-                CampaignSend.status != "failed",
+                CampaignSend.status.in_(CAMPAIGN_SEND_ATTEMPTED),
             )
         ).all()
     )
@@ -183,12 +185,7 @@ def send_progress(campaign_id: int, session: Session = Depends(get_session), _: 
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     counts = count_campaign_recipients(session, c.segment_id, c.exclude_segment_ids)
     total_in_segment = counts["recipient_count"]
-    already_sent = session.exec(
-        select(func.count(CampaignSend.contact_id)).where(
-            CampaignSend.campaign_id == campaign_id,
-            CampaignSend.status != "failed",
-        )
-    ).one()
+    already_sent = count_attempted_campaign_sends(session, campaign_id)
     return {"total_in_segment": total_in_segment, "already_sent": already_sent}
 
 

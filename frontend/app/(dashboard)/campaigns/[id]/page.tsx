@@ -172,7 +172,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const { data: progress } = useQuery<SendProgress>({
     queryKey: ["campaign-progress", id],
     queryFn: () => campaignsApi.sendProgress(id).then((r) => r.data),
-    enabled: campaign?.status === "draft" || failedCount > 0,
+    enabled: campaign?.status === "draft" || campaign?.status === "sending" || failedCount > 0,
     refetchInterval: campaign?.status === "sending" ? 3000 : false,
   });
 
@@ -495,12 +495,16 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
       </div>
 
       {/* ── Envío por fases / Reintentar errores ───────────────────────── */}
-      {(campaign.status === "draft" || failedCount > 0) && progress && (
+      {(campaign.status === "draft" || campaign.status === "sending" || failedCount > 0) && progress && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
             <Users size={16} className="text-gray-400" />
             <h2 className="font-semibold text-gray-900">
-              {campaign.status === "draft" ? "Envío por fases" : `Reintentar ${failedCount} envíos con error`}
+              {campaign.status === "sending"
+                ? "Envío interrumpido — reintentar"
+                : campaign.status === "draft"
+                  ? "Envío por fases"
+                  : `Reintentar ${failedCount} envíos con error`}
             </h2>
           </div>
 
