@@ -64,7 +64,9 @@ export default function FavoriteBlocksPage() {
           <h1 className="text-2xl font-bold text-gray-900">Bloques favoritos</h1>
           <p className="text-sm text-gray-500 mt-1">
             Bloques reutilizables para armar plantillas rápido. Al crear una plantilla nueva se cargan
-            automáticamente como punto de partida; también aparecen en el panel izquierdo del editor.
+            los bloques de inicio (encabezado + hero). Revisa la plantilla{" "}
+            <strong className="text-gray-700">Galería — Opciones de bloques</strong> para ver todas las variantes
+            y guardar las que más te gusten aquí.
           </p>
         </div>
       </div>

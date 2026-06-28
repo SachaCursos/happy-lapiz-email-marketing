@@ -9,7 +9,7 @@ from app.core.deps import get_current_user, require_editor
 from app.database import get_session
 from app.models.favorite_block import FavoriteBlockCreate, FavoriteBlockRead, FavoriteBlockUpdate
 from app.models.user import User
-from app.services.favorite_blocks_seed import DEFAULT_FAVORITE_BLOCKS
+from app.services.favorite_blocks_seed import BLOCK_CATALOG, DEPRECATED_BLOCK_NAMES
 
 router = APIRouter()
 
@@ -31,25 +31,47 @@ def ensure_favorite_blocks_table(session: Session) -> None:
 
 
 def seed_default_favorite_blocks(session: Session) -> None:
+    """Create or update catalog blocks by name (idempotent)."""
     ensure_favorite_blocks_table(session)
-    count = session.execute(text("SELECT COUNT(*) FROM favorite_blocks")).scalar()
-    if count and int(count) > 0:
-        return
     now = datetime.utcnow()
-    for item in DEFAULT_FAVORITE_BLOCKS:
-        session.execute(
-            text("""
-                INSERT INTO favorite_blocks (name, block_type, props, sort_order, created_at, updated_at)
-                VALUES (:name, :type, CAST(:props AS jsonb), :sort_order, :now, :now)
-            """),
-            {
-                "name": item["name"],
-                "type": item["block_type"],
-                "props": json.dumps(item["props"], ensure_ascii=False),
-                "sort_order": item.get("sort_order", 0),
-                "now": now,
-            },
-        )
+    for name in DEPRECATED_BLOCK_NAMES:
+        session.execute(text("DELETE FROM favorite_blocks WHERE name = :name"), {"name": name})
+    for item in BLOCK_CATALOG:
+        props_json = json.dumps(item["props"], ensure_ascii=False)
+        existing = session.execute(
+            text("SELECT id FROM favorite_blocks WHERE name = :name"),
+            {"name": item["name"]},
+        ).fetchone()
+        if existing:
+            session.execute(
+                text("""
+                    UPDATE favorite_blocks
+                    SET block_type = :type, props = CAST(:props AS jsonb),
+                        sort_order = :sort_order, updated_at = :now
+                    WHERE name = :name
+                """),
+                {
+                    "name": item["name"],
+                    "type": item["block_type"],
+                    "props": props_json,
+                    "sort_order": item.get("sort_order", 0),
+                    "now": now,
+                },
+            )
+        else:
+            session.execute(
+                text("""
+                    INSERT INTO favorite_blocks (name, block_type, props, sort_order, created_at, updated_at)
+                    VALUES (:name, :type, CAST(:props AS jsonb), :sort_order, :now, :now)
+                """),
+                {
+                    "name": item["name"],
+                    "type": item["block_type"],
+                    "props": props_json,
+                    "sort_order": item.get("sort_order", 0),
+                    "now": now,
+                },
+            )
     session.commit()
 
 

@@ -25,6 +25,10 @@ export interface Block {
 // Happy Lápiz brand palette (extracted from Klaviyo templates)
 const BRAND_PALETTE = [
   "#682ae7", // morado marca
+  "#f97316", // naranja marca
+  "#ea580c", // naranja oscuro
+  "#fb923c", // naranja claro
+  "#fff7ed", // fondo naranja suave
   "#2a2ee7", // azul link
   "#222222", // texto oscuro
   "#727272", // texto secundario
@@ -2120,11 +2124,14 @@ export function TemplateBlockEditor({
       return;
     }
     if (serverFavorites.length === 0) return;
-    const starter = serverFavorites.map((f, i) => ({
-      id: `${f.block_type}_${Date.now()}_${i}`,
-      type: f.block_type as BlockType,
-      props: { ...DEFAULTS[f.block_type as BlockType], ...f.props },
-    }));
+    const starter = serverFavorites
+      .filter((f) => f.sort_order < 50)
+      .map((f, i) => ({
+        id: `${f.block_type}_${Date.now()}_${i}`,
+        type: f.block_type as BlockType,
+        props: { ...DEFAULTS[f.block_type as BlockType], ...f.props },
+      }));
+    if (starter.length === 0) return;
     setBlocks(starter);
     starterAppliedRef.current = true;
   }, [serverFavorites, initialBlocks.length, htmlOverride, templateId]);
