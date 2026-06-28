@@ -7,7 +7,7 @@ import {
   AlignLeft, AlignCenter, AlignRight, Send, Copy,
 } from "lucide-react";
 import { shopifyApi, ShopifyProduct, api, adminApi, favoriteBlocksApi, FavoriteBlock } from "@/lib/api";
-import { syncTextBlockColor, extractTextColorFromHtml } from "@/lib/templateBlockUtils";
+import { syncTextBlockColor, extractTextColorFromHtml, cloneBlockProps } from "@/lib/templateBlockUtils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 
@@ -1888,6 +1888,75 @@ function PropsPanel({
   );
 }
 
+// ── Save favorite modal ────────────────────────────────────────────────────────
+function SaveFavoriteModal({
+  defaultName,
+  blockLabel,
+  saving,
+  onSave,
+  onClose,
+}: {
+  defaultName: string;
+  blockLabel: string;
+  saving: boolean;
+  onSave: (name: string) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(defaultName);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-bold text-gray-900 text-base flex items-center gap-2">
+            <Star size={16} className="text-amber-500" /> Guardar como favorito
+          </h2>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">
+          Guarda una copia de este bloque (<span className="font-medium text-gray-700">{blockLabel}</span>) en tu biblioteca.
+          Al insertarlo en otra plantilla podrás editar textos, enlaces y productos libremente.
+        </p>
+        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+          Nombre del favorito
+        </label>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Ej: Hero vacaciones con logo"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && name.trim()) onSave(name.trim());
+            if (e.key === "Escape") onClose();
+          }}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 mb-5"
+        />
+        <div className="flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={saving || !name.trim()}
+            onClick={() => onSave(name.trim())}
+            className="px-5 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
+          >
+            {saving ? "Guardando..." : "Guardar favorito"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Shopify Image Picker Modal ────────────────────────────────────────────────
 function ShopifyImagePickerModal({ onSelect, onClose }: { onSelect: (url: string) => void; onClose: () => void }) {
   const [images, setImages] = React.useState<{ url: string; alt: string }[]>([]);
@@ -2075,6 +2144,9 @@ export function TemplateBlockEditor({
   const [convertMsg, setConvertMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [imgUploading, setImgUploading] = useState<string | null>(null);
   const [shopifyPickerOpen, setShopifyPickerOpen] = useState(false);
+  const [saveFavOpen, setSaveFavOpen] = useState(false);
+  const [saveFavSaving, setSaveFavSaving] = useState(false);
+  const [insertHint, setInsertHint] = useState<string | null>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
   const imgUploadTargetRef = useRef<string | null>(null);
   const shopifyPickerTargetRef = useRef<string | null>(null);
@@ -2126,11 +2198,7 @@ export function TemplateBlockEditor({
     if (serverFavorites.length === 0) return;
     const starter = serverFavorites
       .filter((f) => f.sort_order < 50)
-      .map((f, i) => ({
-        id: `${f.block_type}_${Date.now()}_${i}`,
-        type: f.block_type as BlockType,
-        props: { ...DEFAULTS[f.block_type as BlockType], ...f.props },
-      }));
+      .map((f, i) => favoriteToBlock(f, `${f.block_type}_starter_${Date.now()}_${i}`));
     if (starter.length === 0) return;
     setBlocks(starter);
     starterAppliedRef.current = true;
@@ -2138,6 +2206,20 @@ export function TemplateBlockEditor({
 
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
   const isPlainMode = tab === "plain";
+
+  function favoriteToBlock(fav: FavoriteBlock, id?: string): Block {
+    const type = fav.block_type as BlockType;
+    return {
+      id: id ?? `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      type,
+      props: { ...DEFAULTS[type], ...cloneBlockProps(fav.props) },
+    };
+  }
+
+  function showInsertHint(label: string) {
+    setInsertHint(`«${label}» insertado — haz clic para editar textos, enlaces y productos.`);
+    setTimeout(() => setInsertHint(null), 5000);
+  }
 
   function addBlock(type: BlockType) {
     const b: Block = { id: `${type}_${Date.now()}`, type, props: { ...DEFAULTS[type] } };
@@ -2147,14 +2229,11 @@ export function TemplateBlockEditor({
   }
 
   function addFavorite(fav: FavoriteBlock) {
-    const b: Block = {
-      id: `${fav.block_type}_${Date.now()}`,
-      type: fav.block_type as BlockType,
-      props: { ...DEFAULTS[fav.block_type as BlockType], ...fav.props },
-    };
+    const b = favoriteToBlock(fav);
     setBlocks((prev) => [...prev, b]);
     setSelectedId(b.id);
     if (tab !== "editor") setTab("editor");
+    showInsertHint(fav.name);
   }
 
   async function removeFavorite(id: number) {
@@ -2167,21 +2246,22 @@ export function TemplateBlockEditor({
     }
   }
 
-  async function saveToFavorites() {
+  async function saveToFavorites(name: string) {
     if (!selected) return;
-    const defaultName = PALETTE.find((x) => x.type === selected.type)?.label ?? selected.type;
-    const name = window.prompt("Nombre para este favorito:", defaultName);
-    if (name === null) return;
+    setSaveFavSaving(true);
     try {
       await favoriteBlocksApi.create({
-        name: name.trim() || defaultName,
+        name,
         block_type: selected.type,
-        props: selected.props,
+        props: cloneBlockProps(selected.props),
         sort_order: serverFavorites.length * 10 + 10,
       });
       qc.invalidateQueries({ queryKey: ["favorite-blocks"] });
+      setSaveFavOpen(false);
     } catch {
       alert("No se pudo guardar el favorito.");
+    } finally {
+      setSaveFavSaving(false);
     }
   }
 
@@ -2309,6 +2389,15 @@ export function TemplateBlockEditor({
           onClose={() => setProductPickerBlockId(null)}
         />
       )}
+      {saveFavOpen && selected && (
+        <SaveFavoriteModal
+          defaultName={PALETTE.find((x) => x.type === selected.type)?.label ?? selected.type}
+          blockLabel={PALETTE.find((x) => x.type === selected.type)?.label ?? selected.type}
+          saving={saveFavSaving}
+          onSave={saveToFavorites}
+          onClose={() => setSaveFavOpen(false)}
+        />
+      )}
       {shopifyPickerOpen && (
         <ShopifyImagePickerModal
           onSelect={(url) => {
@@ -2342,6 +2431,12 @@ export function TemplateBlockEditor({
             </button>
           </div>
         </div>
+
+        {insertHint && (
+          <div className="px-5 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 text-xs shrink-0">
+            {insertHint}
+          </div>
+        )}
 
         {/* Send-test modal */}
         {sendTestOpen && (
@@ -2449,8 +2544,11 @@ export function TemplateBlockEditor({
 
               {serverFavorites.length > 0 && (
                 <>
-                  <p className="text-xs font-bold text-amber-500 uppercase tracking-widest px-4 pt-4 pb-2 flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-amber-500 uppercase tracking-widest px-4 pt-4 pb-1 flex items-center gap-1.5">
                     <Star size={11} /> Favoritos
+                  </p>
+                  <p className="text-[10px] text-gray-400 px-4 pb-2 leading-snug">
+                    Cada bloque se inserta como copia editable: textos, enlaces y productos.
                   </p>
                   <div className="px-2 pb-4 space-y-0.5">
                     {serverFavorites.map((fav) => {
@@ -2778,7 +2876,7 @@ export function TemplateBlockEditor({
                     block={selected}
                     onChange={(props) => update(selected.id, props)}
                     onPickProduct={() => setProductPickerBlockId(selected.id)}
-                    onSaveToFavorites={saveToFavorites}
+                    onSaveToFavorites={() => setSaveFavOpen(true)}
                     onUploadImage={() => { imgUploadTargetRef.current = selected.id; imgInputRef.current?.click(); }}
                     onPickShopifyImage={() => { shopifyPickerTargetRef.current = selected.id; setShopifyPickerOpen(true); }}
                     imgUploading={imgUploading}

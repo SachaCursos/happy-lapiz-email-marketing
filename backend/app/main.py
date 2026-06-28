@@ -43,7 +43,16 @@ app.include_router(favorite_blocks.router, prefix="/api/favorite-blocks", tags=[
 def on_startup():
     create_db_and_tables()
     from app.services.automation_engine import start_scheduler
+    from app.database import engine
+    from sqlmodel import Session
+    from app.services.block_catalog_templates import ensure_catalog_templates
+
     start_scheduler()
+    try:
+        with Session(engine) as session:
+            ensure_catalog_templates(session)
+    except Exception:
+        pass  # DB may not be ready on first deploy tick
 
 
 @app.get("/api/health")

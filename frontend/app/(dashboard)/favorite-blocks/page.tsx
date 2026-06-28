@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { favoriteBlocksApi, FavoriteBlock } from "@/lib/api";
+import { favoriteBlocksApi, FavoriteBlock, templatesApi } from "@/lib/api";
 import { BlockPreview } from "@/components/TemplateBlockEditor";
-import { Star, Trash2, Pencil, Info } from "lucide-react";
+import { Star, Trash2, Pencil, Info, LayoutGrid, ExternalLink } from "lucide-react";
+
+const GALERIA_TEMPLATE_NAME = "Galería — Opciones de bloques (no enviar)";
 
 const BLOCK_TYPE_LABELS: Record<string, string> = {
   header: "Encabezado",
@@ -28,6 +31,13 @@ export default function FavoriteBlocksPage() {
     queryKey: ["favorite-blocks"],
     queryFn: () => favoriteBlocksApi.list().then((r) => r.data),
   });
+
+  const { data: templates = [] } = useQuery({
+    queryKey: ["templates"],
+    queryFn: () => templatesApi.list().then((r) => r.data),
+  });
+
+  const galeriaTemplate = templates.find((t) => t.name === GALERIA_TEMPLATE_NAME);
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => favoriteBlocksApi.delete(id),
@@ -56,26 +66,44 @@ export default function FavoriteBlocksPage() {
 
   return (
     <div className="p-8 max-w-5xl">
-      <div className="flex items-start gap-3 mb-6">
-        <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
-          <Star size={20} className="text-amber-600" />
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+            <Star size={20} className="text-amber-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Bloques favoritos</h1>
+            <p className="text-sm text-gray-500 mt-1 max-w-xl">
+              Bloques reutilizables para armar plantillas. Al insertarlos en el editor puedes cambiar
+              textos, enlaces de botones y productos. Abre la galería para ver todas las variantes.
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Bloques favoritos</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Bloques reutilizables para armar plantillas rápido. Al crear una plantilla nueva se cargan
-            los bloques de inicio (encabezado + hero). Revisa la plantilla{" "}
-            <strong className="text-gray-700">Galería — Opciones de bloques</strong> para ver todas las variantes
-            y guardar las que más te gusten aquí.
-          </p>
-        </div>
+        {galeriaTemplate ? (
+          <Link
+            href={`/templates/${galeriaTemplate.id}`}
+            className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 text-white rounded-xl text-sm font-semibold hover:bg-brand-700 transition-colors"
+          >
+            <LayoutGrid size={16} />
+            Abrir galería de bloques
+            <ExternalLink size={14} className="opacity-80" />
+          </Link>
+        ) : (
+          <Link
+            href="/templates"
+            className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-50"
+          >
+            Ir a Plantillas
+          </Link>
+        )}
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-900 flex gap-2 mb-6">
         <Info size={16} className="shrink-0 mt-0.5" />
-        <p className="text-xs">
-          Puedes guardar bloques personalizados desde el editor de plantillas con el botón
-          &quot;Guardar como favorito&quot;. Los bloques estándar de Happy Lápiz se crean solos la primera vez.
+        <p className="text-xs leading-relaxed">
+          En el editor de plantillas, selecciona un bloque y usa <strong>Guardar como favorito</strong> para
+          elegir un nombre personalizado. Los bloques que insertes desde favoritos son copias independientes:
+          editar textos o URLs no modifica el favorito guardado.
         </p>
       </div>
 

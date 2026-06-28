@@ -17,7 +17,26 @@ export interface TemplateBlockShape {
   props: Record<string, string | number | boolean>;
 }
 
-/** Apply a text color across common inline elements inside HTML content. */
+/** Deep copy block props so inserted favorites are independent and fully editable. */
+export function cloneBlockProps(
+  props: Record<string, string | number | boolean>
+): Record<string, string | number | boolean> {
+  return JSON.parse(JSON.stringify(props));
+}
+
+export function blockFromFavorite(
+  fav: { block_type: string; props: Record<string, string | number | boolean> },
+  defaults: Record<string, Record<string, string | number | boolean>>,
+  id?: string
+): { id: string; type: string; props: Record<string, string | number | boolean> } {
+  const type = fav.block_type;
+  return {
+    id: id ?? `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    type,
+    props: { ...(defaults[type] ?? {}), ...cloneBlockProps(fav.props) },
+  };
+}
+
 export function syncTextBlockColor(html: string, color: string): string {
   if (!html?.trim()) return html;
   try {

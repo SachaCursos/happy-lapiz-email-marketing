@@ -9,12 +9,14 @@ from app.models.user import User
 from app.models.template import Template, TemplateCreate, TemplateRead, TemplateUpdate
 from app.models.campaign import Campaign
 from app.models.automation import Automation
+from app.services.block_catalog_templates import ensure_catalog_templates
 
 router = APIRouter()
 
 
 @router.get("", response_model=List[TemplateRead])
 def list_templates(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+    ensure_catalog_templates(session)
     return session.exec(
         select(Template).order_by(Template.created_at.desc(), Template.id.desc())
     ).all()
