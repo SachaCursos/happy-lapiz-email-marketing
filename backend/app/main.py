@@ -45,12 +45,12 @@ def on_startup():
     from app.services.automation_engine import start_scheduler
     from app.database import engine
     from sqlmodel import Session
-    from app.services.block_catalog_templates import ensure_catalog_templates
+    from app.services.template_compositions import ensure_managed_block_templates
 
     start_scheduler()
     try:
         with Session(engine) as session:
-            ensure_catalog_templates(session)
+            ensure_managed_block_templates(session)
     except Exception:
         pass  # DB may not be ready on first deploy tick
 

@@ -11,7 +11,7 @@ if sys.platform == "win32":
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.services.favorite_blocks_seed import VACACIONES_PREVIEW, VACACIONES_SUBJECT, vacaciones_blocks
+from app.services.favorite_blocks_seed import VACACIONES_NAME, VACACIONES_PREVIEW, VACACIONES_SUBJECT, vacaciones_blocks
 from app.services.template_block_compiler import blocks_to_html
 
 DB = os.environ.get(
@@ -19,8 +19,8 @@ DB = os.environ.get(
     "postgresql://postgres:nfKjyKqezPIGMgmneHgxdscnCFXypQQq@switchyard.proxy.rlwy.net:22708/railway",
 )
 
-TPL_NAME = "Vacaciones — Juguetes para tus peques"
-CAM_NAME = "Vacaciones — Juguetes para tus peques"
+TPL_NAME = VACACIONES_NAME
+CAM_NAME = VACACIONES_NAME
 SEG_NAME = "Todos los suscriptores"
 
 SEG_CONDITIONS = {

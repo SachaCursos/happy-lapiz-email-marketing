@@ -412,37 +412,71 @@ def _block_from_catalog_entry(entry: dict, block_id: str) -> dict:
     return make_block(entry["block_type"], entry["props"], block_id)
 
 
+def _catalog(name: str) -> dict:
+    return next(b for b in BLOCK_CATALOG if b["name"] == name)
+
+
 def vacaciones_blocks() -> list[dict]:
-    """Plantilla Vacaciones compuesta bloque por bloque."""
+    """Plantilla Vacaciones compuesta bloque por bloque (sin HTML monolítico)."""
     return [
-        _block_from_catalog_entry(
-            next(b for b in BLOCK_CATALOG if b["name"] == "Hero — Vacaciones con logo centrado"),
-            "hero_vac_1",
+        _block_from_catalog_entry(_catalog("Hero — Vacaciones con logo centrado"), "hero_vac_1"),
+        _block_from_catalog_entry(_catalog("Párrafo — Vacaciones (cuerpo)"), "body_vac_1"),
+        _block_from_catalog_entry(_catalog("Caja — Ideas para vacaciones (naranja claro)"), "ideas_vac_1"),
+        _block_from_catalog_entry(_catalog("Botón CTA — Morado vacaciones"), "cta_vac_1"),
+        _block_from_catalog_entry(_catalog("Nota — Envío centrada"), "note_vac_1"),
+        _block_from_catalog_entry(_catalog("Caja — Tip morado"), "tip_vac_1"),
+        _block_from_catalog_entry(_catalog("Pie — Footer con baja"), "footer_vac_1"),
+    ]
+
+
+def bienvenida_blocks() -> list[dict]:
+    """Plantilla Bienvenida compuesta bloque por bloque."""
+    return [
+        _block_from_catalog_entry(_catalog("Encabezado — Logo Happy Lápiz"), "hdr_bien_1"),
+        _block_from_catalog_entry(_catalog("Hero — Morado con logo centrado"), "hero_bien_1"),
+        make_block(
+            "text",
+            {
+                "content": (
+                    f"<p style=\"margin:0;font-size:15px;line-height:1.75;color:#374151;font-family:{FF};\">"
+                    "Hola {{ first_name or nombre or 'amigo/a' }}, ahora eres parte de nuestra comunidad. "
+                    "Desde aqu&#237; te haremos llegar novedades del cat&#225;logo, ofertas exclusivas "
+                    "y contenido educativo pensado para el desarrollo de los peque&#241;os."
+                    "</p>"
+                ),
+                "bg_color": "#ffffff",
+                "text_color": "#374151",
+                "padding_y": "28",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            "body_bien_1",
         ),
-        _block_from_catalog_entry(
-            next(b for b in BLOCK_CATALOG if b["name"] == "Párrafo — Vacaciones (cuerpo)"),
-            "body_vac_1",
+        make_block(
+            "text",
+            {
+                "content": (
+                    "<div style=\"background:#f5f3ff;border-radius:14px;padding:24px;\">"
+                    "<p style=\"font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;"
+                    "color:#7c3aed;margin:0 0 14px;\">&#191;Qu&#233; encontrar&#225;s?</p>"
+                    "<p style=\"margin:0 0 10px;font-size:14px;color:#111;\"><strong>&#127981; Juguetes educativos</strong> "
+                    "<span style=\"color:#6b7280;\">curados para cada etapa.</span></p>"
+                    "<p style=\"margin:0 0 10px;font-size:14px;color:#111;\"><strong>&#127873; Ofertas primero</strong> "
+                    "<span style=\"color:#6b7280;\">acceso anticipado a lanzamientos.</span></p>"
+                    "<p style=\"margin:0;font-size:14px;color:#111;\"><strong>&#128218; Tips de crianza</strong> "
+                    "<span style=\"color:#6b7280;\">ideas para estimular a tus hijos.</span></p>"
+                    "</div>"
+                ),
+                "bg_color": "#ffffff",
+                "text_color": "#374151",
+                "padding_y": "8",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            "benefits_bien_1",
         ),
-        _block_from_catalog_entry(
-            next(b for b in BLOCK_CATALOG if b["name"] == "Caja — Ideas para vacaciones (naranja claro)"),
-            "ideas_vac_1",
-        ),
-        _block_from_catalog_entry(
-            next(b for b in BLOCK_CATALOG if b["name"] == "Botón CTA — Morado vacaciones"),
-            "cta_vac_1",
-        ),
-        _block_from_catalog_entry(
-            next(b for b in BLOCK_CATALOG if b["name"] == "Nota — Envío centrada"),
-            "note_vac_1",
-        ),
-        _block_from_catalog_entry(
-            next(b for b in BLOCK_CATALOG if b["name"] == "Caja — Tip morado"),
-            "tip_vac_1",
-        ),
-        _block_from_catalog_entry(
-            next(b for b in BLOCK_CATALOG if b["name"] == "Pie — Footer con baja"),
-            "footer_vac_1",
-        ),
+        _block_from_catalog_entry(_catalog("Botón CTA — Morado"), "cta_bien_1"),
+        _block_from_catalog_entry(_catalog("Pie — Footer con baja"), "footer_bien_1"),
     ]
 
 
@@ -480,8 +514,13 @@ def galeria_blocks() -> list[dict]:
     return blocks
 
 
+VACACIONES_NAME = "Vacaciones — Juguetes para tus peques"
 VACACIONES_SUBJECT = "{{nombre or 'Hola'}}, ideas para las vacaciones de tus pequeños ☀️"
 VACACIONES_PREVIEW = "Juegos, creatividad y aprendizaje para que disfruten al máximo sus vacaciones."
+
+BIENVENIDA_NAME = "Bienvenida — Happy Lápiz"
+BIENVENIDA_SUBJECT = "{{nombre or 'amigo/a'}}, bienvenido/a a Happy Lápiz 🎨"
+BIENVENIDA_PREVIEW = "Nos alegra tenerte aquí. Descubre nuestro catálogo de juguetes educativos."
 
 GALERIA_NAME = "Galería — Opciones de bloques (no enviar)"
 GALERIA_SUBJECT = "Galería interna — opciones de bloques"

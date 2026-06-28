@@ -10,6 +10,8 @@ from app.models.template import Template, TemplateCreate, TemplateRead, Template
 from app.models.campaign import Campaign
 from app.models.automation import Automation
 from app.services.block_catalog_templates import ensure_catalog_templates
+from app.services.template_compositions import compile_template_payload, is_editor_block_list
+from app.services.template_block_compiler import blocks_to_html
 
 router = APIRouter()
 
@@ -28,7 +30,8 @@ def create_template(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
 ):
-    tpl = Template(**payload.model_dump(), created_by=current_user.id)
+    data = compile_template_payload(payload.model_dump())
+    tpl = Template(**data, created_by=current_user.id)
     session.add(tpl)
     session.commit()
     session.refresh(tpl)
@@ -53,8 +56,11 @@ def update_template(
     tpl = session.get(Template, template_id)
     if not tpl:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    for k, v in updates.items():
         setattr(tpl, k, v)
+    if "json_blocks" in updates and is_editor_block_list(tpl.json_blocks):
+        tpl.html_content = blocks_to_html(tpl.json_blocks)
     tpl.updated_at = datetime.utcnow()
     session.add(tpl)
     session.commit()

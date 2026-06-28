@@ -14,15 +14,11 @@ from app.models.user import User
 from app.models.template import Template
 from app.models.campaign import Campaign, CampaignSend
 from app.models.segment import Segment
-from app.services.template_block_compiler import blocks_to_html
+from app.services.template_compositions import resolve_composition, ensure_managed_block_templates
 from app.services.favorite_blocks_seed import (
     GALERIA_NAME,
-    GALERIA_PREVIEW,
-    GALERIA_SUBJECT,
-    VACACIONES_PREVIEW,
-    VACACIONES_SUBJECT,
-    galeria_blocks,
-    vacaciones_blocks,
+    VACACIONES_NAME,
+    BIENVENIDA_NAME,
 )
 
 router = APIRouter()
@@ -40,65 +36,23 @@ FOOTER = """
 
 SEED_TEMPLATES = [
     {
-        "name":    "Bienvenida — Happy Lápiz",
+        "name":    BIENVENIDA_NAME,
         "subject": "{{nombre or 'amigo/a'}}, bienvenido/a a Happy Lápiz 🎨",
         "preview": "Nos alegra tenerte aquí. Descubre nuestro catálogo de juguetes educativos.",
         "segment": "Todos los suscriptores",
-        "html": """<div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
-  <div style="padding:28px 32px 0;text-align:center;">
-    <a href="https://www.happylapiz.cl"><img src="__LOGO_PNG__" alt="Happy L&#225;piz" width="160" style="height:auto;display:inline-block;" /></a>
-  </div>
-  <div style="background:linear-gradient(135deg,#5b21b6 0%,#682ae7 100%);margin:20px 0 0;padding:36px 32px;text-align:center;">
-    <h1 style="color:#fff;font-size:22px;font-weight:800;margin:0 0 10px;line-height:1.3;">
-      &#161;Bienvenido/a, {{nombre or 'amigo/a'}}! &#127775;
-    </h1>
-    <p style="color:#ddd6fe;font-size:15px;margin:0;line-height:1.6;">Nos alegra tenerte en la familia Happy L&#225;piz</p>
-  </div>
-  <div style="padding:28px 32px;">
-    <p style="font-size:15px;color:#374151;line-height:1.75;margin:0 0 20px;">
-      Hola {{first_name or nombre or 'amigo/a'}}, ahora eres parte de nuestra comunidad.
-      Desde aqu&#237; te haremos llegar novedades del cat&#225;logo, ofertas exclusivas
-      y contenido educativo pensado para el desarrollo de los peque&#241;os.
-    </p>
-    <div style="background:#f5f3ff;border-radius:14px;padding:24px;margin-bottom:24px;">
-      <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#7c3aed;margin:0 0 14px;">&#191;Qu&#233; encontrar&#225;s?</p>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <div style="display:flex;align-items:flex-start;gap:12px;">
-          <span style="font-size:20px;line-height:1;flex-shrink:0;">&#127981;</span>
-          <div><p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Juguetes educativos de calidad</p><p style="color:#6b7280;font-size:13px;margin:0;">Curados para cada etapa del desarrollo.</p></div>
-        </div>
-        <div style="display:flex;align-items:flex-start;gap:12px;">
-          <span style="font-size:20px;line-height:1;flex-shrink:0;">&#127873;</span>
-          <div><p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Ofertas y novedades primero</p><p style="color:#6b7280;font-size:13px;margin:0;">Acceso anticipado a lanzamientos y descuentos.</p></div>
-        </div>
-        <div style="display:flex;align-items:flex-start;gap:12px;">
-          <span style="font-size:20px;line-height:1;flex-shrink:0;">&#128218;</span>
-          <div><p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Contenido sobre crianza y aprendizaje</p><p style="color:#6b7280;font-size:13px;margin:0;">Tips e ideas para estimular a tus hijos.</p></div>
-        </div>
-      </div>
-    </div>
-    <div style="text-align:center;margin:28px 0;">
-      <a href="https://www.happylapiz.cl" style="background:#682ae7;color:#fff;font-weight:700;padding:14px 40px;border-radius:30px;text-decoration:none;font-size:15px;display:inline-block;">Ver cat&#225;logo &#8594;</a>
-    </div>
-  </div>
-  <div style="border-top:1px solid #f3f4f6;padding:20px 32px;text-align:center;">
-    <img src="__LOGO_PNG__" alt="Happy L&#225;piz" width="100" style="height:auto;display:inline-block;opacity:0.5;margin-bottom:10px;" />
-    <p style="font-size:12px;color:#d1d5db;margin:4px 0;">Juguetes educativos &middot; Chile</p>
-    <p style="font-size:12px;color:#d1d5db;margin:6px 0;"><a href="##unsub##" style="color:#d1d5db;">Cancelar suscripci&#243;n</a></p>
-  </div>
-</div>""",
+        "composition": "bienvenida",
     },
     {
-        "name":    "Vacaciones — Juguetes para tus peques",
-        "subject": VACACIONES_SUBJECT,
-        "preview": VACACIONES_PREVIEW,
+        "name":    VACACIONES_NAME,
+        "subject": "{{nombre or 'Hola'}}, ideas para las vacaciones de tus pequeños ☀️",
+        "preview": "Juegos, creatividad y aprendizaje para que disfruten al máximo sus vacaciones.",
         "segment": "Todos los suscriptores",
         "composition": "vacaciones",
     },
     {
         "name":    GALERIA_NAME,
-        "subject": GALERIA_SUBJECT,
-        "preview": GALERIA_PREVIEW,
+        "subject": "Galería interna — opciones de bloques",
+        "preview": "Plantilla de referencia para elegir bloques favoritos. No usar en campañas.",
         "segment": "_none",
         "composition": "galeria",
     },
@@ -232,14 +186,8 @@ def seed_templates(
     for t in SEED_TEMPLATES:
         existing_tpl = session.exec(select(Template).where(Template.name == t["name"])).first()
         composition = t.get("composition")
-        if composition == "vacaciones":
-            blocks = vacaciones_blocks()
-            html = blocks_to_html(blocks)
-            json_blocks = blocks
-        elif composition == "galeria":
-            blocks = galeria_blocks()
-            html = blocks_to_html(blocks)
-            json_blocks = blocks
+        if composition:
+            json_blocks, html = resolve_composition(composition)
         else:
             json_blocks = None
             html = t["html"].replace("__LOGO_PNG__", logo_url).replace("__HL_LOGO__", logo_url).replace("__CROSS_SELL__", CROSS_SELL_TEMPLATE_HTML)
