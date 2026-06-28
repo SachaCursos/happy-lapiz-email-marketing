@@ -76,6 +76,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const [editForm, setEditForm] = useState<{
     name: string; subject: string; preview_text: string;
     segment_id: number; template_id: number; scheduled_at: string;
+    exclude_segment_ids: number[];
   } | null>(null);
   type SortCol = "name" | "sent_at" | "delivered_at" | "opened_at" | "clicked_at" | "bounced_at" | "opted_in";
   const [sortCol, setSortCol] = useState<SortCol>("sent_at");
@@ -97,6 +98,18 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     queryFn: () => templatesApi.list().then((r) => r.data),
     enabled: editing,
   });
+
+  function toggleExclude(id: number) {
+    setEditForm((f) => {
+      if (!f) return f;
+      return {
+        ...f,
+        exclude_segment_ids: f.exclude_segment_ids.includes(id)
+          ? f.exclude_segment_ids.filter((x) => x !== id)
+          : [...f.exclude_segment_ids, id],
+      };
+    });
+  }
 
   const updateMutation = useMutation({
     mutationFn: (data: Parameters<typeof campaignsApi.update>[1]) => campaignsApi.update(id, data),
@@ -220,6 +233,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                   preview_text: campaign.preview_text ?? "",
                   segment_id: campaign.segment_id,
                   template_id: campaign.template_id,
+                  exclude_segment_ids: campaign.exclude_segment_ids ?? [],
                   scheduled_at: campaign.scheduled_at
                     ? utcToLocalInput(campaign.scheduled_at)
                     : "",
@@ -357,7 +371,16 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Segmento</label>
-              <select value={editForm.segment_id} onChange={(e) => setEditForm((f) => f && ({ ...f, segment_id: Number(e.target.value) }))}
+              <select
+                value={editForm.segment_id}
+                onChange={(e) => {
+                  const segment_id = Number(e.target.value);
+                  setEditForm((f) => f && ({
+                    ...f,
+                    segment_id,
+                    exclude_segment_ids: f.exclude_segment_ids.filter((x) => x !== segment_id),
+                  }));
+                }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
                 <option value={0}>— Seleccionar —</option>
                 {segments.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.contact_count?.toLocaleString()} contactos)</option>)}
@@ -371,6 +394,39 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                 {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Excluir segmentos</h3>
+            <p className="text-xs text-gray-400 mb-3">Opcional — los contactos de estos segmentos no recibirán la campaña</p>
+            {segments.length === 0 ? (
+              <p className="text-sm text-gray-500">No hay segmentos disponibles.</p>
+            ) : (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {segments
+                  .filter((s) => s.id !== editForm.segment_id)
+                  .map((s) => {
+                    const checked = editForm.exclude_segment_ids.includes(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => toggleExclude(s.id)}
+                        className={`w-full flex items-center gap-3 px-4 py-3 border rounded-xl text-left transition-colors ${checked ? "border-red-300 bg-red-50" : "border-gray-200 hover:border-gray-300"}`}
+                      >
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${checked ? "border-red-400 bg-red-400" : "border-gray-300"}`}>
+                          {checked && <X size={10} className="text-white" strokeWidth={3} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-gray-900 text-sm">{s.name}</p>
+                          {s.description && <p className="text-xs text-gray-400 truncate">{s.description}</p>}
+                        </div>
+                        <span className="text-sm font-semibold text-gray-500 shrink-0">{s.contact_count?.toLocaleString()}</span>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
           </div>
 
           <div>
@@ -406,6 +462,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                   preview_text: editForm.preview_text || undefined,
                   segment_id: editForm.segment_id || undefined,
                   template_id: editForm.template_id || undefined,
+                  exclude_segment_ids: editForm.exclude_segment_ids,
                   scheduled_at: editForm.scheduled_at ? new Date(editForm.scheduled_at).toISOString() : null,
                   status: editForm.scheduled_at ? "scheduled" : "draft",
                 });
