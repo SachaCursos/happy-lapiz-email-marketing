@@ -376,7 +376,10 @@ def _ensure_shopify_products_table() -> None:
                 "UNIQUE (shopify_id)"
             ))
 
-        _repair_shopify_products_id_sequence(conn)
+        try:
+            _repair_shopify_products_id_sequence(conn)
+        except Exception as exc:
+            logger.warning("shopify_products id sequence repair skipped: %s", exc)
 
 
 def _repair_shopify_products_id_sequence(conn) -> None:
@@ -410,6 +413,9 @@ def _repair_shopify_products_id_sequence(conn) -> None:
         conn.execute(text(f"SELECT setval('{seq}', 1, false)"))
     else:
         conn.execute(text(f"SELECT setval('{seq}', :max_id, true)"), {"max_id": int(max_id)})
+
+
+def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict], str | None]:
     """Fetch active products from Shopify Admin GraphQL (includes totalInventory)."""
     gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
     headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
@@ -454,6 +460,9 @@ def _repair_shopify_products_id_sequence(conn) -> None:
             data = (payload.get("data") or {}).get("products") or {}
             for edge in data.get("edges") or []:
                 node = edge.get("node") or {}
+                legacy_id = node.get("legacyResourceId")
+                if not legacy_id:
+                    continue
                 variant_edges = (node.get("variants") or {}).get("edges") or []
                 price = 0.0
                 if variant_edges:
@@ -471,7 +480,7 @@ def _repair_shopify_products_id_sequence(conn) -> None:
                     inventory_total = int(inv_raw or 0)
                 tags = node.get("tags") or []
                 all_products.append({
-                    "id": int(node["legacyResourceId"]),
+                    "id": int(legacy_id),
                     "title": node.get("title") or "",
                     "handle": node.get("handle") or "",
                     "product_type": node.get("productType") or "",
