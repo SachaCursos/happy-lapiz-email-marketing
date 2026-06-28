@@ -118,6 +118,57 @@ export function applyHeroTypography(html: string, patch: Partial<HeroTypography>
   }
 }
 
+function normalizeText(s: string | null | undefined): string {
+  return (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function isElementEmpty(el: Element): boolean {
+  if (el.querySelector("img, table, a[href]")) return false;
+  const clone = el.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("br").forEach((b) => b.remove());
+  return !normalizeText(clone.textContent);
+}
+
+/** Remove empty table rows, paragraphs and wrapper divs left after inline editing. */
+export function pruneEmptyHtmlContent(html: string): string {
+  if (!html?.trim()) return html;
+  try {
+    const root = parseRoot(html);
+    if (!root) return html;
+
+    root.querySelectorAll("tr").forEach((tr) => {
+      const tds = tr.querySelectorAll("td");
+      let hasContent = false;
+      if (tds.length >= 2) {
+        hasContent = !isElementEmpty(tds[tds.length - 1]);
+      } else {
+        hasContent = !isElementEmpty(tr);
+      }
+      if (!hasContent) tr.remove();
+    });
+
+    root.querySelectorAll("p").forEach((p) => {
+      if (isElementEmpty(p)) p.remove();
+    });
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      [...root.querySelectorAll("div")].forEach((div) => {
+        if (div === root) return;
+        if (isElementEmpty(div)) {
+          div.remove();
+          changed = true;
+        }
+      });
+    }
+
+    return root.innerHTML.trim();
+  } catch {
+    return html;
+  }
+}
+
 export function syncTextBlockColor(html: string, color: string): string {
   if (!html?.trim()) return html;
   try {

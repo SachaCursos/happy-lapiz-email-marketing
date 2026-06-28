@@ -7,7 +7,7 @@ import {
   AlignLeft, AlignCenter, AlignRight, Send, Copy,
 } from "lucide-react";
 import { shopifyApi, ShopifyProduct, api, adminApi, favoriteBlocksApi, FavoriteBlock } from "@/lib/api";
-import { syncTextBlockColor, extractTextColorFromHtml, cloneBlockProps, isHeroTextBlock, getHeroTypography, applyHeroTypography } from "@/lib/templateBlockUtils";
+import { syncTextBlockColor, extractTextColorFromHtml, cloneBlockProps, isHeroTextBlock, getHeroTypography, applyHeroTypography, pruneEmptyHtmlContent } from "@/lib/templateBlockUtils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 
@@ -1419,7 +1419,7 @@ function InlineTextEditor({
         contentEditable
         suppressContentEditableWarning
         style={{ ...style, outline: "none", cursor: "text", minHeight: 40 }}
-        onBlur={(e) => onCommit(e.currentTarget.innerHTML)}
+        onBlur={(e) => onCommit(pruneEmptyHtmlContent(e.currentTarget.innerHTML))}
         onClick={(e) => e.stopPropagation()}
         onKeyUp={() => rerender((n) => n + 1)}
         onMouseUp={() => rerender((n) => n + 1)}
@@ -1640,7 +1640,7 @@ function PropsPanel({
             </div>
           ) : (
             <>
-              <textarea value={p.content as string} onChange={(e) => set("content", e.target.value)} rows={9}
+              <textarea value={p.content as string} onChange={(e) => set("content", pruneEmptyHtmlContent(e.target.value))} rows={9}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none" />
               <p className="text-xs text-gray-400 mt-1">Variables: {"{{ nombre }}"}, {"{{ coupon_code }}"}</p>
             </>
@@ -1663,6 +1663,13 @@ function PropsPanel({
           <Field label="Padding vertical"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} /></Field>
           <Field label="Padding horizontal"><NI value={p.padding_x as string} onChange={(v) => set("padding_x", v)} /></Field>
         </div>
+        <button
+          type="button"
+          onClick={() => set("content", pruneEmptyHtmlContent(p.content as string))}
+          className="w-full text-xs text-gray-600 hover:text-gray-900 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          Quitar filas y espacios vacíos
+        </button>
       </>}
 
       {block.type === "image" && <>
@@ -2772,11 +2779,12 @@ export function TemplateBlockEditor({
                                   fontFamily: (block.props.font_family as string) || undefined,
                                 }}
                                 onCommit={(html) => {
+                                  const cleaned = pruneEmptyHtmlContent(html);
                                   const tc = extractTextColorFromHtml(
-                                    html,
+                                    cleaned,
                                     (block.props.text_color as string) || "#222222"
                                   );
-                                  update(block.id, { ...block.props, content: html, text_color: tc });
+                                  update(block.id, { ...block.props, content: cleaned, text_color: tc });
                                   setEditingId(null);
                                 }}
                               />
