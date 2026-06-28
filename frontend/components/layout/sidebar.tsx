@@ -20,6 +20,7 @@ import {
   Braces,
   ShoppingBag,
   Code2,
+  Star,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ const nav = [
   { href: "/products",    label: "Productos",          icon: ShoppingBag },
   { href: "/variables",   label: "Variables",         icon: Braces },
   { href: "/html-blocks", label: "Bloques HTML",      icon: Code2 },
+  { href: "/favorite-blocks", label: "Bloques favoritos", icon: Star },
   { href: "/forms",        label: "Formularios",      icon: MousePointerClick },
   { href: "/asuntos",      label: "Asuntos",          icon: BarChart2 },
   { href: "/coupons",      label: "Cupones",           icon: Tag },

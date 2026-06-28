@@ -146,6 +146,25 @@ export interface DynamicHtmlBlock {
   updated_at: string;
 }
 
+export interface FavoriteBlock {
+  id: number;
+  name: string;
+  block_type: string;
+  props: Record<string, string | number | boolean>;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const favoriteBlocksApi = {
+  list: () => api.get<FavoriteBlock[]>("/favorite-blocks"),
+  create: (data: { name: string; block_type: string; props: Record<string, unknown>; sort_order?: number }) =>
+    api.post<FavoriteBlock>("/favorite-blocks", data),
+  update: (id: number, data: Partial<{ name: string; block_type: string; props: Record<string, unknown>; sort_order: number }>) =>
+    api.patch<FavoriteBlock>(`/favorite-blocks/${id}`, data),
+  delete: (id: number) => api.delete(`/favorite-blocks/${id}`),
+};
+
 export const htmlBlocksApi = {
   list: () => api.get<DynamicHtmlBlock[]>("/html-blocks"),
   get: (key: string) => api.get<DynamicHtmlBlock>(`/html-blocks/${key}`),

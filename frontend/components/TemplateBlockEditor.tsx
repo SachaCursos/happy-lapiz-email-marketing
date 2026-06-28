@@ -6,7 +6,9 @@ import {
   Star, X, Monitor, Smartphone, Search, Link as LinkIcon,
   AlignLeft, AlignCenter, AlignRight, Send, Copy,
 } from "lucide-react";
-import { shopifyApi, ShopifyProduct, api, adminApi } from "@/lib/api";
+import { shopifyApi, ShopifyProduct, api, adminApi, favoriteBlocksApi, FavoriteBlock } from "@/lib/api";
+import { syncTextBlockColor, extractTextColorFromHtml } from "@/lib/templateBlockUtils";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -115,6 +117,7 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
   text: {
     content: `<p style="margin:0;font-size:15px;line-height:1.75;color:#222222;font-family:'Helvetica Neue',Arial,sans-serif;">Hola, <strong>{{ nombre }}</strong> 👋<br/><br/>Escribe tu mensaje aquí.</p>`,
     bg_color: "#ffffff",
+    text_color: "#222222",
     padding_y: "24",
     padding_x: "32",
     font_family: "'Helvetica Neue', Arial, sans-serif",
@@ -208,15 +211,28 @@ const PALETTE: { type: BlockType; label: string; sub: string }[] = [
 
 const FAV_KEY = "hl_template_favorites";
 
-function loadFavorites(): Block[] {
+function migrateLocalFavorites(): FavoriteBlock[] | null {
   try {
     const raw = localStorage.getItem(FAV_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Block[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    return parsed.map((f, i) => ({
+      id: -(i + 1),
+      name: f._favName || PALETTE.find((x) => x.type === f.type)?.label || f.type,
+      block_type: f.type,
+      props: f.props,
+      sort_order: 1000 + i * 10,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+  } catch {
+    return null;
+  }
 }
 
-function saveFavorites(favs: Block[]) {
-  try { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); } catch { /* noop */ }
+function clearLocalFavorites() {
+  try { localStorage.removeItem(FAV_KEY); } catch { /* noop */ }
 }
 
 // ── HTML → Blocks parser ───────────────────────────────────────────────────────
@@ -237,6 +253,14 @@ export function htmlToBlocks(htmlStr: string): Block[] {
     return "#" + [m[1], m[2], m[3]].map((n) => (+n).toString(16).padStart(2, "0")).join("");
   }
   function normColor(s: string): string { return s.startsWith("rgb") ? rgb2hex(s) : s || "#ffffff"; }
+  function textProps(content: string, extra: Record<string, string | number | boolean> = {}) {
+    return {
+      ...DEFAULTS.text,
+      content,
+      text_color: extractTextColorFromHtml(content, "#222222"),
+      ...extra,
+    };
+  }
   function bgColor(el: Element): string {
     let cur: Element | null = el;
     while (cur && cur.tagName !== "HTML") {
@@ -443,7 +467,7 @@ export function htmlToBlocks(htmlStr: string): Block[] {
             };
             const py = Math.round((parsePad("padding-top", 9) + parsePad("padding-bottom", 9)) / 2);
             const px = Math.round((parsePad("padding-right", 18) + parsePad("padding-left", 18)) / 2);
-            blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content: cleanKlaviyoText(el), bg_color: bg, padding_y: String(py), padding_x: String(px) } });
+            blocks.push({ id: uid("text"), type: "text", props: textProps(cleanKlaviyoText(el), { bg_color: bg, padding_y: String(py), padding_x: String(px) }) });
           }
           continue;
         }
@@ -528,7 +552,7 @@ export function htmlToBlocks(htmlStr: string): Block[] {
         // Text (catch-all)
         const content = sec.innerHTML.trim();
         if (content && text.replace(/\s/g, "").length > 0) {
-          blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content, bg_color: bg } });
+          blocks.push({ id: uid("text"), type: "text", props: textProps(content, { bg_color: bg }) });
         }
       }
       return blocks;
@@ -639,7 +663,7 @@ export function htmlToBlocks(htmlStr: string): Block[] {
         // Text block
         const content = sec.innerHTML.trim();
         if (content && text.replace(/\s/g, "").length > 0) {
-          blocks.push({ id: uid("text"), type: "text", props: { ...DEFAULTS.text, content, bg_color: bg } });
+          blocks.push({ id: uid("text"), type: "text", props: textProps(content, { bg_color: bg }) });
         }
       }
 
@@ -653,7 +677,7 @@ export function htmlToBlocks(htmlStr: string): Block[] {
           blocks.push({
             id: uid("text"),
             type: "text",
-            props: { ...DEFAULTS.text, content: bodyContent, bg_color: "#ffffff" },
+            props: textProps(bodyContent, { bg_color: "#ffffff" }),
           });
         }
       }
@@ -688,7 +712,8 @@ function blockHtml(block: Block): string {
 
     case "text": {
       const ff = (p.font_family as string) || "'Helvetica Neue', Arial, sans-serif";
-      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;font-family:${ff};word-break:break-word;overflow-wrap:break-word;">
+      const tc = (p.text_color as string) || "#222222";
+      return `<div style="background:${p.bg_color};padding:${p.padding_y}px ${p.padding_x}px;font-family:${ff};color:${tc};word-break:break-word;overflow-wrap:break-word;">
   ${p.content}
 </div>`;
     }
@@ -967,7 +992,7 @@ export function parseJsonBlocks(raw: unknown): Block[] {
 }
 
 // ── Canvas block visual preview ────────────────────────────────────────────────
-function BlockPreview({ block, compact = false }: { block: Block; compact?: boolean }) {
+export function BlockPreview({ block, compact = false }: { block: Block; compact?: boolean }) {
   const p = block.props;
   const [imgError, setImgError] = useState(false);
   const logoUrl = p.logo_url as string | undefined;
@@ -1016,7 +1041,13 @@ function BlockPreview({ block, compact = false }: { block: Block; compact?: bool
     case "text":
       return (
         <div
-          style={{ background: p.bg_color as string, padding: `${p.padding_y}px ${p.padding_x}px`, fontSize: 13 }}
+          style={{
+            background: p.bg_color as string,
+            padding: `${p.padding_y}px ${p.padding_x}px`,
+            fontSize: 13,
+            color: (p.text_color as string) || undefined,
+            fontFamily: (p.font_family as string) || undefined,
+          }}
           dangerouslySetInnerHTML={{ __html: p.content as string }}
         />
       );
@@ -1271,7 +1302,17 @@ function InlineTextEditor({
     if (!sel || sel.rangeCount === 0) return;
     const range = sel.getRangeAt(0);
     if (range.collapsed) {
-      if (prop === "color") execFmt("foreColor", value);
+      if (prop === "color" && ref.current) {
+        ref.current.querySelectorAll("p, span, div, li, strong, em, b, i, h1, h2, h3, h4, a").forEach((el) => {
+          (el as HTMLElement).style.color = value;
+        });
+        if (!ref.current.querySelector("p, span, div, li, h1, h2, h3, h4")) {
+          ref.current.style.color = value;
+        }
+        rerender((n) => n + 1);
+      } else if (prop === "color") {
+        execFmt("foreColor", value);
+      }
       return;
     }
     const span = document.createElement("span");
@@ -1581,6 +1622,12 @@ function PropsPanel({
           </select>
         </Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
+        <Field label="Color del texto">
+          <CI
+            value={(p.text_color as string) || extractTextColorFromHtml(p.content as string, "#222222")}
+            onChange={(v) => onChange({ ...p, text_color: v, content: syncTextBlockColor(p.content as string, v) })}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Padding vertical"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} /></Field>
           <Field label="Padding horizontal"><NI value={p.padding_x as string} onChange={(v) => set("padding_x", v)} /></Field>
@@ -2012,7 +2059,12 @@ export function TemplateBlockEditor({
     initialMode === "plain" ? "plain" : "editor"
   );
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
-  const [favorites, setFavorites] = useState<Block[]>(() => loadFavorites());
+  const qc = useQueryClient();
+  const starterAppliedRef = useRef(false);
+  const { data: serverFavorites = [] } = useQuery({
+    queryKey: ["favorite-blocks"],
+    queryFn: () => favoriteBlocksApi.list().then((r) => r.data),
+  });
   const [varsOpen, setVarsOpen] = useState(false);
   const [productPickerBlockId, setProductPickerBlockId] = useState<string | null>(null);
   const [htmlOverride, setHtmlOverride] = useState<string | null>(initialHtmlOverride ?? null);
@@ -2032,6 +2084,51 @@ export function TemplateBlockEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  // Migrate legacy localStorage favorites to the server (once).
+  useEffect(() => {
+    const legacy = migrateLocalFavorites();
+    if (!legacy?.length) return;
+    (async () => {
+      for (const fav of legacy) {
+        try {
+          await favoriteBlocksApi.create({
+            name: fav.name,
+            block_type: fav.block_type,
+            props: fav.props,
+            sort_order: fav.sort_order,
+          });
+        } catch { /* skip duplicates */ }
+      }
+      clearLocalFavorites();
+      qc.invalidateQueries({ queryKey: ["favorite-blocks"] });
+    })();
+  }, [qc]);
+
+  // Preload favorite blocks when creating a new template.
+  useEffect(() => {
+    if (starterAppliedRef.current) return;
+    if (templateId) {
+      starterAppliedRef.current = true;
+      return;
+    }
+    if (initialBlocks.length > 0) {
+      starterAppliedRef.current = true;
+      return;
+    }
+    if (htmlOverride) {
+      starterAppliedRef.current = true;
+      return;
+    }
+    if (serverFavorites.length === 0) return;
+    const starter = serverFavorites.map((f, i) => ({
+      id: `${f.block_type}_${Date.now()}_${i}`,
+      type: f.block_type as BlockType,
+      props: { ...DEFAULTS[f.block_type as BlockType], ...f.props },
+    }));
+    setBlocks(starter);
+    starterAppliedRef.current = true;
+  }, [serverFavorites, initialBlocks.length, htmlOverride, templateId]);
+
   const selected = blocks.find((b) => b.id === selectedId) ?? null;
   const isPlainMode = tab === "plain";
 
@@ -2042,28 +2139,43 @@ export function TemplateBlockEditor({
     if (tab !== "editor") setTab("editor");
   }
 
-  function addFavorite(fav: Block) {
-    const b: Block = { ...fav, id: `${fav.type}_${Date.now()}` };
+  function addFavorite(fav: FavoriteBlock) {
+    const b: Block = {
+      id: `${fav.block_type}_${Date.now()}`,
+      type: fav.block_type as BlockType,
+      props: { ...DEFAULTS[fav.block_type as BlockType], ...fav.props },
+    };
     setBlocks((prev) => [...prev, b]);
     setSelectedId(b.id);
     if (tab !== "editor") setTab("editor");
   }
 
-  function removeFavorite(id: string) {
-    const next = favorites.filter((f) => f.id !== id);
-    setFavorites(next);
-    saveFavorites(next);
+  async function removeFavorite(id: number) {
+    if (!window.confirm("¿Eliminar este bloque favorito?")) return;
+    try {
+      await favoriteBlocksApi.delete(id);
+      qc.invalidateQueries({ queryKey: ["favorite-blocks"] });
+    } catch {
+      alert("No se pudo eliminar el favorito.");
+    }
   }
 
-  function saveToFavorites() {
+  async function saveToFavorites() {
     if (!selected) return;
     const defaultName = PALETTE.find((x) => x.type === selected.type)?.label ?? selected.type;
     const name = window.prompt("Nombre para este favorito:", defaultName);
     if (name === null) return;
-    const fav: Block = { ...selected, id: `fav_${Date.now()}`, _favName: name.trim() || defaultName };
-    const next = [...favorites, fav];
-    setFavorites(next);
-    saveFavorites(next);
+    try {
+      await favoriteBlocksApi.create({
+        name: name.trim() || defaultName,
+        block_type: selected.type,
+        props: selected.props,
+        sort_order: serverFavorites.length * 10 + 10,
+      });
+      qc.invalidateQueries({ queryKey: ["favorite-blocks"] });
+    } catch {
+      alert("No se pudo guardar el favorito.");
+    }
   }
 
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -2328,22 +2440,21 @@ export function TemplateBlockEditor({
                 ))}
               </div>
 
-              {favorites.length > 0 && (
+              {serverFavorites.length > 0 && (
                 <>
                   <p className="text-xs font-bold text-amber-500 uppercase tracking-widest px-4 pt-4 pb-2 flex items-center gap-1.5">
                     <Star size={11} /> Favoritos
                   </p>
                   <div className="px-2 pb-4 space-y-0.5">
-                    {favorites.map((fav) => {
-                      const label = fav._favName || PALETTE.find((x) => x.type === fav.type)?.label || fav.type;
-                      const typeSub = PALETTE.find((x) => x.type === fav.type)?.sub ?? "";
+                    {serverFavorites.map((fav) => {
+                      const typeSub = PALETTE.find((x) => x.type === fav.block_type)?.sub ?? "";
                       return (
                         <div key={fav.id} className="flex items-center gap-1 group">
                           <button onClick={() => addFavorite(fav)}
                             className="flex-1 flex items-start gap-2 px-3 py-2 rounded-lg text-left hover:bg-white hover:shadow-sm border border-transparent hover:border-amber-200 transition-all">
                             <Star size={11} className="text-amber-400 shrink-0 mt-0.5" />
                             <div className="min-w-0">
-                              <p className="text-xs font-semibold text-gray-700 truncate">{label}</p>
+                              <p className="text-xs font-semibold text-gray-700 truncate">{fav.name}</p>
                               {typeSub && <p className="text-xs text-gray-400 truncate">{typeSub}</p>}
                             </div>
                           </button>
@@ -2529,7 +2640,11 @@ export function TemplateBlockEditor({
                                   fontFamily: (block.props.font_family as string) || undefined,
                                 }}
                                 onCommit={(html) => {
-                                  update(block.id, { ...block.props, content: html });
+                                  const tc = extractTextColorFromHtml(
+                                    html,
+                                    (block.props.text_color as string) || "#222222"
+                                  );
+                                  update(block.id, { ...block.props, content: html, text_color: tc });
                                   setEditingId(null);
                                 }}
                               />
