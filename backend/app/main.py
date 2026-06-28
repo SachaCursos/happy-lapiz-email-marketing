@@ -51,6 +51,8 @@ def on_startup():
     try:
         with Session(engine) as session:
             ensure_managed_block_templates(session)
+            from app.services.birthday_automation_seed import ensure_birthday_reminder_setup
+            ensure_birthday_reminder_setup(session)
     except Exception:
         pass  # DB may not be ready on first deploy tick
 

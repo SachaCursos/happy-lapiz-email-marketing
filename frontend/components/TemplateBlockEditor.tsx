@@ -1267,6 +1267,56 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
   }
 }
 
+const LINK_STYLE = "color:#2a2ee7;text-decoration:underline;";
+
+function promptTextLink(selectedFallback = "texto del enlace"): { href: string; label: string } | null {
+  const href = window.prompt("URL del enlace:", "https://www.happylapiz.cl");
+  if (!href?.trim()) return null;
+  const label = window.prompt("Texto del enlace:", selectedFallback);
+  if (!label?.trim()) return null;
+  return { href: href.trim(), label: label.trim() };
+}
+
+function insertLinkHtml(label: string, href: string): string {
+  const safeHref = href.replace(/"/g, "&quot;");
+  return `<a href="${safeHref}" style="${LINK_STYLE}">${label}</a>`;
+}
+
+function insertLinkInHtmlString(value: string, start: number, end: number): string | null {
+  const selected = value.slice(start, end);
+  const picked = promptTextLink(selected || "texto del enlace");
+  if (!picked) return null;
+  return value.slice(0, start) + insertLinkHtml(picked.label, picked.href) + value.slice(end);
+}
+
+function insertLinkInContentEditable(container: HTMLElement | null): boolean {
+  if (!container) return false;
+  container.focus();
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return false;
+  const range = sel.getRangeAt(0);
+  const selectedText = range.toString();
+  const picked = promptTextLink(selectedText || "texto del enlace");
+  if (!picked) return false;
+
+  const anchor = document.createElement("a");
+  anchor.href = picked.href;
+  anchor.style.cssText = LINK_STYLE;
+  if (range.collapsed) {
+    anchor.textContent = picked.label;
+    range.insertNode(anchor);
+    range.setStartAfter(anchor);
+    range.collapse(true);
+  } else {
+    anchor.appendChild(range.extractContents());
+    range.insertNode(anchor);
+    range.selectNodeContents(anchor);
+  }
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
+}
+
 // ── Inline text editor (contentEditable) with rich-text toolbar ───────────────
 function InlineTextEditor({
   content,
@@ -1292,6 +1342,12 @@ function InlineTextEditor({
     sel?.addRange(range);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function insertLink() {
+    if (insertLinkInContentEditable(ref.current)) {
+      rerender((n) => n + 1);
+    }
+  }
 
   function execFmt(cmd: string, value?: string) {
     ref.current?.focus();
@@ -1353,6 +1409,16 @@ function InlineTextEditor({
           className={`${tb} italic ${isActive("italic") ? on : off}`} title="Cursiva (Ctrl+I)">I</button>
         <button onMouseDown={(e) => { e.preventDefault(); execFmt("underline"); }}
           className={`${tb} underline ${isActive("underline") ? on : off}`} title="Subrayado (Ctrl+U)">U</button>
+
+        <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
+
+        <button
+          onMouseDown={(e) => { e.preventDefault(); insertLink(); }}
+          className={`${tb} ${off}`}
+          title="Insertar enlace (Ctrl+K)"
+        >
+          <LinkIcon size={13} />
+        </button>
 
         <div className="w-px h-4 bg-gray-200 mx-0.5 shrink-0" />
 
@@ -1426,6 +1492,10 @@ function InlineTextEditor({
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape") e.currentTarget.blur();
+          if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+            e.preventDefault();
+            insertLink();
+          }
         }}
       />
     </div>
@@ -1581,6 +1651,18 @@ function PropsPanel({
 }) {
   const p = block.props;
   const set = (k: string, v: string | number | boolean) => onChange({ ...p, [k]: v });
+  const textContentRef = useRef<HTMLTextAreaElement>(null);
+
+  function insertLinkInContentField() {
+    const ta = textContentRef.current;
+    if (!ta) return;
+    const next = insertLinkInHtmlString(
+      p.content as string,
+      ta.selectionStart,
+      ta.selectionEnd,
+    );
+    if (next != null) set("content", pruneEmptyHtmlContent(next));
+  }
 
   return (
     <div className="space-y-4">
@@ -1640,8 +1722,23 @@ function PropsPanel({
             </div>
           ) : (
             <>
-              <textarea value={p.content as string} onChange={(e) => set("content", pruneEmptyHtmlContent(e.target.value))} rows={9}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none" />
+              <div className="flex items-center gap-2 mb-1.5">
+                <button
+                  type="button"
+                  onClick={insertLinkInContentField}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-gray-700 border border-gray-200 hover:bg-gray-50 transition-colors"
+                >
+                  <LinkIcon size={12} /> Insertar enlace
+                </button>
+                <span className="text-[10px] text-gray-400">Selecciona texto o usa el botón</span>
+              </div>
+              <textarea
+                ref={textContentRef}
+                value={p.content as string}
+                onChange={(e) => set("content", pruneEmptyHtmlContent(e.target.value))}
+                rows={9}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+              />
               <p className="text-xs text-gray-400 mt-1">Variables: {"{{ nombre }}"}, {"{{ coupon_code }}"}</p>
             </>
           )}

@@ -18,6 +18,15 @@ from app.services.favorite_blocks_seed import (
     BIENVENIDA_NAME,
     BIENVENIDA_PREVIEW,
     BIENVENIDA_SUBJECT,
+    BIRTHDAY_7_NAME,
+    BIRTHDAY_7_PREVIEW,
+    BIRTHDAY_7_SUBJECT,
+    BIRTHDAY_15_NAME,
+    BIRTHDAY_15_PREVIEW,
+    BIRTHDAY_15_SUBJECT,
+    BIRTHDAY_30_NAME,
+    BIRTHDAY_30_PREVIEW,
+    BIRTHDAY_30_SUBJECT,
     GALERIA_NAME,
     GALERIA_PREVIEW,
     GALERIA_SUBJECT,
@@ -25,6 +34,9 @@ from app.services.favorite_blocks_seed import (
     VACACIONES_PREVIEW,
     VACACIONES_SUBJECT,
     bienvenida_blocks,
+    birthday_reminder_7_blocks,
+    birthday_reminder_15_blocks,
+    birthday_reminder_30_blocks,
     galeria_blocks,
     vacaciones_blocks,
 )
@@ -36,6 +48,9 @@ COMPOSITIONS: dict[str, BlockListFn] = {
     "vacaciones": vacaciones_blocks,
     "galeria": galeria_blocks,
     "bienvenida": bienvenida_blocks,
+    "birthday_30": birthday_reminder_30_blocks,
+    "birthday_15": birthday_reminder_15_blocks,
+    "birthday_7": birthday_reminder_7_blocks,
 }
 
 # Auto-upserted on startup / list templates (block editor source of truth)
@@ -57,6 +72,24 @@ MANAGED_BLOCK_TEMPLATES: list[dict] = [
         "name": BIENVENIDA_NAME,
         "subject": BIENVENIDA_SUBJECT,
         "preview": BIENVENIDA_PREVIEW,
+    },
+    {
+        "composition": "birthday_30",
+        "name": BIRTHDAY_30_NAME,
+        "subject": BIRTHDAY_30_SUBJECT,
+        "preview": BIRTHDAY_30_PREVIEW,
+    },
+    {
+        "composition": "birthday_15",
+        "name": BIRTHDAY_15_NAME,
+        "subject": BIRTHDAY_15_SUBJECT,
+        "preview": BIRTHDAY_15_PREVIEW,
+    },
+    {
+        "composition": "birthday_7",
+        "name": BIRTHDAY_7_NAME,
+        "subject": BIRTHDAY_7_SUBJECT,
+        "preview": BIRTHDAY_7_PREVIEW,
     },
 ]
 

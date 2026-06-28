@@ -536,3 +536,220 @@ BIENVENIDA_PREVIEW = "Nos alegra tenerte aquí. Descubre nuestro catálogo de ju
 GALERIA_NAME = "Galería — Opciones de bloques (no enviar)"
 GALERIA_SUBJECT = "Galería interna — opciones de bloques"
 GALERIA_PREVIEW = "Plantilla de referencia para elegir bloques favoritos. No usar en campañas."
+
+BIRTHDAY_30_NAME = "Cumpleaños regalado — 30 días antes"
+BIRTHDAY_30_SUBJECT = "{{ nombre_regalado or 'Tu peque' }} cumple en 30 días — regalo doble en Happy Lápiz 🎁"
+BIRTHDAY_30_PREVIEW = "Compra 1 regalo y enviamos 1 producto de regalo. Tu código exclusivo está aquí."
+
+BIRTHDAY_15_NAME = "Cumpleaños regalado — 15 días antes"
+BIRTHDAY_15_SUBJECT = "Faltan 15 días para el cumple de {{ nombre_regalado or 'tu peque' }} — código REGALO 🎂"
+BIRTHDAY_15_PREVIEW = "Aún estás a tiempo de elegir el regalo perfecto con nuestra promo 1+1."
+
+BIRTHDAY_7_NAME = "Cumpleaños regalado — 7 días antes"
+BIRTHDAY_7_SUBJECT = "¡Última semana! El cumple de {{ nombre_regalado or 'tu peque' }} está a la vuelta 🎈"
+BIRTHDAY_7_PREVIEW = "Últimos días para usar tu código y recibir un regalo extra para el cumpleañero."
+
+
+def _regalo_promo_box() -> str:
+    return (
+        "<div style=\"background:#fdf2f8;border:1px solid #fbcfe8;border-radius:14px;padding:24px;\">"
+        "<p style=\"font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;"
+        "color:#db2777;margin:0 0 10px;\">Promoci&#243;n cumplea&#241;os 1+1</p>"
+        "<p style=\"margin:0 0 8px;font-size:17px;font-weight:800;color:#111;line-height:1.3;\">"
+        "Compra 1 regalo &#127873; y enviamos 1 regalo para "
+        "{{ nombre_regalado or 'tu peque' }}</p>"
+        f"<p style=\"margin:0;font-size:14px;color:#6b7280;line-height:1.6;font-family:{FF};\">"
+        "Usa tu c&#243;digo al comprar cualquier producto. Nosotros agregamos un producto de regalo "
+        "para sorprender a {{ relacion or nombre_regalado or 'tu peque' }} en su cumplea&#241;os."
+        "</p></div>"
+    )
+
+
+def _birthday_hero(days: int, *, urgent: bool = False) -> str:
+    if urgent:
+        subtitle = "&#218;ltima semana"
+        title = (
+            "&#161;El cumple de {{ nombre_regalado or 'tu peque' }} "
+            "est&#225; a la vuelta de la esquina!"
+        )
+        body = (
+            "Hola {{ first_name or nombre }}, quedan pocos d&#237;as. "
+            "Aprovecha tu c&#243;digo REGALO antes de que se acabe el tiempo."
+        )
+        bg = "#be185d"
+    elif days <= 15:
+        subtitle = f"Faltan {days} d&#237;as"
+        title = (
+            "El cumple de {{ nombre_regalado or 'tu peque' }} "
+            "se acerca &#127874;"
+        )
+        body = (
+            "Hola {{ first_name or nombre }}, es buen momento para elegir el regalo "
+            "y activar la promo: t&#250; compras uno, nosotros enviamos otro."
+        )
+        bg = "#db2777"
+    else:
+        subtitle = f"Faltan {days} d&#237;as"
+        title = (
+            "&#161;Ya falta poco para el cumple de {{ nombre_regalado or 'tu peque' }}!"
+        )
+        body = (
+            "Hola {{ first_name or nombre }}, queremos ayudarte a sorprender a "
+            "{{ nombre_regalado or 'tu peque' }} con un regalo que estimule su creatividad."
+        )
+        bg = "#ec4899"
+    return _hero_logo_content(
+        subtitle,
+        title,
+        body,
+        logo_width=92,
+        logo_margin_bottom=12,
+        subtitle_size=11,
+        title_size=21,
+        body_size=14,
+        text_gap=10,
+    )
+
+
+def _birthday_coupon_block() -> dict:
+    return make_block(
+        "coupon",
+        {
+            "title": "Tu c&#243;digo exclusivo REGALO",
+            "code": "{{ coupon_code }}",
+            "subtitle": "Sin descuento en precio — identifica tu pedido para el regalo 1+1",
+            "bg_color": "#ffffff",
+            "text_color": "#111111",
+            "border_color": "#db2777",
+        },
+        "coupon_bday",
+    )
+
+
+def _birthday_cta_block(block_id: str) -> dict:
+    return make_block(
+        "button",
+        {
+            "text": "Elegir regalo con beneficio 1+1 →",
+            "url": "https://www.happylapiz.cl/discount/{{ coupon_code }}?redirect=/collections/all",
+            "bg_color": "#db2777",
+            "text_color": "#ffffff",
+            "align": "center",
+            "border_radius": "30",
+            "font_size": "15",
+            "letter_spacing": "0",
+            "font_family": FF,
+            "full_width": False,
+        },
+        block_id,
+    )
+
+
+def _birthday_blocks(days: int, *, urgent: bool = False) -> list[dict]:
+    """Plantilla de recordatorio de cumpleaños para N días antes."""
+    if days <= 7 or urgent:
+        body_extra = (
+            f"<p style=\"margin:0;font-size:15px;line-height:1.75;color:#374151;font-family:{FF};\">"
+            "<strong>Recuerda:</strong> al usar tu c&#243;digo en el checkout, nuestro equipo identifica "
+            "tu pedido y agrega un producto de regalo para {{ nombre_regalado or 'tu peque' }}. "
+            "&#161;No dejes pasar esta semana!"
+            "</p>"
+        )
+        tip = (
+            "<div style=\"background:#fff1f2;border-radius:12px;padding:18px 22px;text-align:center;\">"
+            "<p style=\"font-size:14px;color:#be123c;margin:0;line-height:1.6;\">"
+            "<strong>&#9200; &#218;ltimos d&#237;as:</strong> env&#237;o a todo Chile. "
+            "Compra con tiempo para que el regalo llegue antes del cumplea&#241;os."
+            "</p></div>"
+        )
+    elif days <= 15:
+        body_extra = (
+            f"<p style=\"margin:0;font-size:15px;line-height:1.75;color:#374151;font-family:{FF};\">"
+            "En <strong>Happy L&#225;piz</strong> encontrar&#225;s juguetes educativos por edad e intereses. "
+            "Con tu c&#243;digo REGALO activamos el beneficio: <em>compras t&#250; un regalo, "
+            "nosotros enviamos otro</em> para {{ nombre_regalado or 'tu peque' }}."
+            "</p>"
+        )
+        tip = (
+            "<div style=\"background:#f5f3ff;border-radius:12px;padding:18px 22px;text-align:center;\">"
+            "<p style=\"font-size:14px;color:#5b21b6;margin:0;line-height:1.6;\">"
+            "<strong>&#128161; Tip:</strong> Filtra por edad en la tienda y encuentra el regalo ideal en minutos."
+            "</p></div>"
+        )
+    else:
+        body_extra = (
+            f"<p style=\"margin:0;font-size:15px;line-height:1.75;color:#374151;font-family:{FF};\">"
+            "Todav&#237;a tienes tiempo para planear una sorpresa especial. "
+            "Registra tu pedido con el c&#243;digo de abajo y nosotros nos encargamos del regalo extra "
+            "para {{ nombre_regalado or 'tu peque' }} — sin descuento en el precio, "
+            "solo el beneficio 1+1."
+            "</p>"
+        )
+        tip = _catalog("Caja — Tip morado")["props"]["content"]
+
+    hero_bg = "#be185d" if urgent else ("#db2777" if days <= 15 else "#ec4899")
+    return [
+        make_block(
+            "text",
+            {
+                "content": _birthday_hero(days, urgent=urgent),
+                "bg_color": hero_bg,
+                "text_color": "#ffffff",
+                "padding_y": "28",
+                "padding_x": "28",
+                "font_family": FF,
+            },
+            f"hero_bday_{days}",
+        ),
+        make_block(
+            "text",
+            {
+                "content": body_extra,
+                "bg_color": "#ffffff",
+                "text_color": "#374151",
+                "padding_y": "24",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            f"body_bday_{days}",
+        ),
+        make_block(
+            "text",
+            {
+                "content": _regalo_promo_box(),
+                "bg_color": "#ffffff",
+                "text_color": "#374151",
+                "padding_y": "8",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            f"promo_bday_{days}",
+        ),
+        _birthday_coupon_block(),
+        _birthday_cta_block(f"cta_bday_{days}"),
+        make_block(
+            "text",
+            {
+                "content": tip,
+                "bg_color": "#ffffff",
+                "text_color": "#5b21b6",
+                "padding_y": "8",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            f"tip_bday_{days}",
+        ),
+        _block_from_catalog_entry(_catalog("Pie — Footer con baja"), f"footer_bday_{days}"),
+    ]
+
+
+def birthday_reminder_30_blocks() -> list[dict]:
+    return _birthday_blocks(30)
+
+
+def birthday_reminder_15_blocks() -> list[dict]:
+    return _birthday_blocks(15)
+
+
+def birthday_reminder_7_blocks() -> list[dict]:
+    return _birthday_blocks(7, urgent=True)
