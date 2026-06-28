@@ -415,8 +415,71 @@ def _repair_shopify_products_id_sequence(conn) -> None:
         conn.execute(text(f"SELECT setval('{seq}', :max_id, true)"), {"max_id": int(max_id)})
 
 
+def _fetch_inventory_levels_map(token: str, domain: str, item_ids: list[int]) -> dict[int, int]:
+    """Sum available stock per inventory_item_id across Shopify locations."""
+    if not item_ids:
+        return {}
+    headers = {"X-Shopify-Access-Token": token}
+    url = f"https://{domain}/admin/api/2024-01/inventory_levels.json"
+    totals: dict[int, int] = {}
+    unique_ids = list({int(i) for i in item_ids if i})
+
+    with httpx.Client(timeout=60.0) as client:
+        for offset in range(0, len(unique_ids), 50):
+            batch = unique_ids[offset : offset + 50]
+            r = client.get(
+                url,
+                params={"inventory_item_ids": ",".join(str(x) for x in batch), "limit": 250},
+                headers=headers,
+            )
+            if r.status_code != 200:
+                logger.warning("inventory_levels API %s: %s", r.status_code, r.text[:200])
+                continue
+            for level in r.json().get("inventory_levels") or []:
+                iid = int(level.get("inventory_item_id") or 0)
+                if not iid:
+                    continue
+                avail = level.get("available")
+                if avail is None:
+                    continue
+                totals[iid] = totals.get(iid, 0) + int(avail)
+    return totals
+
+
+def _fetch_rest_product_inventory_map(token: str, domain: str) -> dict[int, int]:
+    """Fallback: product shopify_id -> total inventory from REST (full variant payload)."""
+    import re as _re
+
+    headers = {"X-Shopify-Access-Token": token}
+    url = f"https://{domain}/admin/api/2024-01/products.json"
+    params: dict = {"limit": 250, "status": "active"}
+    result: dict[int, int] = {}
+
+    with httpx.Client(timeout=60.0) as client:
+        while True:
+            r = client.get(url, params=params, headers=headers)
+            if r.status_code != 200:
+                logger.warning("REST products inventory fallback %s: %s", r.status_code, r.text[:200])
+                break
+            for p in r.json().get("products") or []:
+                pid = int(p.get("id") or 0)
+                if not pid:
+                    continue
+                variants = p.get("variants") or []
+                result[pid] = sum(int(v.get("inventory_quantity") or 0) for v in variants)
+            link_header = r.headers.get("Link", "")
+            if 'rel="next"' not in link_header:
+                break
+            next_part = [part for part in link_header.split(",") if 'rel="next"' in part]
+            m = _re.search(r"page_info=([^&>]+)", next_part[0]) if next_part else None
+            if not m:
+                break
+            params = {"limit": 250, "page_info": m.group(1)}
+    return result
+
+
 def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict], str | None]:
-    """Fetch active products from Shopify Admin GraphQL (includes totalInventory)."""
+    """Fetch active products from Shopify (GraphQL + inventory_levels for accurate stock)."""
     gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
     headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
     query = """
@@ -432,17 +495,23 @@ def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict
             tags
             vendor
             status
-            totalInventory
             featuredImage { url }
             variants(first: 100) {
-              edges { node { price inventoryQuantity } }
+              edges {
+                node {
+                  price
+                  inventoryQuantity
+                  inventoryItem { legacyResourceId }
+                }
+              }
             }
           }
         }
       }
     }
     """
-    all_products: list[dict] = []
+    parsed: list[dict] = []
+    all_item_ids: list[int] = []
     cursor: str | None = None
 
     with httpx.Client(timeout=60.0) as client:
@@ -465,21 +534,22 @@ def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict
                     continue
                 variant_edges = (node.get("variants") or {}).get("edges") or []
                 price = 0.0
+                variant_item_ids: list[int] = []
+                variant_qty_sum = 0
                 if variant_edges:
                     try:
                         price = float(variant_edges[0]["node"].get("price") or 0)
                     except (TypeError, ValueError, KeyError):
                         price = 0.0
-                inv_raw = node.get("totalInventory")
-                if inv_raw is None:
-                    inventory_total = sum(
-                        int((e.get("node") or {}).get("inventoryQuantity") or 0)
-                        for e in variant_edges
-                    )
-                else:
-                    inventory_total = int(inv_raw or 0)
+                    for ve in variant_edges:
+                        vn = ve.get("node") or {}
+                        variant_qty_sum += int(vn.get("inventoryQuantity") or 0)
+                        iid = (vn.get("inventoryItem") or {}).get("legacyResourceId")
+                        if iid:
+                            variant_item_ids.append(int(iid))
+                            all_item_ids.append(int(iid))
                 tags = node.get("tags") or []
-                all_products.append({
+                parsed.append({
                     "id": int(legacy_id),
                     "title": node.get("title") or "",
                     "handle": node.get("handle") or "",
@@ -489,7 +559,8 @@ def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict
                     "image_url": (node.get("featuredImage") or {}).get("url") or "",
                     "price": price,
                     "status": "active" if (node.get("status") or "").upper() == "ACTIVE" else "draft",
-                    "inventory_total": inventory_total,
+                    "variant_item_ids": variant_item_ids,
+                    "variant_qty_sum": variant_qty_sum,
                 })
             page_info = data.get("pageInfo") or {}
             if not page_info.get("hasNextPage"):
@@ -497,6 +568,20 @@ def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict
             cursor = page_info.get("endCursor")
             if not cursor:
                 break
+
+    inventory_by_item = _fetch_inventory_levels_map(token, domain, all_item_ids)
+    rest_inventory_by_product = _fetch_rest_product_inventory_map(token, domain)
+
+    all_products: list[dict] = []
+    for p in parsed:
+        from_levels = sum(inventory_by_item.get(iid, 0) for iid in p["variant_item_ids"])
+        from_rest = rest_inventory_by_product.get(p["id"], 0)
+        from_variants = p["variant_qty_sum"]
+        inventory_total = max(from_levels, from_rest, from_variants)
+        row = {k: v for k, v in p.items() if k not in ("variant_item_ids", "variant_qty_sum")}
+        row["inventory_total"] = inventory_total
+        all_products.append(row)
+
     return all_products, None
 
 
