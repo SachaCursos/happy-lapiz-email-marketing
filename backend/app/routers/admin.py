@@ -79,6 +79,74 @@ SEED_TEMPLATES = [
 </div>""",
     },
     {
+        "name":    "Vacaciones — Juguetes para tus peques",
+        "subject": "{{nombre or 'Hola'}}, ideas para las vacaciones de tus pequeños ☀️",
+        "preview": "Juegos, creatividad y aprendizaje para que disfruten al máximo sus vacaciones.",
+        "segment": "Todos los suscriptores",
+        "html": """<div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+  <div style="padding:28px 32px 0;text-align:center;">
+    <a href="https://www.happylapiz.cl"><img src="__LOGO_PNG__" alt="Happy L&#225;piz" width="160" style="height:auto;display:inline-block;" /></a>
+  </div>
+  <div style="background:linear-gradient(135deg,#f97316 0%,#fb923c 40%,#682ae7 100%);margin:20px 0 0;padding:40px 32px;text-align:center;">
+    <p style="color:rgba(255,255,255,0.9);font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;margin:0 0 12px;">Vacaciones con alegr&#237;a</p>
+    <h1 style="color:#fff;font-size:26px;font-weight:800;margin:0 0 12px;line-height:1.25;">
+      &#161;Hola {{ first_name or nombre or 'familia' }}!<br/>Que tus peques disfruten al m&#225;ximo
+    </h1>
+    <p style="color:#fff;font-size:15px;margin:0;line-height:1.6;opacity:0.95;">
+      Llegaron las vacaciones: el momento perfecto para jugar, crear y aprender juntos en casa.
+    </p>
+  </div>
+  <div style="padding:32px 32px 8px;">
+    <p style="font-size:15px;color:#374151;line-height:1.75;margin:0 0 20px;">
+      En <strong>Happy L&#225;piz</strong> reunimos juguetes educativos que mantienen a los ni&#241;os entretenidos
+      <em>y</em> estimulan su creatividad. Sin pantallas de m&#225;s: manos a la obra, imaginaci&#243;n encendida.
+    </p>
+    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:14px;padding:24px;margin-bottom:24px;">
+      <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#ea580c;margin:0 0 14px;">Ideas para estas vacaciones</p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="padding:8px 0;vertical-align:top;width:36px;font-size:22px;">🎨</td>
+          <td style="padding:8px 0;vertical-align:top;">
+            <p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Arte y manualidades</p>
+            <p style="color:#6b7280;font-size:13px;margin:0;line-height:1.5;">Pinturas, marcadores y kits creativos para tardes llenas de color.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 0;vertical-align:top;font-size:22px;">🧩</td>
+          <td style="padding:8px 0;vertical-align:top;">
+            <p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Juegos de mesa y puzzles</p>
+            <p style="color:#6b7280;font-size:13px;margin:0;line-height:1.5;">Diversi&#243;n en familia que desarrolla l&#243;gica y paciencia.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 0;vertical-align:top;font-size:22px;">🔬</td>
+          <td style="padding:8px 0;vertical-align:top;">
+            <p style="font-weight:700;color:#111;font-size:14px;margin:0 0 2px;">Ciencia y exploraci&#243;n</p>
+            <p style="color:#6b7280;font-size:13px;margin:0;line-height:1.5;">Experimentos y kits que convierten el hogar en un laboratorio.</p>
+          </td>
+        </tr>
+      </table>
+    </div>
+    <div style="text-align:center;margin:28px 0 12px;">
+      <a href="https://www.happylapiz.cl/collections/all" style="background:#682ae7;color:#fff;font-weight:700;padding:15px 42px;border-radius:30px;text-decoration:none;font-size:15px;display:inline-block;">Ver juguetes para vacaciones &#8594;</a>
+    </div>
+    <p style="font-size:13px;color:#9ca3af;text-align:center;margin:0 0 24px;line-height:1.5;">
+      Env&#237;o a todo Chile &middot; Productos pensados para cada edad
+    </p>
+    <div style="background:#f5f3ff;border-radius:12px;padding:20px 24px;text-align:center;">
+      <p style="font-size:14px;color:#5b21b6;margin:0;line-height:1.6;">
+        <strong>&#128161; Tip:</strong> Si ya conoces la edad de tu peque, filtra por categor&#237;a en la tienda y encuentra el regalo ideal en minutos.
+      </p>
+    </div>
+  </div>
+  <div style="border-top:1px solid #f3f4f6;padding:20px 32px;text-align:center;">
+    <img src="__LOGO_PNG__" alt="Happy L&#225;piz" width="100" style="height:auto;display:inline-block;opacity:0.5;margin-bottom:10px;" />
+    <p style="font-size:12px;color:#d1d5db;margin:4px 0;">Juguetes educativos &middot; Chile</p>
+    <p style="font-size:12px;color:#d1d5db;margin:6px 0;"><a href="##unsub##" style="color:#d1d5db;">Cancelar suscripci&#243;n</a></p>
+  </div>
+</div>""",
+    },
+    {
         "name":    "Cross-sell — Recomendados por compra",
         "subject": "{% if first_product %}¿Compraste {{ first_product }}? También podría interesarte...{% else %}Productos que te van a encantar ✨{% endif %}",
         "preview": "Basado en tu última compra, seleccionamos estos juguetes especialmente para ti.",
