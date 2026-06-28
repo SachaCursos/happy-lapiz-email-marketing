@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronUp, ChevronDown, Trash2, Plus, Eye, Layout, Code,
   Star, X, Monitor, Smartphone, Search, Link as LinkIcon,
-  AlignLeft, AlignCenter, AlignRight, Send, Copy,
+  AlignLeft, AlignCenter, AlignRight, Send, Copy, Undo2,
 } from "lucide-react";
 import { shopifyApi, ShopifyProduct, api, adminApi, favoriteBlocksApi, FavoriteBlock } from "@/lib/api";
 import { syncTextBlockColor, extractTextColorFromHtml, cloneBlockProps, isHeroTextBlock, getHeroTypography, applyHeroTypography, pruneEmptyHtmlContent } from "@/lib/templateBlockUtils";
@@ -2185,6 +2185,67 @@ export function TemplateBlockEditor({
   const imgUploadTargetRef = useRef<string | null>(null);
   const shopifyPickerTargetRef = useRef<string | null>(null);
 
+  type EditorSnapshot = {
+    blocks: Block[];
+    plainText: string;
+    htmlOverride: string | null;
+    selectedId: string | null;
+  };
+  const UNDO_LIMIT = 50;
+  const UNDO_DEBOUNCE_MS = 600;
+  const undoStackRef = useRef<EditorSnapshot[]>([]);
+  const isUndoingRef = useRef(false);
+  const lastUndoBurstRef = useRef<{ at: number; key?: string } | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+
+  const cloneSnapshot = useCallback((): EditorSnapshot => ({
+    blocks: JSON.parse(JSON.stringify(blocks)) as Block[],
+    plainText,
+    htmlOverride,
+    selectedId,
+  }), [blocks, plainText, htmlOverride, selectedId]);
+
+  const refreshCanUndo = useCallback(() => {
+    setCanUndo(undoStackRef.current.length > 0);
+  }, []);
+
+  const pushUndoSnapshot = useCallback((burstKey?: string) => {
+    if (isUndoingRef.current) return;
+    const now = Date.now();
+    const last = lastUndoBurstRef.current;
+    if (burstKey && last?.key === burstKey && now - last.at < UNDO_DEBOUNCE_MS) return;
+    undoStackRef.current.push(cloneSnapshot());
+    if (undoStackRef.current.length > UNDO_LIMIT) undoStackRef.current.shift();
+    lastUndoBurstRef.current = burstKey ? { at: now, key: burstKey } : null;
+    refreshCanUndo();
+  }, [cloneSnapshot, refreshCanUndo]);
+
+  const undo = useCallback(() => {
+    const snap = undoStackRef.current.pop();
+    if (!snap) return;
+    isUndoingRef.current = true;
+    lastUndoBurstRef.current = null;
+    setBlocks(snap.blocks);
+    setPlainText(snap.plainText);
+    setHtmlOverride(snap.htmlOverride);
+    setSelectedId(snap.selectedId);
+    isUndoingRef.current = false;
+    refreshCanUndo();
+  }, [refreshCanUndo]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== "z" || e.shiftKey) return;
+      if (undoStackRef.current.length === 0) return;
+      const el = e.target as HTMLElement;
+      if (el.closest("[data-skip-global-undo]")) return;
+      e.preventDefault();
+      undo();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undo]);
+
   // When the editor tab is active and there's a pending HTML override with no blocks,
   // auto-convert so the user lands directly in the editable canvas instead of a dead screen.
   useEffect(() => {
@@ -2256,6 +2317,7 @@ export function TemplateBlockEditor({
   }
 
   function addBlock(type: BlockType) {
+    pushUndoSnapshot();
     const b: Block = { id: `${type}_${Date.now()}`, type, props: { ...DEFAULTS[type] } };
     setBlocks((prev) => [...prev, b]);
     setSelectedId(b.id);
@@ -2263,6 +2325,7 @@ export function TemplateBlockEditor({
   }
 
   function addFavorite(fav: FavoriteBlock) {
+    pushUndoSnapshot();
     const b = favoriteToBlock(fav);
     setBlocks((prev) => [...prev, b]);
     setSelectedId(b.id);
@@ -2308,6 +2371,7 @@ export function TemplateBlockEditor({
     try {
       const res = await adminApi.uploadImage(file);
       const url = res.data.url;
+      pushUndoSnapshot();
       setBlocks((prev) =>
         prev.map((b) => b.id === blockId ? { ...b, props: { ...b.props, src: url } } : b)
       );
@@ -2330,6 +2394,7 @@ export function TemplateBlockEditor({
       setTimeout(() => setConvertMsg(null), 5000);
       return;
     }
+    pushUndoSnapshot();
     setBlocks(parsed);
     setHtmlOverride(null);
     setSelectedId(null);
@@ -2338,15 +2403,18 @@ export function TemplateBlockEditor({
   }
 
   function update(id: string, props: Block["props"]) {
+    pushUndoSnapshot(`block:${id}`);
     setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, props } : b)));
   }
 
   function remove(id: string) {
+    pushUndoSnapshot();
     setBlocks((prev) => prev.filter((b) => b.id !== id));
     if (selectedId === id) setSelectedId(null);
   }
 
   function duplicate(id: string) {
+    pushUndoSnapshot();
     setBlocks((prev) => {
       const i = prev.findIndex((b) => b.id === id);
       if (i < 0) return prev;
@@ -2358,6 +2426,7 @@ export function TemplateBlockEditor({
   }
 
   function move(id: string, dir: "up" | "down") {
+    pushUndoSnapshot();
     setBlocks((prev) => {
       const i = prev.findIndex((b) => b.id === id);
       if (i < 0) return prev;
@@ -2437,6 +2506,7 @@ export function TemplateBlockEditor({
           onSelect={(url) => {
             const blockId = shopifyPickerTargetRef.current;
             if (blockId) {
+              pushUndoSnapshot();
               setBlocks((prev) => prev.map((b) => b.id === blockId ? { ...b, props: { ...b.props, src: url } } : b));
             }
             setShopifyPickerOpen(false);
@@ -2450,8 +2520,18 @@ export function TemplateBlockEditor({
         {/* Top bar */}
         <div className="flex items-center gap-3 px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la plantilla *"
+            data-skip-global-undo
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium w-52 focus:outline-none focus:ring-2 focus:ring-brand-500" />
           <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={undo}
+              disabled={!canUndo}
+              title="Deshacer (⌘Z / Ctrl+Z)"
+              className="px-3 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors"
+            >
+              <Undo2 size={13} /> Deshacer
+            </button>
             {saved && <span className="text-sm text-green-600 font-medium">✓ Guardado</span>}
             {templateId && (
               <button onClick={() => { setSendTestOpen(true); setTestResult(null); }}
@@ -2871,7 +2951,10 @@ export function TemplateBlockEditor({
                           </button>
                           {blocks.length > 0 && (
                             <button
-                              onClick={() => setHtmlOverride(null)}
+                              onClick={() => {
+                                pushUndoSnapshot();
+                                setHtmlOverride(null);
+                              }}
                               className="text-xs text-amber-400 hover:text-amber-200 transition-colors border border-amber-700 rounded px-2 py-0.5"
                             >
                               ↩ Revertir a bloques
@@ -2887,7 +2970,10 @@ export function TemplateBlockEditor({
                   </div>
                   <textarea
                     value={htmlOverride ?? generatedHtml}
-                    onChange={(e) => setHtmlOverride(e.target.value)}
+                    onChange={(e) => {
+                      pushUndoSnapshot("html");
+                      setHtmlOverride(e.target.value);
+                    }}
                     spellCheck={false}
                     className="flex-1 p-4 font-mono text-xs text-green-400 bg-transparent resize-none focus:outline-none"
                   />
@@ -2897,7 +2983,13 @@ export function TemplateBlockEditor({
 
             {/* Plain text */}
             {tab === "plain" && (
-              <PlainTextEditor value={plainText} onChange={setPlainText} />
+              <PlainTextEditor
+                value={plainText}
+                onChange={(v) => {
+                  pushUndoSnapshot("plain");
+                  setPlainText(v);
+                }}
+              />
             )}
           </div>
 
