@@ -9,18 +9,29 @@ FF = "'Helvetica Neue', Arial, sans-serif"
 # sort_order >= 100 → catálogo / galería de opciones
 
 
-def _hero_logo_content(subtitle: str, title_html: str, body: str) -> str:
+def _hero_logo_content(
+    subtitle: str,
+    title_html: str,
+    body: str,
+    *,
+    logo_width: int = 120,
+    logo_margin_bottom: int = 20,
+    subtitle_size: int = 13,
+    title_size: int = 26,
+    body_size: int = 15,
+    text_gap: int = 12,
+) -> str:
     return (
-        f'<p style="margin:0 0 20px;text-align:center;">'
+        f'<p style="margin:0 0 {logo_margin_bottom}px;text-align:center;">'
         f'<a href="https://www.happylapiz.cl" style="text-decoration:none;">'
-        f'<img src="{HL_LOGO}" alt="Happy L&#225;piz" width="120" '
-        f'style="height:auto;display:inline-block;" /></a></p>'
-        f'<p style="margin:0;font-size:13px;font-weight:600;color:rgba(255,255,255,0.9);'
-        f'text-transform:uppercase;letter-spacing:1.5px;text-align:center;">{subtitle}</p>'
-        f'<p style="margin:12px 0 0;font-size:26px;font-weight:800;color:#ffffff;line-height:1.25;text-align:center;">'
-        f"{title_html}</p>"
-        f'<p style="margin:12px 0 0;font-size:15px;color:#ffffff;line-height:1.6;text-align:center;opacity:0.95;">'
-        f"{body}</p>"
+        f'<img src="{HL_LOGO}" alt="Happy L&#225;piz" width="{logo_width}" '
+        f'style="height:auto;display:inline-block;max-width:45%;" /></a></p>'
+        f'<p style="margin:0;font-size:{subtitle_size}px;font-weight:600;color:rgba(255,255,255,0.9);'
+        f'text-transform:uppercase;letter-spacing:1.2px;text-align:center;">{subtitle}</p>'
+        f'<p style="margin:{text_gap}px 0 0;font-size:{title_size}px;font-weight:800;color:#ffffff;'
+        f'line-height:1.2;text-align:center;">{title_html}</p>'
+        f'<p style="margin:{text_gap}px 0 0;font-size:{body_size}px;color:#ffffff;line-height:1.45;'
+        f'text-align:center;opacity:0.95;">{body}</p>'
     )
 
 
@@ -46,11 +57,17 @@ BLOCK_CATALOG: list[dict] = [
                 "Vacaciones con alegr&#237;a",
                 "&#161;Hola {{ first_name or nombre }}!<br/>Que tus peques disfruten al m&#225;ximo",
                 "Llegaron las vacaciones: jugar, crear y aprender juntos en casa.",
+                logo_width=88,
+                logo_margin_bottom=10,
+                subtitle_size=11,
+                title_size=20,
+                body_size=13,
+                text_gap=8,
             ),
             "bg_color": "#f97316",
             "text_color": "#ffffff",
-            "padding_y": "40",
-            "padding_x": "32",
+            "padding_y": "22",
+            "padding_x": "24",
             "font_family": FF,
         },
     },
