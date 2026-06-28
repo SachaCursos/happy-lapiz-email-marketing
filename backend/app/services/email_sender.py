@@ -389,25 +389,25 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
     if "coupon_code" not in template_html and "{% coupon_code" not in template_html:
         return ""
     from sqlalchemy import text
-    row = session.exec(text("""
+
+    row = session.execute(text("""
         SELECT cs.code FROM coupon_sends cs
         WHERE cs.contact_email = :email AND cs.campaign_id = :cid LIMIT 1
     """), {"email": contact.email.lower(), "cid": campaign_id}).fetchone()
     if row:
         return row[0]
-    row2 = session.exec(text("""
+    row2 = session.execute(text("""
         SELECT cc.id, cc.prefix FROM coupon_campaigns cc
-        JOIN campaigns c ON c.id = :cid
         WHERE cc.status = 'active'
         ORDER BY cc.created_at DESC LIMIT 1
-    """), {"cid": campaign_id}).fetchone()
+    """)).fetchone()
     if not row2:
         return ""
     import random, string
     prefix = row2[1] or "HL"
     code = f"{prefix}-{''.join(random.choices(string.ascii_uppercase+string.digits, k=8))}"
     try:
-        session.exec(text("""
+        session.execute(text("""
             INSERT INTO coupon_sends (coupon_campaign_id, contact_id, contact_email, code, campaign_id)
             VALUES (:ccid, :cid, :email, :code, :campid)
             ON CONFLICT DO NOTHING
@@ -415,7 +415,7 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
                "code": code, "campid": campaign_id})
         session.commit()
     except Exception:
-        pass
+        session.rollback()
     return code
 
 

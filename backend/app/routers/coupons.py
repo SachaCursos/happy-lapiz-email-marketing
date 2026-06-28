@@ -165,7 +165,7 @@ def generate_coupon(
     _: User = Depends(get_current_user),
 ):
     """Genera un código único para un contacto. Si ya tiene uno en esta campaña, lo retorna."""
-    existing = session.exec(text("""
+    existing = session.execute(text("""
         SELECT code FROM coupon_sends
         WHERE coupon_campaign_id = :cid AND contact_email = :email
         LIMIT 1
@@ -174,7 +174,7 @@ def generate_coupon(
     if existing:
         return {"code": existing[0], "new": False}
 
-    campaign = session.exec(text(
+    campaign = session.execute(text(
         "SELECT prefix, discount_type, discount_value, expires_at FROM coupon_campaigns WHERE id = :id"
     ), {"id": body.coupon_campaign_id}).fetchone()
 
@@ -186,7 +186,7 @@ def generate_coupon(
     # Generate unique code
     for _ in range(10):
         code = _random_code(prefix, 8)
-        exists = session.exec(text("SELECT 1 FROM coupon_sends WHERE code = :c"), {"c": code}).fetchone()
+        exists = session.execute(text("SELECT 1 FROM coupon_sends WHERE code = :c"), {"c": code}).fetchone()
         if not exists:
             break
 
@@ -195,7 +195,7 @@ def generate_coupon(
     if SHOPIFY_TOKEN:
         try:
             # Get parent discount ID
-            parent = session.exec(text(
+            parent = session.execute(text(
                 "SELECT shopify_discount_id FROM coupon_campaigns WHERE id = :id"
             ), {"id": body.coupon_campaign_id}).fetchone()
 
@@ -216,7 +216,7 @@ def generate_coupon(
         except Exception:
             pass
 
-    session.exec(text("""
+    session.execute(text("""
         INSERT INTO coupon_sends (coupon_campaign_id, contact_id, contact_email, code, shopify_code_id, campaign_id)
         VALUES (:ccamp, :cid, :email, :code, :scid, :camp)
     """), {
@@ -235,7 +235,7 @@ def list_coupon_sends(
     _: User = Depends(get_current_user),
 ):
     where = "WHERE cs.coupon_campaign_id = :cid" if campaign_id else ""
-    rows = session.exec(text(f"""
+    rows = session.execute(text(f"""
         SELECT cs.code, cs.contact_email, cs.used, cs.created_at, cc.name, cc.discount_value, cc.discount_type
         FROM coupon_sends cs
         JOIN coupon_campaigns cc ON cc.id = cs.coupon_campaign_id
