@@ -98,6 +98,8 @@ export const campaignsApi = {
   stats: (id: number) => api.get(`/campaigns/${id}/stats`),
   conversions: (id: number, days = 60) => api.get(`/campaigns/${id}/conversions?days=${days}`),
   sends: (id: number) => api.get(`/campaigns/${id}/sends`),
+  audiencePreview: (data: { segment_id: number; exclude_segment_ids?: number[] }) =>
+    api.post("/campaigns/audience-preview", data),
 };
 
 // Evergreen campaigns

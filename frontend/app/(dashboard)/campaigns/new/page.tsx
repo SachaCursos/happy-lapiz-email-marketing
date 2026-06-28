@@ -7,6 +7,7 @@ import { Segment, Template } from "@/lib/types";
 import { ArrowLeft, ArrowRight, Check, Calendar, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
 
 const STEPS = ["Información", "Segmento", "Plantilla", "Revisar"];
 
@@ -183,6 +184,11 @@ export default function NewCampaignPage() {
                   })}
               </div>
             </div>
+
+            <CampaignAudienceSummary
+              segmentId={form.segment_id}
+              excludeSegmentIds={form.exclude_segment_ids}
+            />
           </div>
         )}
 
@@ -212,10 +218,16 @@ export default function NewCampaignPage() {
         {step === 3 && (
           <div className="space-y-4">
             <h2 className="font-semibold text-gray-900 mb-4">Revisar y crear</h2>
+
+            <CampaignAudienceSummary
+              segmentId={form.segment_id}
+              excludeSegmentIds={form.exclude_segment_ids}
+            />
+
             {[
               { label: "Nombre", value: form.name },
               { label: "Asunto", value: form.subject },
-              { label: "Enviar a", value: selectedSeg ? `${selectedSeg.name} (${selectedSeg.contact_count?.toLocaleString()} contactos)` : "—" },
+              { label: "Enviar a", value: selectedSeg?.name ?? "—" },
               { label: "Plantilla", value: selectedTpl?.name ?? "—" },
               { label: "Programada para", value: form.scheduled_at ? new Date(form.scheduled_at).toLocaleString("es-CL") : "Borrador (envío manual)" },
             ].map(({ label, value }) => (

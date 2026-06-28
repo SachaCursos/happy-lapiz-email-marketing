@@ -139,6 +139,12 @@ export interface CampaignConversions {
   converted_contacts: number;
 }
 
+export interface CampaignAudiencePreview {
+  segment_count: number;
+  excluded_count: number;
+  recipient_count: number;
+}
+
 export type EvergreenStatus = "active" | "paused";
 
 export interface EvergreenStep {

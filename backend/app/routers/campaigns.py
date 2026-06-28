@@ -14,7 +14,7 @@ from app.models.campaign import Campaign, CampaignCreate, CampaignRead, Campaign
 from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
-from app.services.segment_evaluator import evaluate_segment
+from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipients
 from app.services.email_sender import (
     send_campaign_sync,
     _inject_footer,
@@ -28,6 +28,17 @@ from app.services.email_sender import (
 
 class SendOptions(BaseModel):
     limit: Optional[int] = None
+
+
+class AudiencePreviewRequest(BaseModel):
+    segment_id: int
+    exclude_segment_ids: List[int] = []
+
+
+class AudiencePreviewResponse(BaseModel):
+    segment_count: int
+    excluded_count: int
+    recipient_count: int
 
 router = APIRouter()
 
@@ -51,6 +62,21 @@ def create_campaign(
     session.commit()
     session.refresh(campaign)
     return campaign
+
+
+@router.post("/audience-preview", response_model=AudiencePreviewResponse)
+def preview_campaign_audience(
+    payload: AudiencePreviewRequest,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    if not session.get(Segment, payload.segment_id):
+        raise HTTPException(status_code=404, detail="Segmento no encontrado")
+    return count_campaign_recipients(
+        session,
+        payload.segment_id,
+        payload.exclude_segment_ids or None,
+    )
 
 
 @router.get("/{campaign_id}", response_model=CampaignRead)
@@ -114,20 +140,14 @@ def send_campaign_now(
     if not seg:
         raise HTTPException(status_code=400, detail="Segmento no encontrado")
 
-    contacts = evaluate_segment(seg.conditions, session)
+    contacts = get_campaign_recipients(session, c.segment_id, c.exclude_segment_ids)
     if not contacts:
-        raise HTTPException(status_code=400, detail="El segmento no tiene contactos con opt-in")
-
-    # Excluir contactos pertenecientes a segmentos de exclusión
-    if c.exclude_segment_ids:
-        excluded_ids: set[int] = set()
-        for excl_id in c.exclude_segment_ids:
-            excl_seg = session.get(Segment, excl_id)
-            if excl_seg:
-                excluded_ids.update(ct.id for ct in evaluate_segment(excl_seg.conditions, session))
-        contacts = [ct for ct in contacts if ct.id not in excluded_ids]
-    if not contacts:
-        raise HTTPException(status_code=400, detail="Todos los contactos del segmento están excluidos")
+        raise HTTPException(
+            status_code=400,
+            detail="El segmento no tiene contactos con opt-in"
+            if not c.exclude_segment_ids
+            else "Todos los contactos del segmento están excluidos",
+        )
 
     # Excluir contactos que ya recibieron esta campaña; los "failed" sí pueden reintentarse
     already_sent = set(
@@ -161,8 +181,8 @@ def send_progress(campaign_id: int, session: Session = Depends(get_session), _: 
     c = session.get(Campaign, campaign_id)
     if not c:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
-    seg = session.get(Segment, c.segment_id)
-    total_in_segment = len(evaluate_segment(seg.conditions, session)) if seg else 0
+    counts = count_campaign_recipients(session, c.segment_id, c.exclude_segment_ids)
+    total_in_segment = counts["recipient_count"]
     already_sent = session.exec(
         select(func.count(CampaignSend.contact_id)).where(
             CampaignSend.campaign_id == campaign_id,

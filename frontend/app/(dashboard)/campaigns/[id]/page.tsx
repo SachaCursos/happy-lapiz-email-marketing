@@ -7,6 +7,7 @@ import { Campaign, CampaignStats, CampaignConversions, Segment, Template } from 
 import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Calendar, UserMinus, BarChart2, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
+import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
 
 // Convert a UTC datetime string from the backend (may lack Z) to a local
 // time string suitable for a datetime-local input.
@@ -428,6 +429,11 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               </div>
             )}
           </div>
+
+          <CampaignAudienceSummary
+            segmentId={editForm.segment_id}
+            excludeSegmentIds={editForm.exclude_segment_ids}
+          />
 
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1.5"><Calendar size={12} /> Programar envío — hora de Chile (tu zona horaria local)</label>
