@@ -7,7 +7,7 @@ import {
   AlignLeft, AlignCenter, AlignRight, Send, Copy,
 } from "lucide-react";
 import { shopifyApi, ShopifyProduct, api, adminApi, favoriteBlocksApi, FavoriteBlock } from "@/lib/api";
-import { syncTextBlockColor, extractTextColorFromHtml, cloneBlockProps } from "@/lib/templateBlockUtils";
+import { syncTextBlockColor, extractTextColorFromHtml, cloneBlockProps, isHeroTextBlock, getHeroTypography, applyHeroTypography } from "@/lib/templateBlockUtils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 
@@ -1606,6 +1606,33 @@ function PropsPanel({
       </>}
 
       {block.type === "text" && <>
+        {isHeroTextBlock(p.content as string) && (() => {
+          const hero = getHeroTypography(p.content as string);
+          const patchHero = (patch: Partial<typeof hero>) =>
+            onChange({ ...p, content: applyHeroTypography(p.content as string, patch) });
+          return (
+            <div className="rounded-xl border border-orange-200 bg-orange-50/50 p-3 space-y-3">
+              <p className="text-xs font-semibold text-orange-800">Hero con logo — ajustes visuales</p>
+              <Field label="Ancho del logo (px)">
+                <NI value={String(hero.logoWidth)} onChange={(v) => patchHero({ logoWidth: parseInt(v, 10) || hero.logoWidth })} min={40} max={180} />
+              </Field>
+              <div className="grid grid-cols-3 gap-2">
+                <Field label="Subtítulo">
+                  <NI value={String(hero.subtitlePx)} onChange={(v) => patchHero({ subtitlePx: parseInt(v, 10) || hero.subtitlePx })} min={9} max={18} />
+                </Field>
+                <Field label="Título">
+                  <NI value={String(hero.titlePx)} onChange={(v) => patchHero({ titlePx: parseInt(v, 10) || hero.titlePx })} min={14} max={36} />
+                </Field>
+                <Field label="Cuerpo">
+                  <NI value={String(hero.bodyPx)} onChange={(v) => patchHero({ bodyPx: parseInt(v, 10) || hero.bodyPx })} min={11} max={20} />
+                </Field>
+              </div>
+              <p className="text-[10px] text-orange-700/80 leading-snug">
+                También puedes editar el texto haciendo clic en el bloque en el canvas.
+              </p>
+            </div>
+          );
+        })()}
         <Field label="Contenido HTML">
           {isEditing ? (
             <div className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2.5">

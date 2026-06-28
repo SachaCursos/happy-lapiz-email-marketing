@@ -93,11 +93,14 @@ def upsert_block_template(
     preview: str,
     blocks: list[dict],
     created_by: int | None = None,
+    force: bool = False,
 ) -> Template:
     now = datetime.utcnow()
     html = blocks_to_html(blocks)
     existing = session.exec(select(Template).where(Template.name == name)).first()
     if existing:
+        if not force:
+            return existing
         existing.html_content = html
         existing.json_blocks = blocks
         existing.subject_default = subject
@@ -121,12 +124,35 @@ def upsert_block_template(
     return tpl
 
 
-def ensure_managed_block_templates(session: Session) -> None:
-    """Create or refresh all block-based seed templates (idempotent)."""
+def ensure_managed_block_templates(session: Session, *, force: bool = False) -> None:
+    """Create managed templates if missing. Never overwrites user-edited blocks unless force=True."""
     admin = session.exec(select(User).order_by(User.id)).first()
     admin_id = admin.id if admin else None
     for meta in MANAGED_BLOCK_TEMPLATES:
-        blocks, _ = resolve_composition(meta["composition"])
+        existing = session.exec(select(Template).where(Template.name == meta["name"])).first()
+        blocks, html = resolve_composition(meta["composition"])
+
+        if existing:
+            if force:
+                upsert_block_template(
+                    session,
+                    name=meta["name"],
+                    subject=meta["subject"],
+                    preview=meta["preview"],
+                    blocks=blocks,
+                    created_by=admin_id,
+                    force=True,
+                )
+            elif not is_editor_block_list(existing.json_blocks):
+                # One-time migration: legacy HTML-only template → block editor
+                existing.json_blocks = blocks
+                existing.html_content = html
+                existing.subject_default = meta["subject"]
+                existing.preview_text = meta["preview"]
+                existing.updated_at = datetime.utcnow()
+                session.add(existing)
+            continue
+
         upsert_block_template(
             session,
             name=meta["name"],

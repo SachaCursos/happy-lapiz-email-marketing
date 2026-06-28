@@ -37,7 +37,87 @@ export function blockFromFavorite(
   };
 }
 
-export function syncTextBlockColor(html: string, color: string): string {
+export interface HeroTypography {
+  logoWidth: number;
+  subtitlePx: number;
+  titlePx: number;
+  bodyPx: number;
+}
+
+function parseRoot(html: string) {
+  const doc = new DOMParser().parseFromString(`<div id="tb-root">${html}</div>`, "text/html");
+  return doc.getElementById("tb-root");
+}
+
+function textParagraphs(root: HTMLElement) {
+  return [...root.querySelectorAll("p")].filter((p) => !p.querySelector("img"));
+}
+
+function readFontSizePx(el: HTMLElement, fallback: number): number {
+  const inline = el.style.fontSize || "";
+  const m = inline.match(/(\d+(?:\.\d+)?)px/);
+  if (m) return Math.round(parseFloat(m[1]));
+  const attr = el.getAttribute("style") || "";
+  const m2 = attr.match(/font-size:\s*(\d+(?:\.\d+)?)px/i);
+  if (m2) return Math.round(parseFloat(m2[1]));
+  return fallback;
+}
+
+/** Text block with centered logo + headline paragraphs (vacaciones-style hero). */
+export function isHeroTextBlock(html: string): boolean {
+  if (!html?.trim()) return false;
+  try {
+    const root = parseRoot(html);
+    if (!root?.querySelector("img")) return false;
+    return textParagraphs(root).length >= 2;
+  } catch {
+    return false;
+  }
+}
+
+export function getHeroTypography(html: string): HeroTypography {
+  const defaults: HeroTypography = { logoWidth: 88, subtitlePx: 11, titlePx: 20, bodyPx: 13 };
+  try {
+    const root = parseRoot(html);
+    if (!root) return defaults;
+    const img = root.querySelector("img");
+    const logoWidth = img
+      ? parseInt(img.getAttribute("width") || String(defaults.logoWidth), 10) || defaults.logoWidth
+      : defaults.logoWidth;
+    const ps = textParagraphs(root);
+    return {
+      logoWidth,
+      subtitlePx: ps[0] ? readFontSizePx(ps[0] as HTMLElement, defaults.subtitlePx) : defaults.subtitlePx,
+      titlePx: ps[1] ? readFontSizePx(ps[1] as HTMLElement, defaults.titlePx) : defaults.titlePx,
+      bodyPx: ps[2] ? readFontSizePx(ps[2] as HTMLElement, defaults.bodyPx) : defaults.bodyPx,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+export function applyHeroTypography(html: string, patch: Partial<HeroTypography>): string {
+  try {
+    const root = parseRoot(html);
+    if (!root) return html;
+    if (patch.logoWidth != null) {
+      const img = root.querySelector("img");
+      if (img) {
+        img.setAttribute("width", String(patch.logoWidth));
+        (img as HTMLElement).style.maxWidth = "45%";
+        (img as HTMLElement).style.height = "auto";
+      }
+    }
+    const ps = textParagraphs(root);
+    if (patch.subtitlePx != null && ps[0]) (ps[0] as HTMLElement).style.fontSize = `${patch.subtitlePx}px`;
+    if (patch.titlePx != null && ps[1]) (ps[1] as HTMLElement).style.fontSize = `${patch.titlePx}px`;
+    if (patch.bodyPx != null && ps[2]) (ps[2] as HTMLElement).style.fontSize = `${patch.bodyPx}px`;
+    return root.innerHTML;
+  } catch {
+    return html;
+  }
+}
+
   if (!html?.trim()) return html;
   try {
     const doc = new DOMParser().parseFromString(`<div id="tb-root">${html}</div>`, "text/html");

@@ -10,7 +10,6 @@ from app.database import get_session
 from app.models.favorite_block import FavoriteBlockCreate, FavoriteBlockRead, FavoriteBlockUpdate
 from app.models.user import User
 from app.services.favorite_blocks_seed import BLOCK_CATALOG, DEPRECATED_BLOCK_NAMES
-from app.services.block_catalog_templates import ensure_catalog_templates
 
 router = APIRouter()
 
@@ -79,7 +78,6 @@ def seed_default_favorite_blocks(session: Session) -> None:
 @router.get("", response_model=list[FavoriteBlockRead])
 def list_favorite_blocks(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
     seed_default_favorite_blocks(session)
-    ensure_catalog_templates(session)
     rows = session.execute(
         text("""
             SELECT id, name, block_type, props, sort_order, created_at, updated_at
