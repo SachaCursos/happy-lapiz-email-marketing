@@ -397,45 +397,57 @@ def run_evergreen_campaigns(force: bool = False) -> dict:
             _last_evergreen_run_date = today
             return stats
 
-        contacts = session.exec(
-            select(Contact).where(Contact.opted_in == True)  # noqa: E712
-        ).all()
+    batch_size = 200
+    offset = 0
+    while True:
+        with Session(engine) as session:
+            batch = session.exec(
+                select(Contact)
+                .where(Contact.opted_in == True)  # noqa: E712
+                .order_by(Contact.id)
+                .offset(offset)
+                .limit(batch_size)
+            ).all()
+        if not batch:
+            break
 
-    for contact in contacts:
-        stats["contacts_checked"] += 1
-        try:
-            with Session(engine) as session:
-                days_idle = _days_since_last_email(session, contact.id, contact.email)
+        for contact in batch:
+            stats["contacts_checked"] += 1
+            try:
+                with Session(engine) as session:
+                    days_idle = _days_since_last_email(session, contact.id, contact.email)
 
-                for eg in campaigns:
-                    if days_idle is not None and days_idle < eg.min_days_inactive:
-                        continue
+                    for eg in campaigns:
+                        if days_idle is not None and days_idle < eg.min_days_inactive:
+                            continue
 
-                    if not _in_segment(session, contact, eg):
-                        continue
+                        if not _in_segment(session, contact, eg):
+                            continue
 
-                    if not _has_open_in_last_n(
-                        session, contact.id, contact.email, eg.require_open_in_last_n
-                    ):
-                        continue
+                        if not _has_open_in_last_n(
+                            session, contact.id, contact.email, eg.require_open_in_last_n
+                        ):
+                            continue
 
-                    if not _can_start_evergreen_cycle(session, eg, contact.id):
-                        continue
+                        if not _can_start_evergreen_cycle(session, eg, contact.id):
+                            continue
 
-                    steps = get_evergreen_steps(eg)
-                    if _start_evergreen_cycle(session, eg, contact, steps):
-                        stats["sent"] += 1
-                        logger.info(
-                            "Evergreen '%s' step 1 sent to %s (%d steps)",
-                            eg.name,
-                            contact.email,
-                            len(steps),
-                        )
-                        time.sleep(RATE_DELAY)
-                    break
-        except Exception as exc:
-            stats["errors"] += 1
-            logger.exception("Evergreen dispatch error for %s: %s", contact.email, exc)
+                        steps = get_evergreen_steps(eg)
+                        if _start_evergreen_cycle(session, eg, contact, steps):
+                            stats["sent"] += 1
+                            logger.info(
+                                "Evergreen '%s' step 1 sent to %s (%d steps)",
+                                eg.name,
+                                contact.email,
+                                len(steps),
+                            )
+                            time.sleep(RATE_DELAY)
+                        break
+            except Exception as exc:
+                stats["errors"] += 1
+                logger.exception("Evergreen dispatch error for %s: %s", contact.email, exc)
+
+        offset += batch_size
 
     _last_evergreen_run_date = today
     return stats

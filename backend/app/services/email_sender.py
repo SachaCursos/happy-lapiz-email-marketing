@@ -454,11 +454,13 @@ def finalize_campaign_status(
 
 def get_pending_contact_ids(session: Session, campaign: Campaign) -> List[int]:
     """Contactos del segmento que aún no recibieron un intento de envío exitoso."""
-    from app.services.campaign_audience import get_campaign_recipients
+    from app.services.campaign_audience import get_campaign_recipient_ids
 
-    recipients = get_campaign_recipients(
+    recipient_ids = get_campaign_recipient_ids(
         session, campaign.segment_id, campaign.exclude_segment_ids,
     )
+    if not recipient_ids:
+        return []
     attempted = set(
         session.exec(
             select(CampaignSend.contact_id).where(
@@ -467,7 +469,7 @@ def get_pending_contact_ids(session: Session, campaign: Campaign) -> List[int]:
             )
         ).all()
     )
-    return [c.id for c in recipients if c.id not in attempted]
+    return [cid for cid in recipient_ids if cid not in attempted]
 
 
 def _ensure_send_records(session: Session, campaign_id: int, contact_ids: List[int]) -> None:

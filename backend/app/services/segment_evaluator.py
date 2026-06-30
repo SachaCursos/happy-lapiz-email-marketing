@@ -118,7 +118,15 @@ def _build_clause(node: dict) -> Optional[Any]:
 
 def evaluate_segment(conditions: Optional[dict], session: Session) -> List[Contact]:
     """Retorna contactos que coinciden con las condiciones del segmento (opted_in=True)."""
-    query = select(Contact).where(Contact.opted_in == True)  # noqa: E712
+    ids = evaluate_segment_ids(conditions, session)
+    if not ids:
+        return []
+    return list(session.exec(select(Contact).where(Contact.id.in_(ids))).all())
+
+
+def evaluate_segment_ids(conditions: Optional[dict], session: Session) -> List[int]:
+    """IDs de contactos en el segmento — sin cargar custom_fields ni filas completas."""
+    query = select(Contact.id).where(Contact.opted_in == True)  # noqa: E712
     if conditions:
         clause = _build_clause(conditions)
         if clause is not None:

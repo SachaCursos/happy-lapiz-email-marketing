@@ -42,7 +42,7 @@ app.include_router(favorite_blocks.router, prefix="/api/favorite-blocks", tags=[
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
-    from app.services.automation_engine import start_scheduler
+    from app.services.scheduler import start_scheduler
     from app.database import engine
     from sqlmodel import Session
     from app.services.template_compositions import ensure_managed_block_templates

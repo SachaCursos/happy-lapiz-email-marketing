@@ -39,7 +39,9 @@ export default function SyncTemplatesPage() {
         prev.map((r) => (r.id === tpl.id ? { ...r, status: "running", info: "Procesando..." } : r))
       );
 
-      if (!tpl.html_content?.trim()) {
+      const full = (await templatesApi.get(tpl.id)).data as Template;
+
+      if (!full.html_content?.trim()) {
         setRows((prev) =>
           prev.map((r) => (r.id === tpl.id ? { ...r, status: "skip", info: "Sin HTML" } : r))
         );
@@ -47,7 +49,7 @@ export default function SyncTemplatesPage() {
       }
 
       try {
-        const blocks = htmlToBlocks(tpl.html_content);
+        const blocks = htmlToBlocks(full.html_content);
 
         if (blocks.length === 0) {
           setRows((prev) =>

@@ -2,11 +2,12 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import load_only
 from sqlmodel import Session, select
 from app.database import get_session
 from app.core.deps import get_current_user, require_editor
 from app.models.user import User
-from app.models.template import Template, TemplateCreate, TemplateRead, TemplateUpdate
+from app.models.template import Template, TemplateCreate, TemplateRead, TemplateSummary, TemplateUpdate
 from app.models.campaign import Campaign
 from app.models.automation import Automation
 from app.services.block_catalog_templates import ensure_catalog_templates
@@ -16,11 +17,21 @@ from app.services.template_block_compiler import blocks_to_html
 router = APIRouter()
 
 
-@router.get("", response_model=List[TemplateRead])
+@router.get("", response_model=List[TemplateSummary])
 def list_templates(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
     ensure_catalog_templates(session)
     return session.exec(
-        select(Template).order_by(Template.created_at.desc(), Template.id.desc())
+        select(Template)
+        .options(load_only(
+            Template.id,
+            Template.name,
+            Template.subject_default,
+            Template.preview_text,
+            Template.created_by,
+            Template.created_at,
+            Template.updated_at,
+        ))
+        .order_by(Template.created_at.desc(), Template.id.desc())
     ).all()
 
 

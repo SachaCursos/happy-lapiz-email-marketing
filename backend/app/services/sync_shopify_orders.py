@@ -1,6 +1,6 @@
 """
 Keeps contacts in sync with the shopify_orders table.
-Called from the background scheduler every minute.
+Called from the background scheduler every 10 minutes.
 - Creates a contact for every new Shopify buyer not yet in contacts.
 - Updates order stats (orders_count, total_spent, last_purchase, etc.)
   for contacts that already exist whenever newer orders arrive.
@@ -44,9 +44,10 @@ def _backfill_missing_order_events(conn) -> int:
 
 
 def sync_contacts_from_shopify_orders() -> dict:
-    # Aggregate stats and latest-order details per buyer email.
-    # Used by both the INSERT and the UPDATE below.
-    _STATS_CTE = """
+    # Limit aggregation to recent orders to cut Postgres egress (full history unchanged in DB).
+    _RECENT = "AND created_at >= NOW() - INTERVAL '72 hours'"
+
+    _STATS_CTE = f"""
         order_stats AS (
             SELECT
                 lower(email)                              AS email,
@@ -59,6 +60,7 @@ def sync_contacts_from_shopify_orders() -> dict:
               AND email <> ''
               AND cancelled_at IS NULL
               AND financial_status NOT IN ('voided', 'refunded')
+              {_RECENT}
             GROUP BY lower(email)
         ),
         latest_order AS (
@@ -71,12 +73,27 @@ def sync_contacts_from_shopify_orders() -> dict:
             FROM shopify_orders
             WHERE email IS NOT NULL
               AND cancelled_at IS NULL
+              {_RECENT}
             ORDER BY lower(email), created_at DESC
         )
     """
 
     insert_sql = text(f"""
-        WITH {_STATS_CTE}
+        WITH {_STATS_CTE},
+        new_buyers AS (
+            SELECT DISTINCT ON (lower(so.email))
+                lower(so.email) AS email,
+                TRIM(COALESCE(so.first_name, '') || ' ' || COALESCE(so.last_name, '')) AS name,
+                so.shipping_city,
+                so.shipping_province,
+                COALESCE((so.raw->>'buyer_accepts_marketing')::boolean, false) AS accepts_marketing,
+                so.created_at
+            FROM shopify_orders so
+            WHERE so.email IS NOT NULL AND so.email <> ''
+              AND so.cancelled_at IS NULL
+              AND so.created_at >= NOW() - INTERVAL '30 days'
+            ORDER BY lower(so.email), so.created_at DESC
+        )
         INSERT INTO contacts (
             email, name,
             orders_count, total_spent, ticket_medio, last_purchase,
@@ -86,22 +103,18 @@ def sync_contacts_from_shopify_orders() -> dict:
             created_at, updated_at
         )
         SELECT
-            os.email,
-            lo.name,
-            os.orders_count,
-            os.total_spent,
-            os.ticket_medio,
-            os.last_purchase,
-            lo.shipping_city,
-            lo.shipping_province,
+            nb.email,
+            nb.name,
+            1, 0, 0, nb.created_at::date,
+            nb.shipping_city,
+            nb.shipping_province,
             true,
-            lo.accepts_marketing,
+            nb.accepts_marketing,
             'shopify',
             NOW(), NOW()
-        FROM order_stats os
-        JOIN latest_order lo ON lo.email = os.email
+        FROM new_buyers nb
         WHERE NOT EXISTS (
-            SELECT 1 FROM contacts c WHERE lower(c.email) = os.email
+            SELECT 1 FROM contacts c WHERE lower(c.email) = nb.email
         )
         RETURNING id
     """)

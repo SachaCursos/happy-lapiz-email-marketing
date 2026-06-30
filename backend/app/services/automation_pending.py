@@ -3,22 +3,18 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
 from app.models.automation import Automation, AutomationEnrollment
-from app.models.contact import Contact
-from app.models.form import FormSubmission
-from app.models.gift_recipient import GiftRecipient
-from app.services.regalado_vars import (
-    get_regalado_field,
-    gift_recipient_to_regalado_dict,
-    parse_birthday_mmdd,
-    submission_to_regalado_dict,
-)
+from app.services.birthday_triggers import iter_form_all, iter_gift_popup_all
+from app.services.regalado_vars import get_regalado_field, parse_birthday_mmdd
 
 CONTACTS_PER_STEP_LIMIT = 40
+_WILL_ENTER_CACHE_TTL = 300  # seconds
+_will_enter_cache: dict[int, tuple[float, dict | None]] = {}
 
 
 def _is_ready(dt: datetime, now: datetime) -> bool:
@@ -71,13 +67,23 @@ def build_pending_response(auto: Automation, session: Session) -> dict:
             "contacts": [_contact_row(e, now) for e in group[:CONTACTS_PER_STEP_LIMIT]],
         })
 
-    will_enter = _will_enter_count(auto, session)
+    will_enter = _cached_will_enter(auto, session)
 
     return {
         "count": total,
         "steps": steps_out,
         "will_enter": will_enter,
     }
+
+
+def _cached_will_enter(auto: Automation, session: Session) -> dict | None:
+    now = time.monotonic()
+    cached = _will_enter_cache.get(auto.id)
+    if cached and now - cached[0] < _WILL_ENTER_CACHE_TTL:
+        return cached[1]
+    result = _will_enter_count(auto, session)
+    _will_enter_cache[auto.id] = (now, result)
+    return result
 
 
 def _birthday_form_sources(auto: Automation) -> tuple[str, int] | None:
@@ -92,7 +98,6 @@ def _birthday_form_sources(auto: Automation) -> tuple[str, int] | None:
 
 
 def _first_send_date(raw_date: str, days_before: int, today: date) -> tuple[date, date] | None:
-    """Return (birthday_date, first_send_date) for the next cycle."""
     mmdd = parse_birthday_mmdd(raw_date)
     if not mmdd:
         return None
@@ -127,40 +132,13 @@ def _will_enter_count(auto: Automation, session: Session) -> dict | None:
     birthday_field = config.get("birthday_field", "fecha_nacimiento")
     today = datetime.utcnow().date()
 
-    candidates: list[tuple[str, dict, Contact | None]] = []
-
     if data_source == "gift_popup":
-        seen_emails: set[str] = set()
-        for gr in session.exec(
-            select(GiftRecipient).order_by(GiftRecipient.created_at.desc())
-        ):
-            em = (gr.email or "").lower()
-            if not em or em in seen_emails:
-                continue
-            seen_emails.add(em)
-            contact = session.exec(select(Contact).where(Contact.email == em)).first()
-            if contact and not contact.opted_in:
-                continue
-            candidates.append((em, gift_recipient_to_regalado_dict(gr), contact))
-
-    elif data_source == "form":
+        candidates = iter_gift_popup_all(session)
+    else:
         form_id = config.get("form_id")
         if not form_id:
             return {"count": 0}
-        seen_emails = set()
-        for sub in session.exec(
-            select(FormSubmission)
-            .where(FormSubmission.form_id == int(form_id))
-            .order_by(FormSubmission.created_at.desc())
-        ):
-            em = (sub.email or "").lower()
-            if not em or em in seen_emails:
-                continue
-            seen_emails.add(em)
-            contact = session.exec(select(Contact).where(Contact.email == em)).first()
-            if contact and not contact.opted_in:
-                continue
-            candidates.append((em, submission_to_regalado_dict(sub), contact))
+        candidates = iter_form_all(session, int(form_id))
 
     count = 0
     dedupe: set[tuple] = set()

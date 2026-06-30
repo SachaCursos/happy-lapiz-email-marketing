@@ -173,7 +173,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     queryKey: ["campaign-progress", id],
     queryFn: () => campaignsApi.sendProgress(id).then((r) => r.data),
     enabled: campaign?.status === "draft" || campaign?.status === "sending" || campaign?.status === "paused" || failedCount > 0,
-    refetchInterval: campaign?.status === "sending" ? 3000 : false,
+    refetchInterval: campaign?.status === "sending" ? 12_000 : false,
   });
 
   const pauseMutation = useMutation({

@@ -1,5 +1,5 @@
 """
-Automation engine — runs every 60 seconds in a background thread.
+Automation engine — background tasks run on staggered intervals via scheduler.py.
 
 Two-phase processing:
   Phase 1 (trigger detection): each handler detects qualifying events and creates
@@ -11,7 +11,6 @@ Two-phase processing:
 import json
 import logging
 import random
-import threading
 import time
 from datetime import datetime, timedelta
 
@@ -22,7 +21,6 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.services.sync_shopify_orders import sync_contacts_from_shopify_orders
 from app.database import engine as db_engine
 from app.models.automation import Automation, AutomationEnrollment, AutomationRun
 from app.models.campaign import Campaign, CampaignSend
@@ -31,7 +29,7 @@ from app.models.segment import Segment
 from app.models.template import Template
 from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_batch, _fmt_nombre, replace_unsub_tag, resolve_relative_timers, resume_pending_campaign_sends
 from app.core.unsub_token import unsub_url
-from app.services.segment_evaluator import evaluate_segment
+from app.services.segment_evaluator import evaluate_segment, evaluate_segment_ids
 
 logger = logging.getLogger(__name__)
 
@@ -1316,16 +1314,16 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
       relation_field: str     — relation field (default "relacion")
     """
     from app.models.contact import Contact
-    from app.models.form import FormSubmission
-    from app.models.gift_recipient import GiftRecipient
+    from app.services.birthday_triggers import (
+        iter_contacts_on_mmdd,
+        iter_form_on_mmdd,
+        iter_gift_popup_on_mmdd,
+    )
     from app.services.regalado_vars import (
         get_regalado_field,
-        gift_recipient_to_regalado_dict,
         infer_relation_field,
-        merge_regalado_sources,
         parse_birthday_mmdd,
         prepare_regalado_vars,
-        submission_to_regalado_dict,
     )
 
     config = auto.trigger_config or {}
@@ -1355,14 +1353,6 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
     target_mmdd = f"{target.month:02d}-{target.day:02d}"
 
     seen: set[tuple] = set()
-
-    def _birthday_contact_allowed(email: str) -> tuple[bool, Contact | None]:
-        contact = session.exec(
-            select(Contact).where(Contact.email == email.lower())
-        ).first()
-        if contact and not contact.opted_in:
-            return False, contact
-        return True, contact
 
     def _try_enroll(email: str, contact: Contact | None, data: dict) -> None:
         raw_date = get_regalado_field(data, birthday_field)
@@ -1397,69 +1387,26 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
         _enroll(session, auto, email_l, trigger_key, first_delay, extra_vars)
 
     if data_source == "gift_popup":
-        recipients_by_email: dict[str, GiftRecipient] = {}
-        for gr in session.exec(
-            select(GiftRecipient).order_by(GiftRecipient.created_at.desc())
+        for email, data, contact in iter_gift_popup_on_mmdd(
+            session, target.month, target.day
         ):
-            em = (gr.email or "").lower()
-            if em and em not in recipients_by_email:
-                recipients_by_email[em] = gr
-
-        for email, gr in recipients_by_email.items():
-            allowed, contact = _birthday_contact_allowed(email)
-            if not allowed:
-                continue
-            _try_enroll(email, contact, gift_recipient_to_regalado_dict(gr))
+            _try_enroll(email, contact, data)
         return
 
     if data_source == "form":
         form_id = config.get("form_id")
         if not form_id:
             return
-
-        subs_by_email: dict[str, FormSubmission] = {}
-        for sub in session.exec(
-            select(FormSubmission)
-            .where(FormSubmission.form_id == int(form_id))
-            .order_by(FormSubmission.created_at.desc())
+        for email, data, contact in iter_form_on_mmdd(
+            session, int(form_id), target.month, target.day
         ):
-            em = (sub.email or "").lower()
-            if em and em not in subs_by_email:
-                subs_by_email[em] = sub
-
-        for email, sub in subs_by_email.items():
-            allowed, contact = _birthday_contact_allowed(email)
-            if not allowed:
-                continue
-            _try_enroll(email, contact, submission_to_regalado_dict(sub))
+            _try_enroll(email, contact, data)
         return
 
-    # Default: opted-in contacts with birthday in custom_fields and/or any form submission.
-    subs_by_email: dict[str, FormSubmission] = {}
-    for sub in session.exec(
-        select(FormSubmission).order_by(FormSubmission.created_at.desc())
+    for email, data, contact in iter_contacts_on_mmdd(
+        session, target.month, target.day, birthday_field
     ):
-        em = (sub.email or "").lower()
-        if em and em not in subs_by_email:
-            subs_by_email[em] = sub
-
-    contacts = session.exec(
-        select(Contact).where(Contact.opted_in == True)  # noqa: E712
-    ).all()
-
-    for contact in contacts:
-        cf = contact.custom_fields or {}
-        if isinstance(cf, str):
-            try:
-                cf = json.loads(cf)
-            except Exception:
-                cf = {}
-        if not isinstance(cf, dict):
-            cf = {}
-
-        sub = subs_by_email.get(contact.email.lower())
-        data = merge_regalado_sources(cf, sub)
-        _try_enroll(contact.email, contact, data)
+        _try_enroll(email, contact, data)
 
 
 def _check_product_of_month(auto: Automation, session: Session) -> None:
@@ -1591,15 +1538,12 @@ def run_scheduled_campaigns() -> None:
                 seg = session.get(Segment, campaign.segment_id)
                 if not seg:
                     continue
-                contacts = evaluate_segment(seg.conditions, session)
-                if campaign.exclude_segment_ids:
-                    excluded_ids: set = set()
-                    for excl_id in campaign.exclude_segment_ids:
-                        excl_seg = session.get(Segment, excl_id)
-                        if excl_seg:
-                            excluded_ids.update(ct.id for ct in evaluate_segment(excl_seg.conditions, session))
-                    contacts = [ct for ct in contacts if ct.id not in excluded_ids]
-                if not contacts:
+                from app.services.campaign_audience import get_campaign_recipient_ids
+
+                recipient_ids = get_campaign_recipient_ids(
+                    session, campaign.segment_id, campaign.exclude_segment_ids,
+                )
+                if not recipient_ids:
                     continue
                 already_sent = set(session.exec(
                     select(CampaignSend.contact_id).where(
@@ -1609,8 +1553,8 @@ def run_scheduled_campaigns() -> None:
                         )),
                     )
                 ).all())
-                to_send = [c for c in contacts if c.id not in already_sent]
-                if not to_send:
+                to_send_ids = [cid for cid in recipient_ids if cid not in already_sent]
+                if not to_send_ids:
                     campaign.status = "sent"
                     session.add(campaign)
                     session.commit()
@@ -1618,13 +1562,13 @@ def run_scheduled_campaigns() -> None:
                 campaign.status = "sending"
                 session.add(campaign)
                 session.commit()
-                send_campaign_batch(campaign.id, None, len(contacts), auto_resume=True)
+                send_campaign_batch(campaign.id, None, len(recipient_ids), auto_resume=True)
             except Exception as exc:
                 logger.exception("Scheduled campaign %d error: %s", campaign.id, exc)
 
 
-def run_automations() -> None:
-    # Phase 1: detect triggers → enroll (each handler in its own session)
+def run_automation_triggers() -> None:
+    """Phase 1: detect triggers and create enrollments (no sends)."""
     with Session(db_engine) as session:
         automations = session.exec(
             select(Automation).where(Automation.status == "active")
@@ -1643,7 +1587,9 @@ def run_automations() -> None:
         except Exception as exc:
             logger.exception("Automation %d (%s) trigger error: %s", auto_id, trigger_type, exc)
 
-    # Phase 2: process ready enrollments → send emails (own session, isolated)
+
+def process_ready_enrollments() -> None:
+    """Phase 2: send emails for enrollments whose next_send_at has passed."""
     try:
         with Session(db_engine) as session:
             _process_enrollments(session)
@@ -1651,31 +1597,7 @@ def run_automations() -> None:
         logger.exception("Enrollment processing error: %s", exc)
 
 
-def _run_with_timeout(fn, timeout_sec: int, label: str) -> None:
-    """Run fn in a thread; log a warning if it exceeds timeout_sec."""
-    t = threading.Thread(target=fn, daemon=True, name=f"sched-{label}")
-    t.start()
-    t.join(timeout=timeout_sec)
-    if t.is_alive():
-        logger.error("Scheduler task '%s' timed out after %ds — skipping", label, timeout_sec)
-
-
-def start_scheduler() -> None:
-    def loop():
-        time.sleep(10)
-        while True:
-            try:
-                _run_with_timeout(run_automations, 120, "run_automations")
-                _run_with_timeout(run_scheduled_campaigns, 120, "run_scheduled_campaigns")
-                _run_with_timeout(resume_pending_campaign_sends, 120, "resume_campaign_sends")
-                from app.services.evergreen_engine import run_evergreen_campaigns, process_evergreen_followups
-                _run_with_timeout(run_evergreen_campaigns, 300, "run_evergreen_campaigns")
-                _run_with_timeout(process_evergreen_followups, 120, "evergreen_followups")
-                _run_with_timeout(sync_contacts_from_shopify_orders, 90, "sync_shopify")
-            except Exception as exc:
-                logger.exception("Automation scheduler error: %s", exc)
-            time.sleep(60)
-
-    t = threading.Thread(target=loop, daemon=True, name="automation-scheduler")
-    t.start()
-    logger.info("Automation scheduler started (interval: 1 min)")
+def run_automations() -> None:
+    """Full cycle (triggers + sends) — used by manual /run-now only."""
+    run_automation_triggers()
+    process_ready_enrollments()

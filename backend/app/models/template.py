@@ -45,3 +45,14 @@ class TemplateRead(SQLModel):
     created_by: Optional[int]
     created_at: datetime
     updated_at: datetime
+
+
+class TemplateSummary(SQLModel):
+    """List endpoint — excludes heavy html_content / json_blocks."""
+    id: int
+    name: str
+    subject_default: Optional[str] = ""
+    preview_text: Optional[str] = None
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime

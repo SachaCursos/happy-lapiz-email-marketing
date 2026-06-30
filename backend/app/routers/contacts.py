@@ -70,7 +70,9 @@ def list_contacts(
 
 @router.get("/count")
 def count_contacts(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return {"count": session.exec(select(Contact)).all().__len__()}
+    from sqlmodel import func
+    count = session.exec(select(func.count(Contact.id))).one()
+    return {"count": count}
 
 
 def _do_unsubscribe(email: str, session: Session) -> None:

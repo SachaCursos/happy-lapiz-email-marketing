@@ -88,16 +88,19 @@ export interface Segment {
   updated_at: string;
 }
 
-export interface Template {
+export interface TemplateSummary {
   id: number;
   name: string;
   subject_default: string;
   preview_text: string | null;
-  html_content: string;
-  json_blocks: unknown[] | Record<string, unknown> | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface Template extends TemplateSummary {
+  html_content?: string;
+  json_blocks?: unknown[] | Record<string, unknown> | null;
 }
 
 export type CampaignStatus = "draft" | "scheduled" | "sending" | "paused" | "sent" | "cancelled";

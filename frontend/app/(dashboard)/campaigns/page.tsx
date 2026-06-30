@@ -258,7 +258,7 @@ export default function CampaignsPage() {
     queryKey: ["campaigns"],
     queryFn: () => campaignsApi.list().then((r) => r.data),
     staleTime: 2 * 60_000,
-    refetchInterval: (q) => (q.state.data as Campaign[] | undefined)?.some((c) => c.status === "sending") ? 3000 : false,
+    refetchInterval: (q) => (q.state.data as Campaign[] | undefined)?.some((c) => c.status === "sending") ? 12_000 : false,
   });
 
   const { data: segments = [] } = useQuery<Segment[]>({

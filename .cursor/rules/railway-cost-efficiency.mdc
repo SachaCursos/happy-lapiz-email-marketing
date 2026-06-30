@@ -1,0 +1,34 @@
+---
+description: Reduce Railway Postgres egress, RAM, and CPU when implementing features
+alwaysApply: true
+---
+
+# Railway cost efficiency
+
+This project runs on Railway. **Postgres egress** (data read from DB) and **service RAM** are the main cost drivers. Consider both on every backend/frontend change.
+
+## Database reads (Postgres egress)
+
+- Never `select(Model).all()` just to count — use `func.count()` or `evaluate_segment_ids` + `len`.
+- List endpoints must not return heavy columns (`html_content`, `json_blocks`, large JSONB). Use summary DTOs + detail endpoint.
+- Filter in SQL (date, status, MM-DD) before loading rows into Python.
+- Segment/campaign audience: prefer `evaluate_segment_ids()` over full `Contact` rows when only IDs are needed.
+- Paginate or batch (200–500 rows); avoid loading 10k+ rows per request or scheduler tick.
+- Incremental sync: scope queries to recent windows (24–72 h) unless a full backfill is explicitly required.
+
+## Background jobs (`scheduler.py`)
+
+- Do not add tasks that run every 60 s unless time-sensitive (e.g. ready enrollments to send).
+- New periodic work: use staggered intervals (5–15 min) and register in `scheduler.py`.
+- One global scheduler lock — never run overlapping heavy jobs (prevents RAM spikes).
+- Cache dashboard-only aggregates (5–10 min TTL) when the query scans many rows.
+
+## API & frontend
+
+- Avoid `refetchInterval` under 10 s unless a campaign is actively sending.
+- Prefer `staleTime` over aggressive polling for list views.
+- Public/static assets (embed scripts): avoid serving large JS from the API if a CDN or theme file is possible.
+
+## Before shipping
+
+Ask: *Does this query or job need to run this often? Does it pull only the columns/rows it needs?*
