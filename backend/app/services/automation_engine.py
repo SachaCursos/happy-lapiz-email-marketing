@@ -1317,7 +1317,12 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
     from app.services.birthday_triggers import (
         iter_contacts_on_mmdd,
         iter_form_on_mmdd,
-        iter_gift_popup_on_mmdd,
+        iter_gift_flow_on_mmdd,
+    )
+    from app.services.birthday_config import (
+        repair_birthday_automation_if_needed,
+        resolve_birthday_data_source,
+        resolve_enroll_early_days,
     )
     from app.services.regalado_vars import (
         get_regalado_field,
@@ -1326,13 +1331,11 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
         prepare_regalado_vars,
     )
 
+    repair_birthday_automation_if_needed(auto, session)
     config = auto.trigger_config or {}
     days_before = int(config.get("days_before", 30))
-    data_source = config.get("data_source") or ("form" if config.get("form_id") else "contacts")
-    if data_source in ("form", "gift_popup"):
-        enroll_early_days = int(config.get("enroll_early_days", 30))
-    else:
-        enroll_early_days = 0
+    data_source = resolve_birthday_data_source(auto)
+    enroll_early_days = resolve_enroll_early_days(auto, data_source)
     birthday_field = config.get("birthday_field", "fecha_nacimiento")
     name_field = config.get("name_field", "nombre_regalado")
     relation_field = infer_relation_field(
@@ -1387,7 +1390,7 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
         _enroll(session, auto, email_l, trigger_key, first_delay, extra_vars)
 
     if data_source == "gift_popup":
-        for email, data, contact in iter_gift_popup_on_mmdd(
+        for email, data, contact in iter_gift_flow_on_mmdd(
             session, target.month, target.day
         ):
             _try_enroll(email, contact, data)

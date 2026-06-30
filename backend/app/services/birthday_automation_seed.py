@@ -214,13 +214,17 @@ def ensure_birthday_automation(session: Session, admin_id: int | None, *, force:
 
 
 def ensure_birthday_reminder_setup(session: Session, *, force_templates: bool = False) -> dict:
+    from app.services.birthday_config import repair_birthday_automation_configs
+
     admin = session.exec(select(User).order_by(User.id)).first()
     admin_id = admin.id if admin else None
     auto = ensure_birthday_automation(session, admin_id, force=force_templates)
+    repaired = repair_birthday_automation_configs(session)
     return {
         "automation_id": auto.id,
         "automation_name": auto.name,
         "automation_status": auto.status,
         "coupon_campaign_id": auto.coupon_campaign_id,
         "steps": len(auto.steps or []),
+        "configs_repaired": repaired,
     }

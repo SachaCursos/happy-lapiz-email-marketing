@@ -9,7 +9,13 @@ from datetime import date, datetime, timedelta, timezone
 from sqlmodel import Session, select
 
 from app.models.automation import Automation, AutomationEnrollment
-from app.services.birthday_triggers import iter_form_all, iter_gift_popup_all
+from app.services.birthday_config import (
+    repair_birthday_automation_if_needed,
+    resolve_birthday_data_source,
+    resolve_enroll_early_days,
+    supports_will_enter_preview,
+)
+from app.services.birthday_triggers import iter_form_all, iter_gift_flow_all
 from app.services.regalado_vars import get_regalado_field, parse_birthday_mmdd
 
 CONTACTS_PER_STEP_LIMIT = 40
@@ -43,6 +49,10 @@ def _contact_row(enrollment: AutomationEnrollment, now: datetime) -> dict:
 
 def build_pending_response(auto: Automation, session: Session) -> dict:
     """Active enrollments grouped by step, plus optional will_enter count."""
+    if auto.trigger_type == "birthday_reminder":
+        repair_birthday_automation_if_needed(auto, session)
+        _will_enter_cache.pop(auto.id, None)
+
     now = datetime.now(timezone.utc)
 
     enrollments = session.exec(
@@ -77,6 +87,8 @@ def build_pending_response(auto: Automation, session: Session) -> dict:
 
 
 def _cached_will_enter(auto: Automation, session: Session) -> dict | None:
+    if not supports_will_enter_preview(auto):
+        return None
     now = time.monotonic()
     cached = _will_enter_cache.get(auto.id)
     if cached and now - cached[0] < _WILL_ENTER_CACHE_TTL:
@@ -84,17 +96,6 @@ def _cached_will_enter(auto: Automation, session: Session) -> dict | None:
     result = _will_enter_count(auto, session)
     _will_enter_cache[auto.id] = (now, result)
     return result
-
-
-def _birthday_form_sources(auto: Automation) -> tuple[str, int] | None:
-    if auto.trigger_type != "birthday_reminder":
-        return None
-    config = auto.trigger_config or {}
-    data_source = config.get("data_source") or ("form" if config.get("form_id") else "contacts")
-    if data_source not in ("form", "gift_popup"):
-        return None
-    enroll_early_days = int(config.get("enroll_early_days", 30))
-    return data_source, enroll_early_days
 
 
 def _first_send_date(raw_date: str, days_before: int, today: date) -> tuple[date, date] | None:
@@ -121,19 +122,16 @@ def _already_in_flow(session: Session, auto_id: int, trigger_key: str) -> bool:
     ).first() is not None
 
 
-def _will_enter_count(auto: Automation, session: Session) -> dict | None:
-    src = _birthday_form_sources(auto)
-    if not src:
-        return None
-
-    data_source, enroll_early_days = src
+def _will_enter_count(auto: Automation, session: Session) -> dict:
+    data_source = resolve_birthday_data_source(auto)
+    enroll_early_days = resolve_enroll_early_days(auto, data_source)
     config = auto.trigger_config or {}
     days_before = int(config.get("days_before", 30))
     birthday_field = config.get("birthday_field", "fecha_nacimiento")
     today = datetime.utcnow().date()
 
     if data_source == "gift_popup":
-        candidates = iter_gift_popup_all(session)
+        candidates = iter_gift_flow_all(session)
     else:
         form_id = config.get("form_id")
         if not form_id:

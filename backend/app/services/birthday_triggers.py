@@ -167,6 +167,91 @@ def iter_contacts_on_mmdd(
         yield em, data, contact
 
 
+def iter_all_forms_on_mmdd(
+    session: Session, month: int, day: int
+) -> Iterator[tuple[str, dict, Contact | None]]:
+    """Latest regalado submission per email (any signup form) matching month/day."""
+    mm = f"{month:02d}"
+    dd = f"{day:02d}"
+    patterns = (f"%-{mm}-{dd}", f"%-{dd}-{mm}", f"%/{mm}/{dd}", f"%/{dd}/{mm}")
+
+    rows = session.exec(
+        select(FormSubmission)
+        .where(
+            text(
+                "("
+                "fecha_nacimiento_regalado LIKE ANY (ARRAY[:p1,:p2,:p3,:p4]) OR "
+                "fecha_nacimiento_regalado2 LIKE ANY (ARRAY[:p1,:p2,:p3,:p4])"
+                ")"
+            ).bindparams(p1=patterns[0], p2=patterns[1], p3=patterns[2], p4=patterns[3])
+        )
+        .order_by(FormSubmission.created_at.desc())
+    ).all()
+
+    seen: set[str] = set()
+    for sub in rows:
+        em = (sub.email or "").lower()
+        if not em or em in seen:
+            continue
+        seen.add(em)
+        allowed, contact = _contact_allowed(session, em)
+        if not allowed:
+            continue
+        yield em, submission_to_regalado_dict(sub), contact
+
+
+def iter_all_forms_with_regalado(
+    session: Session,
+) -> Iterator[tuple[str, dict, Contact | None]]:
+    seen: set[str] = set()
+    for sub in session.exec(
+        select(FormSubmission)
+        .where(
+            text(
+                "fecha_nacimiento_regalado IS NOT NULL "
+                "OR fecha_nacimiento_regalado2 IS NOT NULL"
+            )
+        )
+        .order_by(FormSubmission.created_at.desc())
+    ):
+        em = (sub.email or "").lower()
+        if not em or em in seen:
+            continue
+        seen.add(em)
+        allowed, contact = _contact_allowed(session, em)
+        if not allowed:
+            continue
+        yield em, submission_to_regalado_dict(sub), contact
+
+
+def iter_gift_flow_on_mmdd(
+    session: Session, month: int, day: int
+) -> Iterator[tuple[str, dict, Contact | None]]:
+    """Gift popup + signup forms (deduped by email, gift_recipients first)."""
+    seen: set[str] = set()
+    for item in iter_gift_popup_on_mmdd(session, month, day):
+        seen.add(item[0])
+        yield item
+    for item in iter_all_forms_on_mmdd(session, month, day):
+        if item[0] not in seen:
+            seen.add(item[0])
+            yield item
+
+
+def iter_gift_flow_all(
+    session: Session,
+) -> Iterator[tuple[str, dict, Contact | None]]:
+    """All future candidates from gift popup and signup forms."""
+    seen: set[str] = set()
+    for item in iter_gift_popup_all(session):
+        seen.add(item[0])
+        yield item
+    for item in iter_all_forms_with_regalado(session):
+        if item[0] not in seen:
+            seen.add(item[0])
+            yield item
+
+
 def iter_gift_popup_all(session: Session) -> Iterator[tuple[str, dict, Contact | None]]:
     """Latest gift recipient per email (light columns only) — for will_enter counts."""
     rows = session.execute(
