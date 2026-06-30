@@ -17,6 +17,7 @@ from app.models.template import Template
 from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipients
 from app.services.email_sender import (
     send_campaign_batch,
+    send_campaign_until_idle,
     CAMPAIGN_SEND_ATTEMPTED,
     count_attempted_campaign_sends,
     _inject_footer,
@@ -194,7 +195,7 @@ def send_campaign_now(
 
     contact_ids = [ct.id for ct in to_send] if opts.limit else None
     background_tasks.add_task(
-        send_campaign_batch,
+        send_campaign_until_idle,
         campaign_id,
         contact_ids,
         len(contacts),

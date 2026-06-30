@@ -18,7 +18,7 @@ INTERVAL_ENROLLMENTS = 60
 INTERVAL_FAST_TRIGGERS = 60
 INTERVAL_TRIGGERS = 15 * 60
 INTERVAL_SCHEDULED_CAMPAIGNS = 2 * 60
-INTERVAL_RESUME_SENDS_ACTIVE = 60
+INTERVAL_RESUME_SENDS_ACTIVE = 30
 INTERVAL_RESUME_SENDS_IDLE = 5 * 60
 INTERVAL_EVERGREEN = 60 * 60
 INTERVAL_EVERGREEN_FOLLOWUPS = 5 * 60
@@ -68,6 +68,15 @@ def _tick() -> None:
     from app.services.evergreen_engine import process_evergreen_followups, run_evergreen_campaigns
     from app.services.sync_shopify_orders import sync_contacts_from_shopify_orders
 
+    sending_active = _has_sending_campaigns()
+
+    resume_interval = (
+        INTERVAL_RESUME_SENDS_ACTIVE if sending_active else INTERVAL_RESUME_SENDS_IDLE
+    )
+    if _due("resume_sends", resume_interval):
+        timeout = 200 if sending_active else 120
+        _run_guarded(resume_pending_campaign_sends, timeout, "resume_sends")
+
     if _due("enrollments", INTERVAL_ENROLLMENTS):
         _run_guarded(process_ready_enrollments, 120, "enrollments")
 
@@ -79,14 +88,6 @@ def _tick() -> None:
 
     if _due("scheduled_campaigns", INTERVAL_SCHEDULED_CAMPAIGNS):
         _run_guarded(run_scheduled_campaigns, 120, "scheduled_campaigns")
-
-    resume_interval = (
-        INTERVAL_RESUME_SENDS_ACTIVE
-        if _has_sending_campaigns()
-        else INTERVAL_RESUME_SENDS_IDLE
-    )
-    if _due("resume_sends", resume_interval):
-        _run_guarded(resume_pending_campaign_sends, 120, "resume_sends")
 
     if _due("evergreen", INTERVAL_EVERGREEN):
         _run_guarded(run_evergreen_campaigns, 300, "evergreen")

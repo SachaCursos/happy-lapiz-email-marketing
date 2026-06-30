@@ -26,9 +26,10 @@ def _fmt_nombre(name: str | None, email: str = "") -> str:
 
 
 BATCH_SIZE = 50
-RATE_DELAY = 0.25  # 4 emails/segundo — límite de Resend es 5/segundo
-SEND_BATCH_SIZE = 200  # contactos por invocación (~50 s); el scheduler reanuda el resto
-STALL_SECONDS = 90  # sin envíos nuevos → reanudar automáticamente
+RATE_DELAY = 0.2  # 5 emails/segundo (límite Resend)
+SEND_BATCH_SIZE = 400  # contactos por lote (~80 s a 5/seg)
+STALL_SECONDS = 20  # evita solapar dos workers; no bloquea entre lotes encadenados
+RESUME_LOOP_SECONDS = 170  # segundos máx. de envío continuo por ciclo del scheduler
 
 # queued = pendiente de envío; failed = intento fallido (reintentable); el resto = entregado a Resend
 CAMPAIGN_SEND_ATTEMPTED: tuple[str, ...] = (
@@ -557,6 +558,33 @@ def _ensure_send_records(session: Session, campaign_id: int, contact_ids: List[i
             session.add(exists)
 
 
+def send_campaign_until_idle(
+    campaign_id: int,
+    contact_ids: List[int] | None = None,
+    total_in_segment: int = 0,
+    *,
+    auto_resume: bool = False,
+    max_seconds: float = RESUME_LOOP_SECONDS,
+) -> dict:
+    """Envía lotes seguidos hasta agotar pendientes o alcanzar max_seconds."""
+    deadline = time.monotonic() + max_seconds
+    totals = {"campaign_id": campaign_id, "processed": 0, "pending_after": 0, "batches": 0}
+    while time.monotonic() < deadline:
+        result = send_campaign_batch(
+            campaign_id,
+            contact_ids=contact_ids,
+            total_in_segment=total_in_segment,
+            auto_resume=auto_resume,
+        )
+        totals["processed"] += result["processed"]
+        totals["pending_after"] = result["pending_after"]
+        totals["batches"] += 1
+        contact_ids = None
+        if result["processed"] == 0 or result["pending_after"] == 0:
+            break
+    return totals
+
+
 def send_campaign_batch(
     campaign_id: int,
     contact_ids: List[int] | None = None,
@@ -685,10 +713,10 @@ def resume_pending_campaign_sends() -> None:
     for campaign_id in to_resume:
         try:
             logger.info("Reanudando envío automático de campaña %d", campaign_id)
-            result = send_campaign_batch(campaign_id, auto_resume=True)
+            result = send_campaign_until_idle(campaign_id, auto_resume=True)
             logger.info(
-                "Campaña %d: lote %d enviados, %d pendientes",
-                campaign_id, result["processed"], result["pending_after"],
+                "Campaña %d: %d lote(s), %d enviados, %d pendientes",
+                campaign_id, result["batches"], result["processed"], result["pending_after"],
             )
         except Exception as exc:
             logger.exception("Error reanudando campaña %d: %s", campaign_id, exc)
