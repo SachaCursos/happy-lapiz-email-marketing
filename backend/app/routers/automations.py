@@ -257,44 +257,14 @@ def automation_pending(
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    """Return active enrollments for this automation (contacts awaiting a send)."""
+    """Return active enrollments grouped by step, plus will_enter count for form flows."""
+    from app.services.automation_pending import build_pending_response
+
     auto = session.get(Automation, auto_id)
     if not auto:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
 
-    now = datetime.now(timezone.utc)
-
-    def _is_ready(dt: datetime) -> bool:
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt <= now
-
-    enrollments = session.exec(
-        select(AutomationEnrollment)
-        .where(AutomationEnrollment.automation_id == auto_id)
-        .where(AutomationEnrollment.status == "active")
-        .order_by(AutomationEnrollment.next_send_at.asc())
-        .limit(50)
-    ).all()
-
-    contacts = []
-    for e in enrollments:
-        import json as _json
-        extra = _json.loads(e.extra_vars_json or "{}")
-        name = extra.get("nombre") or extra.get("first_name") or e.contact_email
-        detail = extra.get("cart_total") or extra.get("order_number") or ""
-        if extra.get("first_product"):
-            detail = f"{extra['first_product']} · {detail}" if detail else extra["first_product"]
-        contacts.append({
-            "email":     e.contact_email,
-            "name":      name,
-            "detail":    detail,
-            "send_at":   e.next_send_at.isoformat(),
-            "ready":     _is_ready(e.next_send_at),
-            "step":      e.next_step,
-        })
-
-    return {"count": len(contacts), "contacts": contacts}
+    return build_pending_response(auto, session)
 
 
 @router.post("/run-now")

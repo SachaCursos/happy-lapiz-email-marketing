@@ -171,6 +171,8 @@ def ensure_birthday_automation(session: Session, admin_id: int | None, *, force:
 
     trigger_config = {
         "days_before": 30,
+        "data_source": "gift_popup",
+        "enroll_early_days": 30,
         "birthday_field": "fecha_nacimiento",
         "name_field": "nombre_regalado",
     }

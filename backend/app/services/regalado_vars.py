@@ -315,6 +315,26 @@ def submission_to_regalado_dict(submission: Any) -> dict:
     return out
 
 
+def gift_recipient_to_regalado_dict(recipient: Any) -> dict:
+    """Map a GiftRecipient row to canonical regalado field keys."""
+    if not recipient:
+        return {}
+    out: dict[str, str] = {}
+    if recipient.nombre_regalado:
+        out["nombre_regalado"] = str(recipient.nombre_regalado).strip()
+        out["destinatario_nombre"] = out["nombre_regalado"]
+    if recipient.relacion:
+        out["relacion"] = str(recipient.relacion).strip()
+        out["relacion_regalado"] = out["relacion"]
+        out["para_quien"] = out["relacion"]
+    if recipient.fecha_nacimiento_regalado:
+        fecha = str(recipient.fecha_nacimiento_regalado)
+        out["fecha_nacimiento_regalado"] = fecha
+        out["fecha_nacimiento"] = fecha
+        out["cual_es_su_fecha_de_nacimiento"] = fecha
+    return out
+
+
 def merge_regalado_sources(custom_fields: dict | None, submission: Any) -> dict:
     """Merge contact custom_fields with form_submission data (submission fills gaps)."""
     data: dict = {}

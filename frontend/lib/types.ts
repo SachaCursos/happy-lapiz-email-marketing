@@ -417,9 +417,16 @@ export interface AutomationPendingContact {
   step?: number;
 }
 
-export interface AutomationPending {
+export interface AutomationPendingStep {
+  step: number;
   count: number;
   contacts: AutomationPendingContact[];
+}
+
+export interface AutomationPending {
+  count: number;
+  steps: AutomationPendingStep[];
+  will_enter: { count: number } | null;
 }
 
 export interface AutomationVariantStat {

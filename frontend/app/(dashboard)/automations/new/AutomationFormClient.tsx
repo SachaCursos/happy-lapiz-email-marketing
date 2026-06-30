@@ -38,7 +38,7 @@ const TRIGGERS: {
   { value: "welcome",                  badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Bienvenida (nuevo suscriptor)",    description: "Nuevo contacto con opt-in activo." },
   { value: "reactivation",             badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Reactivación (cliente inactivo)",  description: "Sin compra en N días." },
   { value: "post_visit",               badge: "Interno",  badgeColor: "bg-gray-100 text-gray-700",     label: "Seguimiento post-compra",          description: "N días después de la última compra." },
-  { value: "birthday_reminder",        badge: "Interno",  badgeColor: "bg-pink-100 text-pink-700",     label: "Recordatorio de cumpleaños",       description: "N días antes del cumpleaños guardado en custom_fields." },
+  { value: "birthday_reminder",        badge: "Interno",  badgeColor: "bg-pink-100 text-pink-700",     label: "Recordatorio de cumpleaños",       description: "N días antes del cumpleaños. Puede leer contactos, un formulario o el popup de regalados." },
   { value: "form_submitted",           badge: "Formulario", badgeColor: "bg-indigo-100 text-indigo-700", label: "Formulario completado",            description: "El contacto completó un formulario de suscripción." },
   { value: "product_of_month",         badge: "Calendario", badgeColor: "bg-amber-100 text-amber-800",   label: "Producto del mes",                 description: "Correos en lunes del mes que elijas, con producto rotativo automático." },
 ];
@@ -727,6 +727,9 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
   const [cooldownDays, setCooldownDays] = useState(180);
   const [postVisitDays, setPostVisitDays] = useState(3);
   const [birthdayDaysBefore, setBirthdayDaysBefore] = useState(30);
+  const [birthdayDataSource, setBirthdayDataSource] = useState<"contacts" | "form" | "gift_popup">("contacts");
+  const [birthdayFormId, setBirthdayFormId] = useState<string>("");
+  const [birthdayEnrollEarlyDays, setBirthdayEnrollEarlyDays] = useState(30);
   const [birthdayField, setBirthdayField] = useState("fecha_nacimiento");
   const [birthdayNameField, setBirthdayNameField] = useState("nombre_regalado");
   const [formSubmittedFormId, setFormSubmittedFormId] = useState<string>("");
@@ -817,6 +820,10 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       setPostVisitDays(Number(tc.delay_days ?? 3));
     } else if (existingAuto.trigger_type === "birthday_reminder") {
       setBirthdayDaysBefore(Number(tc.days_before ?? 30));
+      const src = tc.data_source || (tc.form_id ? "form" : "contacts");
+      setBirthdayDataSource(src as "contacts" | "form" | "gift_popup");
+      setBirthdayFormId(String(tc.form_id ?? ""));
+      setBirthdayEnrollEarlyDays(Number(tc.enroll_early_days ?? (src === "contacts" ? 0 : 30)));
       setBirthdayField(String(tc.birthday_field ?? "fecha_nacimiento"));
       setBirthdayNameField(String(tc.name_field ?? "nombre_regalado"));
     } else if (existingAuto.trigger_type === "form_submitted") {
@@ -927,7 +934,18 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       } else if (triggerType === "post_visit") {
         triggerConfig = { delay_days: postVisitDays };
       } else if (triggerType === "birthday_reminder") {
-        triggerConfig = { days_before: birthdayDaysBefore, birthday_field: birthdayField, name_field: birthdayNameField };
+        triggerConfig = {
+          days_before: birthdayDaysBefore,
+          birthday_field: birthdayField,
+          name_field: birthdayNameField,
+          ...(birthdayDataSource !== "contacts" && {
+            data_source: birthdayDataSource,
+            enroll_early_days: birthdayEnrollEarlyDays,
+          }),
+          ...(birthdayDataSource === "form" && birthdayFormId
+            ? { form_id: Number(birthdayFormId) }
+            : {}),
+        };
       } else if (triggerType === "form_submitted") {
         triggerConfig = { form_id: formSubmittedFormId };
       } else if (triggerType === "product_of_month") {
@@ -1147,11 +1165,50 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Origen de los datos
+                </label>
+                <select
+                  value={birthdayDataSource}
+                  onChange={(e) => {
+                    const v = e.target.value as "contacts" | "form" | "gift_popup";
+                    setBirthdayDataSource(v);
+                    if (v === "contacts") setBirthdayEnrollEarlyDays(0);
+                    else if (birthdayEnrollEarlyDays === 0) setBirthdayEnrollEarlyDays(30);
+                  }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="contacts">Contactos (custom_fields y formularios)</option>
+                  <option value="gift_popup">Popup de regalados (gift/embed.js)</option>
+                  <option value="form">Formulario de suscripción específico</option>
+                </select>
+              </div>
+              {birthdayDataSource === "form" && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Formulario
+                  </label>
+                  <select
+                    value={birthdayFormId}
+                    onChange={(e) => setBirthdayFormId(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="">Seleccionar formulario…</option>
+                    {signupForms.map((f) => (
+                      <option key={f.id} value={String(f.id)}>{f.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Enviar N días antes del cumpleaños
                 </label>
                 <p className="text-xs text-gray-400 mb-2">
-                  Crea múltiples automatizaciones con 30, 15 y 7 días para enviar una secuencia de recordatorios.
-                  Los datos se leen de custom_fields y de la última respuesta del formulario popup.
+                  {birthdayDataSource === "contacts"
+                    ? "Busca cumpleaños en custom_fields y en la última respuesta de cualquier formulario."
+                    : birthdayDataSource === "gift_popup"
+                    ? "Solo contactos que completaron el popup de regalados en la tienda."
+                    : "Solo contactos que completaron el formulario seleccionado."}
                 </p>
                 <div className="flex items-center gap-2">
                   <input type="number" min={1} max={365} value={birthdayDaysBefore}
@@ -1160,6 +1217,23 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
                   <span className="text-sm text-gray-500">días antes</span>
                 </div>
               </div>
+              {birthdayDataSource !== "contacts" && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Mostrar en próximos envíos con anticipación
+                  </label>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Inscribe antes del primer correo para que aparezcan en «Próximos envíos» con fecha programada.
+                    Ej.: 30 + 30 = visible 60 días antes del cumpleaños, primer correo a 30 días.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={0} max={365} value={birthdayEnrollEarlyDays}
+                      onChange={(e) => setBirthdayEnrollEarlyDays(Math.max(0, Number(e.target.value)))}
+                      className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                    <span className="text-sm text-gray-500">días antes del primer correo</span>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">

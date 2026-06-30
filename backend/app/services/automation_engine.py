@@ -1304,26 +1304,37 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
 
 def _check_birthday_reminder(auto: Automation, session: Session) -> None:
     """
-    Triggers for contacts whose regalado birthday falls exactly `days_before` days from today.
-    Reads custom_fields AND the latest form_submission per email (popup data).
+    Birthday reminder enrollment. Early preview in «Próximos envíos» (enroll_early_days)
+    only applies when data_source is form or gift_popup.
     trigger_config keys:
-      days_before: int       — days before birthday to send (default 30)
-      birthday_field: str    — date field (default "fecha_nacimiento")
-      name_field: str          — name field (default "nombre_regalado")
-      relation_field: str      — relation field (default "relacion"; auto-infers "relacion2")
+      data_source: str        — contacts (default) | form | gift_popup
+      form_id: int            — required when data_source=form
+      days_before: int        — days before birthday to send (default 30)
+      enroll_early_days: int  — only used with form / gift_popup sources
+      birthday_field: str     — date field (default "fecha_nacimiento")
+      name_field: str         — name field (default "nombre_regalado")
+      relation_field: str     — relation field (default "relacion")
     """
     from app.models.contact import Contact
     from app.models.form import FormSubmission
+    from app.models.gift_recipient import GiftRecipient
     from app.services.regalado_vars import (
         get_regalado_field,
+        gift_recipient_to_regalado_dict,
         infer_relation_field,
         merge_regalado_sources,
         parse_birthday_mmdd,
         prepare_regalado_vars,
+        submission_to_regalado_dict,
     )
 
     config = auto.trigger_config or {}
     days_before = int(config.get("days_before", 30))
+    data_source = config.get("data_source") or ("form" if config.get("form_id") else "contacts")
+    if data_source in ("form", "gift_popup"):
+        enroll_early_days = int(config.get("enroll_early_days", 30))
+    else:
+        enroll_early_days = 0
     birthday_field = config.get("birthday_field", "fecha_nacimiento")
     name_field = config.get("name_field", "nombre_regalado")
     relation_field = infer_relation_field(
@@ -1335,11 +1346,95 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
     if not steps:
         return
     first_delay = float(steps[0].get("delay_hours", 0))
+    if enroll_early_days > 0:
+        first_delay = enroll_early_days * 24
 
     today = datetime.utcnow().date()
-    target = today + timedelta(days=days_before)
+    enroll_when_days_before = days_before + enroll_early_days
+    target = today + timedelta(days=enroll_when_days_before)
     target_mmdd = f"{target.month:02d}-{target.day:02d}"
 
+    seen: set[tuple] = set()
+
+    def _birthday_contact_allowed(email: str) -> tuple[bool, Contact | None]:
+        contact = session.exec(
+            select(Contact).where(Contact.email == email.lower())
+        ).first()
+        if contact and not contact.opted_in:
+            return False, contact
+        return True, contact
+
+    def _try_enroll(email: str, contact: Contact | None, data: dict) -> None:
+        raw_date = get_regalado_field(data, birthday_field)
+        if not raw_date or parse_birthday_mmdd(raw_date) != target_mmdd:
+            return
+
+        email_l = email.lower()
+        dedupe = (email_l, birthday_field, target.year, days_before)
+        if dedupe in seen:
+            return
+        seen.add(dedupe)
+
+        child_name = get_regalado_field(data, name_field)
+        relation = get_regalado_field(data, relation_field)
+        contact_name = (contact.name if contact else None) or data.get("nombre") or email
+        first = str(contact_name).split()[0]
+
+        owner_key = contact.id if contact else email_l
+        trigger_key = f"birthday:{owner_key}:{birthday_field}:{target.year}:{days_before}"
+        extra_vars = {
+            **{k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)},
+            "nombre": contact_name,
+            "first_name": first,
+            "nombre_regalado": child_name,
+            "relacion": relation,
+            "dias_para_cumpleanos": days_before,
+            "fecha_cumpleanos": str(target),
+        }
+        if isinstance(data.get("regalados"), list):
+            extra_vars["regalados"] = data["regalados"]
+        prepare_regalado_vars(extra_vars)
+        _enroll(session, auto, email_l, trigger_key, first_delay, extra_vars)
+
+    if data_source == "gift_popup":
+        recipients_by_email: dict[str, GiftRecipient] = {}
+        for gr in session.exec(
+            select(GiftRecipient).order_by(GiftRecipient.created_at.desc())
+        ):
+            em = (gr.email or "").lower()
+            if em and em not in recipients_by_email:
+                recipients_by_email[em] = gr
+
+        for email, gr in recipients_by_email.items():
+            allowed, contact = _birthday_contact_allowed(email)
+            if not allowed:
+                continue
+            _try_enroll(email, contact, gift_recipient_to_regalado_dict(gr))
+        return
+
+    if data_source == "form":
+        form_id = config.get("form_id")
+        if not form_id:
+            return
+
+        subs_by_email: dict[str, FormSubmission] = {}
+        for sub in session.exec(
+            select(FormSubmission)
+            .where(FormSubmission.form_id == int(form_id))
+            .order_by(FormSubmission.created_at.desc())
+        ):
+            em = (sub.email or "").lower()
+            if em and em not in subs_by_email:
+                subs_by_email[em] = sub
+
+        for email, sub in subs_by_email.items():
+            allowed, contact = _birthday_contact_allowed(email)
+            if not allowed:
+                continue
+            _try_enroll(email, contact, submission_to_regalado_dict(sub))
+        return
+
+    # Default: opted-in contacts with birthday in custom_fields and/or any form submission.
     subs_by_email: dict[str, FormSubmission] = {}
     for sub in session.exec(
         select(FormSubmission).order_by(FormSubmission.created_at.desc())
@@ -1351,8 +1446,6 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
     contacts = session.exec(
         select(Contact).where(Contact.opted_in == True)  # noqa: E712
     ).all()
-
-    seen: set[tuple] = set()
 
     for contact in contacts:
         cf = contact.custom_fields or {}
@@ -1366,38 +1459,7 @@ def _check_birthday_reminder(auto: Automation, session: Session) -> None:
 
         sub = subs_by_email.get(contact.email.lower())
         data = merge_regalado_sources(cf, sub)
-
-        raw_date = get_regalado_field(data, birthday_field)
-        if not raw_date:
-            continue
-
-        if parse_birthday_mmdd(raw_date) != target_mmdd:
-            continue
-
-        dedupe = (contact.email.lower(), birthday_field, target.year, days_before)
-        if dedupe in seen:
-            continue
-        seen.add(dedupe)
-
-        child_name = get_regalado_field(data, name_field)
-        relation = get_regalado_field(data, relation_field)
-        contact_name = contact.name or contact.email
-        first = contact_name.split()[0]
-
-        trigger_key = f"birthday:{contact.id}:{birthday_field}:{target.year}:{days_before}"
-        extra_vars = {
-            **{k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)},
-            "nombre": contact_name,
-            "first_name": first,
-            "nombre_regalado": child_name,
-            "relacion": relation,
-            "dias_para_cumpleanos": days_before,
-            "fecha_cumpleanos": str(target),
-        }
-        if isinstance(data.get("regalados"), list):
-            extra_vars["regalados"] = data["regalados"]
-        prepare_regalado_vars(extra_vars)
-        _enroll(session, auto, contact.email, trigger_key, first_delay, extra_vars)
+        _try_enroll(contact.email, contact, data)
 
 
 def _check_product_of_month(auto: Automation, session: Session) -> None:

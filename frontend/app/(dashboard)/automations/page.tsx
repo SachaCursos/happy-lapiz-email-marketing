@@ -4,8 +4,9 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { automationsApi, templatesApi, api } from "@/lib/api";
 import { Automation, AutomationStats, AutomationVariantStat, AutomationPending, AutomationStep, Template } from "@/lib/types";
+import AutomationPendingSections from "@/components/AutomationPendingSections";
 import { formatDate } from "@/lib/utils";
-import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, Clock, GitBranch, FlaskConical, Tag, BarChart2 } from "lucide-react";
+import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X, GitBranch, FlaskConical, Tag, BarChart2 } from "lucide-react";
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
@@ -417,54 +418,9 @@ function ExpandedPanel({ automationId }: { automationId: number }) {
     staleTime: 60_000,
   });
 
-  function timeUntil(isoDate: string): string {
-    const diff = new Date(isoDate).getTime() - Date.now();
-    if (diff <= 0) return "ahora";
-    const mins = Math.round(diff / 60000);
-    if (mins < 60) return `en ${mins} min`;
-    const hrs = Math.round(diff / 3600000);
-    if (hrs < 24) return `en ${hrs}h`;
-    return `en ${Math.round(diff / 86400000)}d`;
-  }
-
   return (
     <div className="border-t border-gray-100 divide-y divide-gray-100">
-      {/* Próximos envíos */}
-      <div className="bg-blue-50 px-5 py-3">
-        <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Clock size={11} /> Próximos envíos
-          {pending && pending.count > 0 && (
-            <span className="ml-1 bg-blue-600 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-              {pending.count}
-            </span>
-          )}
-        </p>
-        {pendingLoading ? (
-          <p className="text-xs text-blue-400">Cargando...</p>
-        ) : !pending || pending.count === 0 ? (
-          <p className="text-xs text-blue-400">No hay envíos pendientes.</p>
-        ) : (
-          <div className="space-y-1 max-h-40 overflow-y-auto">
-            {pending.contacts.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs">
-                <span className={`px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                  c.ready ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
-                }`}>
-                  {c.ready ? "listo" : timeUntil(c.send_at)}
-                </span>
-                {c.step && c.step > 1 && (
-                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium shrink-0">
-                    paso {c.step}
-                  </span>
-                )}
-                <span className="text-gray-700 font-medium truncate max-w-[130px]">{c.name}</span>
-                <span className="text-gray-400 font-mono truncate max-w-[150px]">{c.email}</span>
-                {c.detail && <span className="text-gray-400 truncate max-w-[140px] ml-auto shrink-0">{c.detail}</span>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <AutomationPendingSections pending={pending} isLoading={pendingLoading} compact />
 
       {/* Últimos envíos */}
       <div className="bg-gray-50 px-5 py-3">

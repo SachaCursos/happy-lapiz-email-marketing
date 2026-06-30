@@ -8,6 +8,7 @@ import {
   Automation, AutomationStats, AutomationStepStat,
   AutomationVariantStat, AutomationPending, AutomationRun,
 } from "@/lib/types";
+import AutomationPendingSections from "@/components/AutomationPendingSections";
 import { formatDate } from "@/lib/utils";
 import {
   ArrowLeft, Zap, Play, Pause, FlaskConical, Clock, Trophy,
@@ -194,16 +195,6 @@ function StepCard({
   );
 }
 
-function timeUntil(isoDate: string): string {
-  const diff = new Date(isoDate).getTime() - Date.now();
-  if (diff <= 0) return "listo";
-  const mins = Math.round(diff / 60000);
-  if (mins < 60) return `en ${mins} min`;
-  const hrs = Math.round(diff / 3600000);
-  if (hrs < 24) return `en ${hrs}h`;
-  return `en ${Math.round(diff / 86400000)}d`;
-}
-
 export default function AutomationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const autoId = Number(id);
@@ -229,7 +220,7 @@ export default function AutomationDetailPage() {
     enabled: !!auto,
   });
 
-  const { data: pending } = useQuery<AutomationPending>({
+  const { data: pending, isLoading: pendingLoading } = useQuery<AutomationPending>({
     queryKey: ["automation-pending", autoId],
     queryFn: () => automationsApi.pending(autoId).then((r) => r.data),
     staleTime: 30_000,
@@ -376,34 +367,7 @@ export default function AutomationDetailPage() {
         </div>
       )}
 
-      {/* Próximos envíos */}
-      {pending && pending.count > 0 && (
-        <div className="mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
-            <Clock size={14} className="text-blue-500" /> Próximos envíos
-            <span className="ml-1 bg-blue-600 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{pending.count}</span>
-          </h2>
-          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 space-y-1.5 max-h-52 overflow-y-auto">
-            {pending.contacts.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs">
-                <span className={`px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                  c.ready ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
-                }`}>
-                  {c.ready ? "listo" : timeUntil(c.send_at)}
-                </span>
-                {c.step && c.step > 1 && (
-                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium shrink-0">
-                    paso {c.step}
-                  </span>
-                )}
-                <span className="text-gray-700 font-medium truncate max-w-[140px]">{c.name}</span>
-                <span className="text-gray-400 font-mono truncate">{c.email}</span>
-                {c.detail && <span className="text-gray-400 truncate ml-auto shrink-0">{c.detail}</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <AutomationPendingSections pending={pending} isLoading={pendingLoading} />
 
       {/* Historial de envíos */}
       <div>
