@@ -1495,6 +1495,170 @@ def _check_product_of_month(auto: Automation, session: Session) -> None:
         )
 
 
+def _parse_regalados_from_extra(extra_data: dict | None) -> list[dict]:
+    """Normalize gift recipients from extra_data into [{relacion, nombre, fecha}, ...]."""
+    if not extra_data:
+        return []
+    raw_list = extra_data.get("regalados")
+    if isinstance(raw_list, list) and raw_list:
+        out = []
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            relacion = (item.get("para_quien") or item.get("relacion") or "").strip()
+            nombre = (
+                item.get("destinatario_nombre")
+                or item.get("nombre_regalado")
+                or item.get("nombre")
+                or ""
+            ).strip()
+            fecha = (
+                item.get("cual_es_su_fecha_de_nacimiento")
+                or item.get("destinatario_cumpleanos")
+                or item.get("fecha_nacimiento_regalado")
+                or ""
+            ).strip()
+            if relacion or nombre or fecha:
+                out.append({"relacion": relacion, "nombre": nombre, "fecha": fecha})
+        return out
+    relacion = (extra_data.get("para_quien") or "").strip()
+    nombre = (extra_data.get("destinatario_nombre") or "").strip()
+    fecha = (
+        extra_data.get("cual_es_su_fecha_de_nacimiento")
+        or extra_data.get("destinatario_cumpleanos")
+        or extra_data.get("fecha_nacimiento_regalado")
+        or ""
+    ).strip()
+    if relacion or nombre or fecha:
+        return [{"relacion": relacion, "nombre": nombre, "fecha": fecha}]
+    return []
+
+
+def _enroll_form_submitted(
+    auto: Automation,
+    session: Session,
+    form_id: int,
+    email: str,
+    name: str | None,
+    extra_data: dict,
+    coupon_code: str | None,
+) -> bool:
+    """Enroll one contact in a form_submitted automation. Returns True if enrolled."""
+    from app.services.regalado_vars import prepare_regalado_vars
+
+    trigger_key = f"form_submitted:{form_id}:{email}"
+    existing = session.exec(
+        select(AutomationEnrollment).where(
+            AutomationEnrollment.automation_id == auto.id,
+            AutomationEnrollment.trigger_key == trigger_key,
+        )
+    ).first()
+    if existing:
+        return False
+
+    steps = _get_steps(auto)
+    first_delay = float(steps[0].get("delay_hours", 0)) if steps else 0
+    regalados = _parse_regalados_from_extra(extra_data)
+    para_quien = extra_data.get("para_quien", "")
+    nombre_regalado = extra_data.get("destinatario_nombre", "")
+    if regalados:
+        para_quien = regalados[0]["relacion"] or para_quien
+        nombre_regalado = regalados[0]["nombre"] or nombre_regalado
+    genero_regalado = (
+        _detect_gender_from_para_quien(para_quien)
+        or _detect_name_gender(nombre_regalado)
+    )
+    display_name = (name or "").strip() or email
+    extra = {
+        "nombre": display_name,
+        "first_name": display_name.split()[0],
+        "email": email,
+        "coupon_code": coupon_code or "",
+        "nombre_regalado": nombre_regalado,
+        "cual_es_su_fecha_de_nacimiento": (
+            regalados[0]["fecha"] if regalados else extra_data.get("cual_es_su_fecha_de_nacimiento", "")
+        ),
+        "genero_regalado": genero_regalado or "",
+        **{k: v for k, v in extra_data.items()},
+    }
+    if regalados:
+        extra["regalados"] = [
+            {
+                "para_quien": r["relacion"],
+                "destinatario_nombre": r["nombre"],
+                "cual_es_su_fecha_de_nacimiento": r["fecha"],
+            }
+            for r in regalados
+        ]
+        extra["relacion_regalado"] = regalados[0]["relacion"]
+        extra["nombre_regalado"] = regalados[0]["nombre"]
+        extra["fecha_nacimiento_regalado"] = regalados[0]["fecha"]
+        if len(regalados) > 1:
+            extra["relacion_regalado2"] = regalados[1]["relacion"]
+            extra["nombre_regalado2"] = regalados[1]["nombre"]
+            extra["fecha_nacimiento_regalado2"] = regalados[1]["fecha"]
+    prepare_regalado_vars(extra)
+    enrollment = AutomationEnrollment(
+        automation_id=auto.id,
+        contact_email=email,
+        trigger_key=trigger_key,
+        enrolled_at=datetime.utcnow(),
+        next_send_at=datetime.utcnow() + timedelta(hours=first_delay),
+        next_step=1,
+        status="active",
+        extra_vars_json=json.dumps(extra),
+    )
+    session.add(enrollment)
+    return True
+
+
+def _check_form_submitted(auto: Automation, session: Session) -> None:
+    """Backfill enrollments from recent form submissions (submit path also enrolls live)."""
+    from app.models.form import FormSubmission
+
+    config = auto.trigger_config or {}
+    form_id = config.get("form_id")
+    if not form_id:
+        return
+    lookback_hours = float(config.get("lookback_hours", 48))
+    cutoff = datetime.utcnow() - timedelta(hours=lookback_hours)
+
+    subs = session.exec(
+        select(FormSubmission)
+        .where(
+            FormSubmission.form_id == int(form_id),
+            FormSubmission.created_at >= cutoff,
+        )
+        .order_by(FormSubmission.created_at.desc())
+        .limit(200)
+    ).all()
+
+    enrolled_any = False
+    for sub in subs:
+        email = (sub.email or "").lower().strip()
+        if not email:
+            continue
+        extra_data = dict(sub.extra_data or {}) if isinstance(sub.extra_data, dict) else {}
+        if sub.relacion_regalado:
+            extra_data.setdefault("para_quien", sub.relacion_regalado)
+        if sub.nombre_regalado:
+            extra_data.setdefault("destinatario_nombre", sub.nombre_regalado)
+        if sub.fecha_nacimiento_regalado:
+            extra_data.setdefault("cual_es_su_fecha_de_nacimiento", sub.fecha_nacimiento_regalado)
+        if sub.relacion_regalado2:
+            extra_data.setdefault("relacion_regalado2", sub.relacion_regalado2)
+        if sub.nombre_regalado2:
+            extra_data.setdefault("nombre_regalado2", sub.nombre_regalado2)
+        if sub.fecha_nacimiento_regalado2:
+            extra_data.setdefault("fecha_nacimiento_regalado2", sub.fecha_nacimiento_regalado2)
+        if _enroll_form_submitted(
+            auto, session, int(form_id), email, sub.name, extra_data, sub.coupon_code
+        ):
+            enrolled_any = True
+    if enrolled_any:
+        session.commit()
+
+
 def _make_shopify_handler(trigger_type: str):
     def handler(auto, session): _check_shopify_event(auto, session, trigger_type)
     handler.__name__ = f"_check_{trigger_type}"
@@ -1519,6 +1683,7 @@ HANDLERS = {
     "subscribed_to_back_in_stock": _make_shopify_handler("subscribed_to_back_in_stock"),
     "viewed_product":           _make_shopify_handler("viewed_product"),
     "active_on_site":           _make_shopify_handler("active_on_site"),
+    "form_submitted":           _check_form_submitted,
     "welcome":                  _check_welcome,
     "post_visit":               _check_post_visit,
     "reactivation":             _check_reactivation,
@@ -1570,7 +1735,15 @@ def run_scheduled_campaigns() -> None:
                 logger.exception("Scheduled campaign %d error: %s", campaign.id, exc)
 
 
-def run_automation_triggers() -> None:
+# Triggers polled every minute (time-sensitive transactional flows).
+FAST_TRIGGER_TYPES = frozenset({"placed_order", "form_submitted"})
+
+
+def _run_automation_triggers_filtered(
+    *,
+    only: frozenset[str] | None = None,
+    skip: frozenset[str] | None = None,
+) -> None:
     """Phase 1: detect triggers and create enrollments (no sends)."""
     with Session(db_engine) as session:
         automations = session.exec(
@@ -1579,6 +1752,10 @@ def run_automation_triggers() -> None:
         auto_ids = [(a.id, a.trigger_type) for a in automations]
 
     for auto_id, trigger_type in auto_ids:
+        if only is not None and trigger_type not in only:
+            continue
+        if skip is not None and trigger_type in skip:
+            continue
         handler = HANDLERS.get(trigger_type)
         if not handler:
             continue
@@ -1589,6 +1766,18 @@ def run_automation_triggers() -> None:
                     handler(auto, session)
         except Exception as exc:
             logger.exception("Automation %d (%s) trigger error: %s", auto_id, trigger_type, exc)
+
+
+def run_fast_automation_triggers() -> None:
+    _run_automation_triggers_filtered(only=FAST_TRIGGER_TYPES)
+
+
+def run_slow_automation_triggers() -> None:
+    _run_automation_triggers_filtered(skip=FAST_TRIGGER_TYPES)
+
+
+def run_automation_triggers() -> None:
+    _run_automation_triggers_filtered()
 
 
 def process_ready_enrollments() -> None:

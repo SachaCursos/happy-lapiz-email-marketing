@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Seconds between runs per task
 INTERVAL_ENROLLMENTS = 60
+INTERVAL_FAST_TRIGGERS = 60
 INTERVAL_TRIGGERS = 15 * 60
 INTERVAL_SCHEDULED_CAMPAIGNS = 2 * 60
 INTERVAL_RESUME_SENDS_ACTIVE = 60
@@ -59,7 +60,8 @@ def _has_sending_campaigns() -> bool:
 def _tick() -> None:
     from app.services.automation_engine import (
         process_ready_enrollments,
-        run_automation_triggers,
+        run_fast_automation_triggers,
+        run_slow_automation_triggers,
         run_scheduled_campaigns,
     )
     from app.services.email_sender import resume_pending_campaign_sends
@@ -69,8 +71,11 @@ def _tick() -> None:
     if _due("enrollments", INTERVAL_ENROLLMENTS):
         _run_guarded(process_ready_enrollments, 120, "enrollments")
 
+    if _due("fast_triggers", INTERVAL_FAST_TRIGGERS):
+        _run_guarded(run_fast_automation_triggers, 120, "fast_triggers")
+
     if _due("triggers", INTERVAL_TRIGGERS):
-        _run_guarded(run_automation_triggers, 300, "triggers")
+        _run_guarded(run_slow_automation_triggers, 300, "slow_triggers")
 
     if _due("scheduled_campaigns", INTERVAL_SCHEDULED_CAMPAIGNS):
         _run_guarded(run_scheduled_campaigns, 120, "scheduled_campaigns")
@@ -106,8 +111,9 @@ def start_scheduler() -> None:
     t = threading.Thread(target=loop, daemon=True, name="automation-scheduler")
     t.start()
     logger.info(
-        "Scheduler started (enrollments=%ds, triggers=%ds, shopify=%ds)",
+        "Scheduler started (enrollments=%ds, fast_triggers=%ds, slow_triggers=%ds, shopify=%ds)",
         INTERVAL_ENROLLMENTS,
+        INTERVAL_FAST_TRIGGERS,
         INTERVAL_TRIGGERS,
         INTERVAL_SHOPIFY_SYNC,
     )
