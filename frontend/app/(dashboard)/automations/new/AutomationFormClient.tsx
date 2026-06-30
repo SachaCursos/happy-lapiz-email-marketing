@@ -835,7 +835,7 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     if (existingAuto.coupon_campaign_id) setCouponCampaignId(existingAuto.coupon_campaign_id);
     // Steps
     if (existingAuto.steps?.length) {
-      setSteps(existingAuto.steps.map((s) => {
+      setSteps(existingAuto.steps.map((s, i) => {
         const raw = s as unknown as Record<string, unknown>;
         const { delayValue, delayUnit } = fromHours(Number(raw.delay_hours ?? 0));
         const rawVariants = (raw.variants as Record<string, unknown>[] | undefined) ?? [];
