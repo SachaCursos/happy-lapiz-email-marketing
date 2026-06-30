@@ -50,14 +50,15 @@ def count_campaign_recipients(
         return {"segment_count": 0, "excluded_count": 0, "recipient_count": 0}
 
     segment_count = count_segment(seg.conditions, session)
+    recipient_ids = get_campaign_recipient_ids(session, segment_id, exclude_segment_ids)
+    recipient_count = len(recipient_ids)
     if not exclude_segment_ids:
         return {
             "segment_count": segment_count,
             "excluded_count": 0,
-            "recipient_count": segment_count,
+            "recipient_count": recipient_count,
         }
 
-    recipient_count = len(get_campaign_recipient_ids(session, segment_id, exclude_segment_ids))
     return {
         "segment_count": segment_count,
         "excluded_count": segment_count - recipient_count,

@@ -209,10 +209,9 @@ def send_progress(campaign_id: int, session: Session = Depends(get_session), _: 
     c = session.get(Campaign, campaign_id)
     if not c:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
-    counts = count_campaign_recipients(session, c.segment_id, c.exclude_segment_ids)
-    total_in_segment = counts["recipient_count"]
-    already_sent = count_attempted_campaign_sends(session, campaign_id)
-    return {"total_in_segment": total_in_segment, "already_sent": already_sent}
+    from app.services.email_sender import get_campaign_send_progress
+
+    return get_campaign_send_progress(session, c)
 
 
 @router.post("/{campaign_id}/send-test")

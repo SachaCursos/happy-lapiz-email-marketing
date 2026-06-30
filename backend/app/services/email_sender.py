@@ -30,10 +30,11 @@ RATE_DELAY = 0.25  # 4 emails/segundo — límite de Resend es 5/segundo
 SEND_BATCH_SIZE = 200  # contactos por invocación (~50 s); el scheduler reanuda el resto
 STALL_SECONDS = 90  # sin envíos nuevos → reanudar automáticamente
 
-# queued/failed = pendiente de envío; el resto = intento ya realizado vía Resend
+# queued = pendiente de envío; failed = intento fallido (reintentable); el resto = entregado a Resend
 CAMPAIGN_SEND_ATTEMPTED: tuple[str, ...] = (
     "sent", "delivered", "opened", "clicked", "bounced", "complained",
 )
+CAMPAIGN_SEND_COMPLETION: tuple[str, ...] = CAMPAIGN_SEND_ATTEMPTED + ("failed",)
 
 _FOOTER = """<div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
 text-align:center;font-size:12px;color:#9ca3af;
@@ -430,6 +431,60 @@ def count_attempted_campaign_sends(session: Session, campaign_id: int) -> int:
     ).one()
 
 
+def count_audience_completion_attempts(
+    session: Session, campaign: Campaign, recipient_ids: List[int] | None = None,
+) -> int:
+    """Distinct audience contacts with at least one send attempt (incl. failed)."""
+    if recipient_ids is None:
+        from app.services.campaign_audience import get_campaign_recipient_ids
+
+        recipient_ids = get_campaign_recipient_ids(
+            session, campaign.segment_id, campaign.exclude_segment_ids,
+        )
+    if not recipient_ids:
+        return 0
+    return session.exec(
+        select(func.count(func.distinct(CampaignSend.contact_id))).where(
+            CampaignSend.campaign_id == campaign.id,
+            CampaignSend.contact_id.in_(recipient_ids),
+            CampaignSend.status.in_(CAMPAIGN_SEND_COMPLETION),
+        )
+    ).one()
+
+
+def is_campaign_audience_complete(session: Session, campaign: Campaign) -> bool:
+    from app.services.campaign_audience import get_campaign_recipient_ids
+
+    recipient_ids = get_campaign_recipient_ids(
+        session, campaign.segment_id, campaign.exclude_segment_ids,
+    )
+    if not recipient_ids:
+        return True
+    return count_audience_completion_attempts(session, campaign, recipient_ids) >= len(
+        recipient_ids
+    )
+
+
+def get_campaign_send_progress(session: Session, campaign: Campaign) -> dict:
+    """Progress metrics aligned with finalize_campaign_status (current audience)."""
+    from app.services.campaign_audience import count_campaign_recipients
+
+    counts = count_campaign_recipients(
+        session, campaign.segment_id, campaign.exclude_segment_ids,
+    )
+    total = counts["recipient_count"]
+    completed = count_audience_completion_attempts(session, campaign)
+    already_sent = count_attempted_campaign_sends(session, campaign.id)
+    pending = len(get_pending_contact_ids(session, campaign))
+    return {
+        "total_in_segment": total,
+        "already_sent": already_sent,
+        "audience_completed": completed,
+        "pending": pending,
+        "audience_complete": is_campaign_audience_complete(session, campaign),
+    }
+
+
 def finalize_campaign_status(
     session: Session,
     campaign: Campaign,
@@ -441,6 +496,21 @@ def finalize_campaign_status(
     if campaign.status == "paused":
         session.add(campaign)
         return
+
+    from app.services.campaign_audience import count_campaign_recipients
+
+    if total_in_segment <= 0:
+        counts = count_campaign_recipients(
+            session, campaign.segment_id, campaign.exclude_segment_ids,
+        )
+        total_in_segment = counts["recipient_count"]
+
+    if is_campaign_audience_complete(session, campaign):
+        campaign.status = "sent"
+        campaign.sent_at = campaign.sent_at or datetime.utcnow()
+        session.add(campaign)
+        return
+
     pending = len(get_pending_contact_ids(session, campaign))
     if pending > 0:
         campaign.status = "sending" if auto_resume else "draft"
@@ -555,7 +625,12 @@ def send_campaign_batch(
         finally:
             campaign = session.get(Campaign, campaign_id)
             if campaign:
-                still_auto = auto_resume and len(get_pending_contact_ids(session, campaign)) > 0
+                pending_left = len(get_pending_contact_ids(session, campaign))
+                still_auto = (
+                    auto_resume
+                    and pending_left > 0
+                    and not is_campaign_audience_complete(session, campaign)
+                )
                 finalize_campaign_status(
                     session, campaign, total_in_segment, auto_resume=still_auto,
                 )
@@ -583,7 +658,7 @@ def resume_pending_campaign_sends() -> None:
         for campaign in sending:
             try:
                 pending = get_pending_contact_ids(session, campaign)
-                if not pending:
+                if not pending or is_campaign_audience_complete(session, campaign):
                     from app.services.campaign_audience import count_campaign_recipients
                     counts = count_campaign_recipients(
                         session, campaign.segment_id, campaign.exclude_segment_ids,
