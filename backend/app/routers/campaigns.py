@@ -101,6 +101,8 @@ def update_campaign(
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     if c.status == "sent":
         raise HTTPException(status_code=400, detail="No se puede editar una campaña ya enviada")
+    if c.status in ("sending", "paused"):
+        raise HTTPException(status_code=400, detail="No se puede editar una campaña en envío")
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(c, k, v)
     session.add(c)
@@ -118,10 +120,28 @@ def delete_campaign(
     c = session.get(Campaign, campaign_id)
     if not c:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
-    if c.status in ("sending", "sent"):
+    if c.status in ("sending", "paused", "sent"):
         raise HTTPException(status_code=400, detail="No se puede eliminar campaña enviada o en envío")
     session.delete(c)
     session.commit()
+
+
+@router.post("/{campaign_id}/pause", response_model=CampaignRead)
+def pause_campaign(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_editor),
+):
+    c = session.get(Campaign, campaign_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
+    if c.status != "sending":
+        raise HTTPException(status_code=400, detail="Solo se pueden pausar campañas en envío")
+    c.status = "paused"
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return c
 
 
 @router.post("/{campaign_id}/send", response_model=CampaignRead)
@@ -135,7 +155,7 @@ def send_campaign_now(
     c = session.get(Campaign, campaign_id)
     if not c:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
-    if c.status not in ("draft", "scheduled", "sent", "sending"):
+    if c.status not in ("draft", "scheduled", "sent", "sending", "paused"):
         raise HTTPException(status_code=400, detail=f"Estado inválido para envío: {c.status}")
 
     seg = session.get(Segment, c.segment_id)

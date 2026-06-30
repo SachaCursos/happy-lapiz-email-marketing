@@ -14,7 +14,7 @@ class Campaign(SQLModel, table=True):
     template_id: Optional[int] = Field(default=None, foreign_key="templates.id")
     segment_id: int = Field(foreign_key="segments.id")
     exclude_segment_ids: Optional[Any] = Field(default=None, sa_column=Column(JSON))
-    # draft | scheduled | sending | sent | cancelled
+    # draft | scheduled | sending | paused | sent | cancelled
     status: str = Field(default="draft")
     scheduled_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None

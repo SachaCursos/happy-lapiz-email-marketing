@@ -104,7 +104,7 @@ function SkeletonRow() {
 const STATUS_OPTS = [
   { value: "", label: "Todos" }, { value: "sent", label: "Enviadas" },
   { value: "draft", label: "Borradores" }, { value: "scheduled", label: "Programadas" },
-  { value: "sending", label: "Enviando" }, { value: "cancelled", label: "Canceladas" },
+  { value: "sending", label: "Enviando" }, { value: "paused", label: "Pausadas" }, { value: "cancelled", label: "Canceladas" },
 ];
 
 // ─── Klaviyo history table ────────────────────────────────────────────────────
@@ -452,7 +452,7 @@ export default function CampaignsPage() {
                       </td>
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-1.5">
-                          {(c.status === "draft" || c.status === "scheduled" || c.status === "sending") && (
+                          {(c.status === "draft" || c.status === "scheduled" || c.status === "sending" || c.status === "paused") && (
                             <>
                               <button onClick={() => testMutation.mutate(c.id)} disabled={testMutation.isPending} title="Enviar prueba"
                                 className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 disabled:opacity-50">
@@ -461,7 +461,7 @@ export default function CampaignsPage() {
                               <button onClick={() => { if (confirm(`¿Enviar "${c.name}" ahora?`)) sendMutation.mutate(c.id); }}
                                 disabled={sendMutation.isPending}
                                 className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-900 text-white rounded-lg text-xs font-medium hover:bg-gray-800 disabled:opacity-60">
-                                <Send size={11} /> {c.status === "sending" ? "Reintentar" : "Enviar"}
+                                <Send size={11} /> {c.status === "paused" ? "Reanudar" : c.status === "sending" ? "Reintentar" : "Enviar"}
                               </button>
                             </>
                           )}

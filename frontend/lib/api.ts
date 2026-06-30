@@ -93,6 +93,7 @@ export const campaignsApi = {
   update: (id: number, data: unknown) => api.patch(`/campaigns/${id}`, data),
   delete: (id: number) => api.delete(`/campaigns/${id}`),
   send: (id: number, limit?: number) => api.post(`/campaigns/${id}/send`, limit ? { limit } : {}),
+  pause: (id: number) => api.post(`/campaigns/${id}/pause`),
   sendTest: (id: number) => api.post(`/campaigns/${id}/send-test`),
   sendProgress: (id: number) => api.get(`/campaigns/${id}/send-progress`),
   stats: (id: number) => api.get(`/campaigns/${id}/stats`),

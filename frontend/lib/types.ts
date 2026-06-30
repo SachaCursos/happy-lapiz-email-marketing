@@ -100,7 +100,7 @@ export interface Template {
   updated_at: string;
 }
 
-export type CampaignStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled";
+export type CampaignStatus = "draft" | "scheduled" | "sending" | "paused" | "sent" | "cancelled";
 
 export interface Campaign {
   id: number;

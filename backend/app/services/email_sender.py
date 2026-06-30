@@ -438,6 +438,9 @@ def finalize_campaign_status(
     auto_resume: bool = False,
 ) -> None:
     """Marca la campaña como enviada, en curso (sending) o borrador según pendientes."""
+    if campaign.status == "paused":
+        session.add(campaign)
+        return
     pending = len(get_pending_contact_ids(session, campaign))
     if pending > 0:
         campaign.status = "sending" if auto_resume else "draft"
@@ -495,6 +498,8 @@ def send_campaign_batch(
         campaign = session.get(Campaign, campaign_id)
         if not campaign:
             return stats
+        if campaign.status == "paused":
+            return stats
         template = session.get(Template, campaign.template_id)
         if not template:
             logger.error("Campaña %d: plantilla no encontrada — cancelando envío", campaign_id)
@@ -536,7 +541,10 @@ def send_campaign_batch(
             session.commit()
 
             for i, contact in enumerate(contacts):
-                _send_one(campaign, template, contact, session)
+                live = session.get(Campaign, campaign_id)
+                if not live or live.status == "paused":
+                    break
+                _send_one(live, template, contact, session)
                 stats["processed"] += 1
                 if i < len(contacts) - 1:
                     time.sleep(RATE_DELAY)

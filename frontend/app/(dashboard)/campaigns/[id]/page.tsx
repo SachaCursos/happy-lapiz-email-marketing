@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { campaignsApi, contactsApi, segmentsApi, templatesApi } from "@/lib/api";
 import { Campaign, CampaignStats, CampaignConversions, Segment, Template } from "@/lib/types";
-import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Calendar, UserMinus, BarChart2, ShoppingCart } from "lucide-react";
+import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Calendar, UserMinus, BarChart2, ShoppingCart, Pause } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
 import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
@@ -157,7 +157,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const { data: stats } = useQuery<CampaignStats>({
     queryKey: ["campaign-stats", id],
     queryFn: () => campaignsApi.stats(id).then((r) => r.data),
-    enabled: sends.length > 0 || campaign?.status === "sent" || campaign?.status === "sending",
+    enabled: sends.length > 0 || campaign?.status === "sent" || campaign?.status === "sending" || campaign?.status === "paused",
   });
 
   const { data: conversions } = useQuery<CampaignConversions>({
@@ -172,8 +172,16 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const { data: progress } = useQuery<SendProgress>({
     queryKey: ["campaign-progress", id],
     queryFn: () => campaignsApi.sendProgress(id).then((r) => r.data),
-    enabled: campaign?.status === "draft" || campaign?.status === "sending" || failedCount > 0,
+    enabled: campaign?.status === "draft" || campaign?.status === "sending" || campaign?.status === "paused" || failedCount > 0,
     refetchInterval: campaign?.status === "sending" ? 3000 : false,
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: () => campaignsApi.pause(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaign", id] });
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+    },
   });
 
   async function handleSend(sendAll: boolean) {
@@ -224,7 +232,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
           <p className="text-gray-500 text-sm mt-1">{campaign.subject}</p>
         </div>
         <div className="flex items-center gap-2">
-          {campaign.status !== "sent" && campaign.status !== "sending" && (
+          {campaign.status !== "sent" && campaign.status !== "sending" && campaign.status !== "paused" && (
             <button
               onClick={() => {
                 setEditing((v) => !v);
@@ -244,6 +252,16 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
             >
               {editing ? <X size={13} /> : <Pencil size={13} />}
               {editing ? "Cancelar" : "Editar"}
+            </button>
+          )}
+          {campaign.status === "sending" && (
+            <button
+              onClick={() => { if (confirm("¿Pausar el envío? Los correos pendientes no saldrán hasta que reanudes.")) pauseMutation.mutate(); }}
+              disabled={pauseMutation.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-orange-200 text-orange-700 bg-orange-50 rounded-lg text-xs font-medium hover:bg-orange-100 transition-colors disabled:opacity-50"
+            >
+              <Pause size={13} />
+              {pauseMutation.isPending ? "Pausando..." : "Pausar envío"}
             </button>
           )}
           <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColor(campaign.status)}`}>
@@ -495,16 +513,18 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
       </div>
 
       {/* ── Envío por fases / Reintentar errores ───────────────────────── */}
-      {(campaign.status === "draft" || campaign.status === "sending" || failedCount > 0) && progress && (
+      {(campaign.status === "draft" || campaign.status === "sending" || campaign.status === "paused" || failedCount > 0) && progress && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
             <Users size={16} className="text-gray-400" />
             <h2 className="font-semibold text-gray-900">
-              {campaign.status === "sending"
-                ? "Envío en curso — se reanuda solo si se interrumpe"
-                : campaign.status === "draft"
-                  ? "Envío por fases"
-                  : `Reintentar ${failedCount} envíos con error`}
+              {campaign.status === "paused"
+                ? "Envío pausado"
+                : campaign.status === "sending"
+                  ? "Envío en curso — se reanuda solo si se interrumpe"
+                  : campaign.status === "draft"
+                    ? "Envío por fases"
+                    : `Reintentar ${failedCount} envíos con error`}
             </h2>
           </div>
 
@@ -549,15 +569,26 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               )}
 
               <div className="flex items-center gap-3 flex-wrap">
+                {campaign.status === "sending" && (
+                  <button
+                    onClick={() => { if (confirm("¿Pausar el envío?")) pauseMutation.mutate(); }}
+                    disabled={pauseMutation.isPending || sending}
+                    className="inline-flex items-center gap-2 border border-orange-200 text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-50 font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors"
+                  >
+                    <Pause size={14} />
+                    Pausar
+                  </button>
+                )}
                 <button
-                  onClick={() => handleSend(false)}
+                  onClick={() => handleSend(campaign.status === "paused")}
                   disabled={sending}
                   className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors"
                 >
                   <Send size={14} />
-                  {sending ? "Enviando..." : `Enviar a ${safeLimit} contactos`}
+                  {sending ? "Enviando..." : campaign.status === "paused" ? "Reanudar envío" : `Enviar a ${safeLimit} contactos`}
                 </button>
 
+                {campaign.status !== "paused" && (
                 <button
                   onClick={() => handleSend(true)}
                   disabled={sending}
@@ -565,6 +596,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                 >
                   Enviar a todos los restantes ({remaining.toLocaleString()})
                 </button>
+                )}
               </div>
             </>
           ) : (
