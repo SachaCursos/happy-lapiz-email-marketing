@@ -162,7 +162,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
 
   const { data: conversions } = useQuery<CampaignConversions>({
     queryKey: ["campaign-conversions", id],
-    queryFn: () => campaignsApi.conversions(id, 90).then((r) => r.data),
+    queryFn: () => campaignsApi.conversions(id, 7).then((r) => r.data),
     enabled: campaign?.status === "sent",
     staleTime: 15 * 60_000,
   });

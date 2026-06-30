@@ -311,65 +311,39 @@ def campaign_stats(campaign_id: int, session: Session = Depends(get_session), _:
 @router.get("/{campaign_id}/conversions")
 def campaign_conversions(
     campaign_id: int,
-    days: int = Query(default=60, ge=1, le=365),
+    days: int = Query(default=7, ge=1, le=90),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
     """
-    Atribución de compras: contactos que recibieron esta campaña y
-    realizaron una compra en Shopify dentro de `days` días
-    posteriores al envío.
+    Atribución de compras: pedidos en Shopify dentro de `days` días
+    posteriores al envío del correo a cada contacto (no antes).
     """
+    from app.services.campaign_attribution import get_campaign_attribution
+
     campaign = session.get(Campaign, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
     empty = {"campaign_id": campaign_id, "window_days": days, "bookings": 0, "revenue": 0.0, "converted_contacts": 0}
 
-    if not campaign.sent_at:
+    if campaign.status not in ("sent", "sending", "paused"):
         return empty
 
-    sends = session.exec(
-        select(CampaignSend).where(CampaignSend.campaign_id == campaign_id)
-    ).all()
-    if not sends:
+    has_sends = session.exec(
+        select(CampaignSend.id)
+        .where(CampaignSend.campaign_id == campaign_id)
+        .where(CampaignSend.sent_at.isnot(None))
+        .limit(1)
+    ).first()
+    if not has_sends:
         return empty
 
-    contact_ids = list({s.contact_id for s in sends})
-    contacts_q = session.exec(select(Contact).where(Contact.id.in_(contact_ids))).all()
-    emails = [ct.email for ct in contacts_q]
-    if not emails:
-        return empty
-
-    try:
-        rows = session.execute(text("""
-            SELECT
-                LOWER(email)                          AS email,
-                COUNT(*)                              AS bookings,
-                COALESCE(SUM(total_price), 0)         AS revenue
-            FROM shopify_orders
-            WHERE LOWER(email) = ANY(:emails)
-              AND created_at >= :start_date
-              AND created_at <= :end_date
-            GROUP BY LOWER(email)
-        """), {
-            "emails": [e.lower() for e in emails],
-            "start_date": campaign.sent_at,
-            "end_date": campaign.sent_at + timedelta(days=days),
-        }).fetchall()
-    except Exception:
-        return empty
-
-    total_bookings = sum(int(r.bookings) for r in rows)
-    total_revenue = sum(float(r.revenue) for r in rows)
-    converted_contacts = len(rows)
-
+    stats = get_campaign_attribution(session, campaign_id, window_days=days)
     return {
         "campaign_id": campaign_id,
         "window_days": days,
-        "bookings": total_bookings,
-        "revenue": total_revenue,
-        "converted_contacts": converted_contacts,
+        **stats,
     }
 
 

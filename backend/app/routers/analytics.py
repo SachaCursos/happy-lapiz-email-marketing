@@ -125,36 +125,12 @@ def revenue_stats(
     """), {"from": prev_from, "to": dt_from}).fetchone()
     shopify_prev = float(prev_row[0])
 
-    # ── 2. Campaign attributed revenue (orders in window attributed to a campaign send) ─
-    camp_rows = session.execute(text("""
-        SELECT
-            c.id,
-            c.name,
-            COUNT(DISTINCT cs.contact_id)            AS recipients,
-            COUNT(DISTINCT so.id)                    AS orders,
-            COALESCE(SUM(so.total_price::numeric), 0) AS revenue
-        FROM campaign_sends cs
-        JOIN contacts ct ON ct.id = cs.contact_id
-        JOIN campaigns c  ON c.id  = cs.campaign_id
-        LEFT JOIN shopify_orders so
-            ON LOWER(so.email) = LOWER(ct.email)
-            AND so.created_at >= :from AND so.created_at < :to
-            AND cs.sent_at IS NOT NULL
-            AND so.created_at >= cs.sent_at
-            AND so.created_at <= cs.sent_at + INTERVAL '7 days'
-        WHERE cs.sent_at IS NOT NULL
-        GROUP BY c.id, c.name
-        ORDER BY revenue DESC
-    """), {"from": dt_from, "to": dt_to}).fetchall()
+    # ── 2. Campaign attributed revenue ───────────────────────────────────────
+    from app.services.campaign_attribution import list_campaign_attribution_summary
 
-    campaigns_list = [
-        {
-            "id": r[0], "name": r[1],
-            "recipients": int(r[2]), "orders": int(r[3]),
-            "revenue": float(r[4]),
-        }
-        for r in camp_rows
-    ]
+    campaigns_list = list_campaign_attribution_summary(
+        session, order_date_from=dt_from, order_date_to=dt_to,
+    )
     campaigns_total = sum(c["revenue"] for c in campaigns_list)
     campaigns_recipients = sum(c["recipients"] for c in campaigns_list)
 
