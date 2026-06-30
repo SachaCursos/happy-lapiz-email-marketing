@@ -27,6 +27,8 @@ def _fmt_nombre(name: str | None, email: str = "") -> str:
 
 BATCH_SIZE = 50
 RATE_DELAY = 0.25  # 4 emails/segundo — límite de Resend es 5/segundo
+SEND_BATCH_SIZE = 200  # contactos por invocación (~50 s); el scheduler reanuda el resto
+STALL_SECONDS = 90  # sin envíos nuevos → reanudar automáticamente
 
 # queued/failed = pendiente de envío; el resto = intento ya realizado vía Resend
 CAMPAIGN_SEND_ATTEMPTED: tuple[str, ...] = (
@@ -428,15 +430,183 @@ def count_attempted_campaign_sends(session: Session, campaign_id: int) -> int:
     ).one()
 
 
-def finalize_campaign_status(session: Session, campaign: Campaign, total_in_segment: int) -> None:
-    """Marca la campaña como enviada o borrador según cuántos contactos del segmento ya recibieron el mail."""
-    attempted = count_attempted_campaign_sends(session, campaign.id)
-    if total_in_segment > 0 and attempted < total_in_segment:
+def finalize_campaign_status(
+    session: Session,
+    campaign: Campaign,
+    total_in_segment: int,
+    *,
+    auto_resume: bool = False,
+) -> None:
+    """Marca la campaña como enviada, en curso (sending) o borrador según pendientes."""
+    pending = len(get_pending_contact_ids(session, campaign))
+    if pending > 0:
+        campaign.status = "sending" if auto_resume else "draft"
+    elif total_in_segment > 0 and count_attempted_campaign_sends(session, campaign.id) < total_in_segment:
         campaign.status = "draft"
     else:
         campaign.status = "sent"
         campaign.sent_at = campaign.sent_at or datetime.utcnow()
     session.add(campaign)
+
+
+def get_pending_contact_ids(session: Session, campaign: Campaign) -> List[int]:
+    """Contactos del segmento que aún no recibieron un intento de envío exitoso."""
+    from app.services.campaign_audience import get_campaign_recipients
+
+    recipients = get_campaign_recipients(
+        session, campaign.segment_id, campaign.exclude_segment_ids,
+    )
+    attempted = set(
+        session.exec(
+            select(CampaignSend.contact_id).where(
+                CampaignSend.campaign_id == campaign.id,
+                CampaignSend.status.in_(CAMPAIGN_SEND_ATTEMPTED),
+            )
+        ).all()
+    )
+    return [c.id for c in recipients if c.id not in attempted]
+
+
+def _ensure_send_records(session: Session, campaign_id: int, contact_ids: List[int]) -> None:
+    for cid in contact_ids:
+        exists = session.exec(
+            select(CampaignSend).where(
+                CampaignSend.campaign_id == campaign_id,
+                CampaignSend.contact_id == cid,
+            )
+        ).first()
+        if not exists:
+            session.add(CampaignSend(campaign_id=campaign_id, contact_id=cid))
+        elif exists.status == "failed":
+            exists.status = "queued"
+            session.add(exists)
+
+
+def send_campaign_batch(
+    campaign_id: int,
+    contact_ids: List[int] | None = None,
+    total_in_segment: int = 0,
+    *,
+    auto_resume: bool = False,
+) -> dict:
+    """Envía un lote de correos. Con auto_resume=True el scheduler continúa los pendientes."""
+    stats = {"campaign_id": campaign_id, "processed": 0, "pending_after": 0}
+    with Session(engine) as session:
+        campaign = session.get(Campaign, campaign_id)
+        if not campaign:
+            return stats
+        template = session.get(Template, campaign.template_id)
+        if not template:
+            logger.error("Campaña %d: plantilla no encontrada — cancelando envío", campaign_id)
+            campaign.status = "draft"
+            session.add(campaign)
+            session.commit()
+            return stats
+
+        if total_in_segment <= 0:
+            from app.services.campaign_audience import count_campaign_recipients
+            counts = count_campaign_recipients(
+                session, campaign.segment_id, campaign.exclude_segment_ids,
+            )
+            total_in_segment = counts["recipient_count"]
+
+        if contact_ids is None:
+            pending = get_pending_contact_ids(session, campaign)
+            to_process_ids = pending[:SEND_BATCH_SIZE]
+        else:
+            cap = SEND_BATCH_SIZE if auto_resume else len(contact_ids)
+            to_process_ids = contact_ids[:cap]
+
+        if not to_process_ids:
+            finalize_campaign_status(
+                session, campaign, total_in_segment, auto_resume=auto_resume,
+            )
+            session.commit()
+            return stats
+
+        campaign.status = "sending"
+        session.add(campaign)
+        session.commit()
+
+        contacts = [session.get(Contact, cid) for cid in to_process_ids]
+        contacts = [c for c in contacts if c]
+
+        try:
+            _ensure_send_records(session, campaign_id, [c.id for c in contacts])
+            session.commit()
+
+            for i, contact in enumerate(contacts):
+                _send_one(campaign, template, contact, session)
+                stats["processed"] += 1
+                if i < len(contacts) - 1:
+                    time.sleep(RATE_DELAY)
+        except Exception as exc:
+            logger.exception("Error en envío de campaña %d: %s", campaign_id, exc)
+        finally:
+            campaign = session.get(Campaign, campaign_id)
+            if campaign:
+                still_auto = auto_resume and len(get_pending_contact_ids(session, campaign)) > 0
+                finalize_campaign_status(
+                    session, campaign, total_in_segment, auto_resume=still_auto,
+                )
+                stats["pending_after"] = len(get_pending_contact_ids(session, campaign))
+                session.commit()
+    return stats
+
+
+def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segment: int = 0) -> None:
+    """Compat: delega en send_campaign_batch (lotes + reanudación si la lista es grande)."""
+    send_campaign_batch(
+        campaign_id,
+        contact_ids=contact_ids,
+        total_in_segment=total_in_segment,
+        auto_resume=len(contact_ids) > SEND_BATCH_SIZE,
+    )
+
+
+def resume_pending_campaign_sends() -> None:
+    """Reanuda campañas en 'sending' con contactos pendientes (tras crash, deploy o timeout)."""
+    to_resume: list[int] = []
+    with Session(engine) as session:
+        sending = session.exec(select(Campaign).where(Campaign.status == "sending")).all()
+        now = datetime.utcnow()
+        for campaign in sending:
+            try:
+                pending = get_pending_contact_ids(session, campaign)
+                if not pending:
+                    from app.services.campaign_audience import count_campaign_recipients
+                    counts = count_campaign_recipients(
+                        session, campaign.segment_id, campaign.exclude_segment_ids,
+                    )
+                    finalize_campaign_status(
+                        session, campaign, counts["recipient_count"], auto_resume=False,
+                    )
+                    session.commit()
+                    logger.info("Campaña %d completada (sin pendientes)", campaign.id)
+                    continue
+
+                last_sent_at = session.exec(
+                    select(func.max(CampaignSend.sent_at)).where(
+                        CampaignSend.campaign_id == campaign.id,
+                    )
+                ).one()
+                if last_sent_at and (now - last_sent_at).total_seconds() < STALL_SECONDS:
+                    continue
+
+                to_resume.append(campaign.id)
+            except Exception as exc:
+                logger.exception("Error evaluando campaña %d para reanudar: %s", campaign.id, exc)
+
+    for campaign_id in to_resume:
+        try:
+            logger.info("Reanudando envío automático de campaña %d", campaign_id)
+            result = send_campaign_batch(campaign_id, auto_resume=True)
+            logger.info(
+                "Campaña %d: lote %d enviados, %d pendientes",
+                campaign_id, result["processed"], result["pending_after"],
+            )
+        except Exception as exc:
+            logger.exception("Error reanudando campaña %d: %s", campaign_id, exc)
 
 
 def _send_one(campaign: Campaign, template: Template, contact: Contact, session: Session) -> None:
@@ -492,113 +662,6 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
     except Exception as exc:
         logger.error("Error enviando a %s: %s", contact.email, exc)
         if send:
-            send.status = "failed"  # error técnico de envío, no rebote real
+            send.status = "failed"
             session.add(send)
             session.commit()
-
-
-def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segment: int = 0) -> None:
-    """Versión síncrona para usar como BackgroundTask de FastAPI (abre su propia sesión)."""
-    with Session(engine) as session:
-        campaign = session.get(Campaign, campaign_id)
-        if not campaign:
-            return
-        template = session.get(Template, campaign.template_id)
-        if not template:
-            logger.error("Campaña %d: plantilla no encontrada — cancelando envío", campaign_id)
-            campaign.status = "draft"
-            session.add(campaign)
-            session.commit()
-            return
-
-        contacts = [session.get(Contact, cid) for cid in contact_ids]
-        contacts = [c for c in contacts if c]
-
-        try:
-            # Crear registros queued; resetear los "failed" para que puedan reintentarse
-            for contact in contacts:
-                exists = session.exec(
-                    select(CampaignSend).where(
-                        CampaignSend.campaign_id == campaign_id,
-                        CampaignSend.contact_id == contact.id,
-                    )
-                ).first()
-                if not exists:
-                    session.add(CampaignSend(campaign_id=campaign_id, contact_id=contact.id))
-                elif exists.status == "failed":
-                    exists.status = "queued"
-                    session.add(exists)
-            session.commit()
-
-            # Enviar respetando rate limit de Resend (5 req/seg)
-            for i, contact in enumerate(contacts):
-                _send_one(campaign, template, contact, session)
-                if i < len(contacts) - 1:
-                    time.sleep(RATE_DELAY)
-        except Exception as exc:
-            logger.exception("Error en envío de campaña %d: %s", campaign_id, exc)
-        finally:
-            campaign = session.get(Campaign, campaign_id)
-            if campaign and campaign.status == "sending":
-                finalize_campaign_status(session, campaign, total_in_segment)
-                session.commit()
-
-
-STUCK_SENDING_MINUTES = 3
-
-
-def recover_stuck_sending_campaigns() -> None:
-    """Reanuda o cierra campañas que quedaron en 'sending' tras un crash o redeploy."""
-    from app.services.campaign_audience import get_campaign_recipients
-
-    cutoff = datetime.utcnow() - timedelta(minutes=STUCK_SENDING_MINUTES)
-    with Session(engine) as session:
-        stuck = session.exec(select(Campaign).where(Campaign.status == "sending")).all()
-        for campaign in stuck:
-            try:
-                last_sent_at = session.exec(
-                    select(func.max(CampaignSend.sent_at)).where(
-                        CampaignSend.campaign_id == campaign.id,
-                    )
-                ).one()
-                if last_sent_at and last_sent_at > cutoff:
-                    continue
-
-                queued_ids = list(session.exec(
-                    select(CampaignSend.contact_id).where(
-                        CampaignSend.campaign_id == campaign.id,
-                        CampaignSend.status == "queued",
-                    )
-                ).all())
-                total_sends = session.exec(
-                    select(func.count(CampaignSend.id)).where(
-                        CampaignSend.campaign_id == campaign.id,
-                    )
-                ).one()
-
-                if queued_ids:
-                    seg = session.get(Segment, campaign.segment_id)
-                    if not seg:
-                        finalize_campaign_status(session, campaign, 0)
-                        session.commit()
-                        continue
-                    contacts = get_campaign_recipients(
-                        session, campaign.segment_id, campaign.exclude_segment_ids,
-                    )
-                    session.commit()
-                    send_campaign_sync(campaign.id, queued_ids, len(contacts))
-                    continue
-
-                if total_sends == 0:
-                    campaign.status = "draft"
-                    session.add(campaign)
-                    session.commit()
-                    continue
-
-                contacts = get_campaign_recipients(
-                    session, campaign.segment_id, campaign.exclude_segment_ids,
-                )
-                finalize_campaign_status(session, campaign, len(contacts))
-                session.commit()
-            except Exception as exc:
-                logger.exception("Error recuperando campaña %d: %s", campaign.id, exc)

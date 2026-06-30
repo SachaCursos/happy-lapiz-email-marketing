@@ -501,7 +501,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
             <Users size={16} className="text-gray-400" />
             <h2 className="font-semibold text-gray-900">
               {campaign.status === "sending"
-                ? "Envío interrumpido — reintentar"
+                ? "Envío en curso — se reanuda solo si se interrumpe"
                 : campaign.status === "draft"
                   ? "Envío por fases"
                   : `Reintentar ${failedCount} envíos con error`}
