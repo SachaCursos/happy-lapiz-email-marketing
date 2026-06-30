@@ -232,7 +232,10 @@ def send_test_email(
     contact = session.exec(
         select(Contact).where(Contact.email == current_user.email.lower())
     ).first()
-    regalado = uses_regalado_vars(tpl.html_content, c.subject)
+    from app.services.template_block_compiler import resolve_template_html
+
+    tpl_html = resolve_template_html(tpl)
+    regalado = uses_regalado_vars(tpl_html, c.subject)
 
     if contact:
         vars_ = build_contact_template_vars(
@@ -242,7 +245,7 @@ def send_test_email(
         )
         html = _inject_footer(
             render_html(
-                tpl.html_content,
+                tpl_html,
                 contact,
                 vars_=vars_,
                 preprocess_regalado=regalado,
@@ -257,7 +260,7 @@ def send_test_email(
         )
     else:
         nombre = current_user.name or current_user.email.split("@")[0]
-        html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email)
+        html = _inject_footer(JTemplate(tpl_html).render(nombre=nombre), current_user.email)
         subject = c.subject
 
     resend.api_key = settings.RESEND_API_KEY

@@ -140,8 +140,11 @@ def send_template_test(
     from app.core.unsub_token import unsub_url
     from app.services.email_sender import _inject_footer, _unsub_headers, replace_unsub_tag
 
+    from app.services.template_block_compiler import resolve_template_html
+
     tpl = session.get(Template, template_id)
-    if not tpl or not tpl.html_content:
+    tpl_html = resolve_template_html(tpl) if tpl else ""
+    if not tpl or not tpl_html:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada o sin contenido HTML")
 
     email = body.to_email.lower().strip()
@@ -201,7 +204,7 @@ def send_template_test(
     }
 
     # Replace {% unsubscribe %} with anchor link BEFORE Jinja2 (avoids syntax error)
-    raw_html = replace_unsub_tag(tpl.html_content, email)
+    raw_html = replace_unsub_tag(tpl_html, email)
     _env = Environment(undefined=ChainableUndefined)
     html = _inject_footer(_env.from_string(raw_html).render(**vars_), email)
 

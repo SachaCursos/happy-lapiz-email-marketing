@@ -618,6 +618,9 @@ def resume_pending_campaign_sends() -> None:
 
 
 def _send_one(campaign: Campaign, template: Template, contact: Contact, session: Session) -> None:
+    from app.services.template_block_compiler import resolve_template_html
+
+    template_html = resolve_template_html(template)
     send = session.exec(
         select(CampaignSend).where(
             CampaignSend.campaign_id == campaign.id,
@@ -626,8 +629,8 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
     ).first()
     try:
         resend.api_key = settings.RESEND_API_KEY
-        coupon = _resolve_coupon(template.html_content, contact, campaign.id, session)
-        regalado = uses_regalado_vars(template.html_content, campaign.subject)
+        coupon = _resolve_coupon(template_html, contact, campaign.id, session)
+        regalado = uses_regalado_vars(template_html, campaign.subject)
         vars_ = build_contact_template_vars(
             contact,
             coupon_code=coupon,
@@ -636,7 +639,7 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
         )
         html = _inject_footer(
             render_html(
-                template.html_content,
+                template_html,
                 contact,
                 coupon_code=coupon,
                 vars_=vars_,

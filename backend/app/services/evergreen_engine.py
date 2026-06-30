@@ -176,12 +176,15 @@ def _send_evergreen_step(
     step_number: int,
     enrollment_id: int | None = None,
 ) -> EvergreenSend | None:
+    from app.services.template_block_compiler import resolve_template_html
+
     tpl = session.get(Template, int(step_cfg["template_id"]))
-    if not tpl or not tpl.html_content:
+    tpl_html = resolve_template_html(tpl) if tpl else ""
+    if not tpl or not tpl_html:
         return None
 
     subject_raw = step_cfg["subject"]
-    regalado = uses_regalado_vars(tpl.html_content, subject_raw)
+    regalado = uses_regalado_vars(tpl_html, subject_raw)
     vars_ = build_contact_template_vars(
         contact,
         session=session,
@@ -189,7 +192,7 @@ def _send_evergreen_step(
     )
     html = _inject_footer(
         render_html(
-            tpl.html_content,
+            tpl_html,
             contact,
             vars_=vars_,
             preprocess_regalado=regalado,

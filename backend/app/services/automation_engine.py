@@ -886,7 +886,8 @@ def _send_email_step(
             vars_["producto_del_mes_url"] = fp.get("url", vars_.get("producto_del_mes_url", ""))
 
         _env = Environment(undefined=ChainableUndefined)
-        raw_html = preprocess_regalado_template(replace_unsub_tag(tpl.html_content, contact.email))
+        from app.services.template_block_compiler import resolve_template_html
+        raw_html = preprocess_regalado_template(replace_unsub_tag(resolve_template_html(tpl), contact.email))
         raw_html = resolve_relative_timers(raw_html)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
 
