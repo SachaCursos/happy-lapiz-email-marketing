@@ -267,7 +267,9 @@ def submit_form(
     if not f or f.status != "active":
         raise HTTPException(status_code=404, detail="Formulario no disponible")
 
-    email = payload.email.lower().strip()
+    from app.services.email_typo_fix import normalize_email
+
+    email = normalize_email(payload.email)
     if not email or "@" not in email:
         raise HTTPException(status_code=422, detail="Email inválido")
 
@@ -1484,7 +1486,9 @@ def submit_gift_form(
     for k, v in _cors_headers().items():
         response.headers[k] = v
 
-    email = payload.email.lower().strip()
+    from app.services.email_typo_fix import normalize_email
+
+    email = normalize_email(payload.email)
     if not email or "@" not in email:
         raise HTTPException(status_code=422, detail="Email inválido")
 

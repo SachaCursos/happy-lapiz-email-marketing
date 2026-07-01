@@ -288,6 +288,17 @@ def fix_logo(
     return {"ok": True, "fixed": fixed, "logo_url": HL_LOGO}
 
 
+@router.post("/repair-email-typos")
+def repair_email_typos(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Corrige dominios mal escritos en contactos existentes (gmail.con → gmail.com, etc.)."""
+    from app.services.email_typo_fix import repair_typo_emails
+
+    return repair_typo_emails(session)
+
+
 _SHOPIFY_PRODUCTS_CREATE = """
     CREATE TABLE shopify_products (
         id SERIAL PRIMARY KEY,

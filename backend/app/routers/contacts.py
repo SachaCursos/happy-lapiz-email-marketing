@@ -133,7 +133,11 @@ def create_contact(
     existing = session.exec(select(Contact).where(Contact.email == payload.email)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email ya existe")
-    contact = Contact(**payload.model_dump(), opted_in_at=datetime.utcnow() if payload.opted_in else None)
+    from app.services.email_typo_fix import normalize_email
+
+    data = payload.model_dump()
+    data["email"] = normalize_email(data["email"])
+    contact = Contact(**data, opted_in_at=datetime.utcnow() if payload.opted_in else None)
     session.add(contact)
     session.commit()
     session.refresh(contact)
@@ -315,6 +319,9 @@ def import_csv(
         if not email:
             skipped += 1
             continue
+        from app.services.email_typo_fix import normalize_email
+
+        email = normalize_email(email)
         existing = session.exec(select(Contact).where(Contact.email == email)).first()
         if existing:
             skipped += 1
