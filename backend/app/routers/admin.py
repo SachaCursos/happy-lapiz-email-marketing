@@ -811,6 +811,27 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
     return {"ok": False, "error": r.text[:200]}
 
 
+@router.post("/reset-form-stats")
+def reset_form_stats_tracking(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Reinicia medición de aperturas/tasa desde ahora (borra vistas y fija stats_since)."""
+    from datetime import datetime
+    from sqlalchemy import text
+    from sqlmodel import select
+    from app.models.form import SignupForm
+
+    now = datetime.utcnow()
+    session.execute(text("DELETE FROM form_views"))
+    forms = session.exec(select(SignupForm)).all()
+    for form in forms:
+        form.stats_since = now
+        session.add(form)
+    session.commit()
+    return {"ok": True, "stats_since": now.isoformat(), "forms_reset": len(forms)}
+
+
 @router.post("/sync-shopify-form-embeds")
 def sync_shopify_form_embeds(
     session: Session = Depends(get_session),

@@ -252,6 +252,8 @@ export interface AbFormStats {
 export interface FormStats {
   form_id: number;
   completed: number;
+  completed_total: number;
+  completed_period: number;
   received: number;
   audience_size: number;
   popup_views: number;
@@ -259,6 +261,7 @@ export interface FormStats {
   anonymous_viewers?: number;
   completion_rate: number | null;
   tracking_ready?: boolean;
+  stats_since: string | null;
   total_revenue: number;
   total_orders: number;
 }

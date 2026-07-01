@@ -214,6 +214,19 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS idx_form_views_form_email ON form_views(form_id, email)",
         "DELETE FROM form_views WHERE source = 'backfill'",
         "DELETE FROM form_views WHERE source = 'submit'",
+        "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS stats_since TIMESTAMP",
+        """CREATE TABLE IF NOT EXISTS _internal_flags (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        )""",
+        """DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM _internal_flags WHERE key = 'form_stats_v2_reset') THEN
+            DELETE FROM form_views;
+            UPDATE signup_forms SET stats_since = NOW();
+            INSERT INTO _internal_flags (key, value) VALUES ('form_stats_v2_reset', 'done');
+          END IF;
+        END $$""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

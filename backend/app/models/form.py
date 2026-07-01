@@ -40,6 +40,8 @@ class SignupForm(SQLModel, table=True):
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # Aperturas/completados para la tasa solo cuentan desde esta fecha
+    stats_since: Optional[datetime] = Field(default=None)
 
 
 class FormSubmission(SQLModel, table=True):
@@ -141,6 +143,7 @@ class SignupFormRead(SQLModel):
     created_by: Optional[int]
     created_at: datetime
     updated_at: datetime
+    stats_since: Optional[datetime] = None
 
 
 class FormSubmitPayload(SQLModel):

@@ -137,3 +137,11 @@ def sync_form_embed_to_shopify(session: Session, form_id: int | None = None) -> 
             })
 
     return {"ok": all(r.get("ok") for r in results), "forms": results}
+
+
+def log_shopify_form_sync(session: Session) -> None:
+    result = sync_form_embed_to_shopify(session)
+    if result.get("ok"):
+        logger.info("Shopify form loader sync: %s", result.get("forms"))
+    else:
+        logger.warning("Shopify form loader sync failed: %s", result.get("error"))

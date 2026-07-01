@@ -1383,8 +1383,11 @@ export default function FormDetailPage() {
               <p className="text-[11px] text-gray-400 mt-0.5">
                 {stats.popup_viewers.toLocaleString("es-CL")} abrieron el popup
                 {" · "}
-                {stats.completed.toLocaleString("es-CL")} completaron
-                {!stats.tracking_ready && stats.completed > 0 && (
+                {stats.completed_period.toLocaleString("es-CL")} completaron
+                {stats.stats_since && (
+                  <> · desde {formatDate(stats.stats_since)}</>
+                )}
+                {!stats.tracking_ready && (
                   <> · recopilando aperturas</>
                 )}
               </p>

@@ -60,8 +60,10 @@ def on_startup():
             ensure_repeat_bounce_segment(session)
             from app.services.no_open_segment_seed import ensure_no_open_segment
             ensure_no_open_segment(session)
-            from app.services.form_embed_snippet import sync_form_embed_to_shopify
-            sync_form_embed_to_shopify(session)
+            from app.services.form_embed_snippet import log_shopify_form_sync
+            log_shopify_form_sync(session)
+            from app.services.form_stats import ensure_form_stats_epoch
+            ensure_form_stats_epoch(session)
     except Exception:
         pass  # DB may not be ready on first deploy tick
 
