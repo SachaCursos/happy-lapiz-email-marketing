@@ -1164,13 +1164,9 @@ def _build_embed_js(cfg: dict) -> str:
         );
       }}
 
-      // ── Track popup / page open (pixel — sin CORS) ─────────────────────────
+      // ── Track popup / page open (solo estadísticas — no afecta triggers ni envío) ──
       function trackFormOpen() {{
         try {{
-          if (typeof window.__hbFormTrackOpen === 'function') {{
-            window.__hbFormTrackOpen();
-            return;
-          }}
           var _ve = '';
           var _vm = location.search.match(/[?&]email=([^&]*)/i);
           if (_vm) _ve = decodeURIComponent(_vm[1].replace(/\\+/g, ' ')).trim();

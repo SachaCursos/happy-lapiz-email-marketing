@@ -24,39 +24,21 @@ def form_loader_url(form: SignupForm) -> str:
 
 
 def build_loader_js(form: SignupForm) -> str:
-    """Bootstrap: ID de visitante persistente + carga embed.js con versión."""
+    """
+    Solo carga embed.js con versión para cache-bust.
+    No modifica triggers, diseño ni envío — toda la lógica sigue en embed.js.
+    """
     api = settings.BACKEND_PUBLIC_URL.rstrip("/")
     fid = form.id
     v = form.updated_at.isoformat() if form.updated_at else datetime.utcnow().isoformat()
     return f"""(function(){{
   var API={api!r}, FID={fid}, V={v!r};
-  function visitorId(){{
-    var k='hb_vid_'+FID;
-    try{{
-      var id=localStorage.getItem(k);
-      if(!id){{id='v_'+Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem(k,id);}}
-      return id;
-    }}catch(e){{return 'v_'+Date.now();}}
-  }}
-  function knownEmail(){{
-    var e='';
-    try{{e=(window.ShopifyAnalytics&&window.ShopifyAnalytics.meta&&window.ShopifyAnalytics.meta.email)||'';}}catch(x){{}}
-    var m=location.search.match(/[?&]email=([^&]*)/i);
-    if(m)e=decodeURIComponent(m[1].replace(/\\+/g,' ')).trim();
-    return e?e.toLowerCase():'';
-  }}
-  window.__hbFormTrackOpen=function(){{
-    try{{
-      var e=knownEmail();
-      var key=e||('anon:'+visitorId());
-      var src=API+'/api/forms/'+FID+'/open.gif?source=embed&email='+encodeURIComponent(key)+'&t='+Date.now();
-      new Image().src=src;
-    }}catch(err){{}}
-  }};
-  var s=document.createElement('script');
-  s.src=API+'/api/forms/'+FID+'/embed.js?v='+encodeURIComponent(V);
-  s.async=true;
-  (document.head||document.documentElement).appendChild(s);
+  if (window.__hbFormLoader && window.__hbFormLoader[FID]) return;
+  window.__hbFormLoader = window.__hbFormLoader || {{}};
+  window.__hbFormLoader[FID] = true;
+  var s = document.createElement('script');
+  s.src = API + '/api/forms/' + FID + '/embed.js?v=' + encodeURIComponent(V);
+  (document.head || document.documentElement).appendChild(s);
 }})();
 """
 
@@ -102,9 +84,7 @@ def sync_form_embed_to_shopify(session: Session, form_id: int | None = None) -> 
     for form in forms:
         loader_url = form_loader_url(form)
         loader_prefix = f"{settings.BACKEND_PUBLIC_URL.rstrip('/')}/api/forms/{form.id}/loader.js"
-        embed_prefix = f"{settings.BACKEND_PUBLIC_URL.rstrip('/')}/api/forms/{form.id}/embed.js"
 
-        # Quitar tags viejos (embed.js directo u otros loader desactualizados)
         for tag in tags:
             src = tag.get("src") or ""
             m = _FORM_SCRIPT_RE.search(src)
@@ -116,7 +96,6 @@ def sync_form_embed_to_shopify(session: Session, form_id: int | None = None) -> 
             if tag_id:
                 httpx.delete(f"{base}/script_tags/{tag_id}.json", headers=headers, timeout=15)
 
-        # Refrescar lista tras borrados
         list_r = httpx.get(f"{base}/script_tags.json", headers=headers, timeout=15)
         tags = list_r.json().get("script_tags", []) if list_r.status_code == 200 else []
 
