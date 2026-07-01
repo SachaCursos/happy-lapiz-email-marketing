@@ -249,6 +249,15 @@ export interface AbFormStats {
   variants: AbFormVariantStat[];
 }
 
+export interface FormStats {
+  form_id: number;
+  completed: number;
+  received: number;
+  completion_rate: number;
+  total_revenue: number;
+  total_orders: number;
+}
+
 export interface SignupForm {
   id: number;
   name: string;

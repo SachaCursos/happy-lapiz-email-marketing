@@ -17,11 +17,12 @@ from app.database import get_session
 from app.models.automation import AutomationEnrollment
 from app.models.contact import Contact
 from app.models.form import (
-    FormSubmission, FormSubmitPayload,
+    FormSubmission, FormSubmitPayload, FormView, FormViewPayload,
     SignupForm, SignupFormCreate, SignupFormRead, SignupFormUpdate,
 )
 from app.models.gift_recipient import GiftRecipient, GiftRecipientCreate, GiftRecipientRead, RELACION_OPTIONS
 from app.models.user import User
+from app.services.form_stats import get_form_stats
 
 router = APIRouter()
 
@@ -148,6 +149,18 @@ def delete_form(
     session.commit()
 
 
+@router.get("/{form_id}/stats")
+def form_stats(
+    form_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    f = session.get(SignupForm, form_id)
+    if not f:
+        raise HTTPException(status_code=404, detail="Formulario no encontrado")
+    return get_form_stats(session, form_id)
+
+
 @router.get("/{form_id}/ab-stats")
 def form_ab_stats(
     form_id: int,
@@ -196,6 +209,27 @@ def _cors_headers() -> dict:
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
     }
+
+
+@router.options("/{form_id}/view")
+def view_preflight(form_id: int):
+    return Response(headers=_cors_headers())
+
+
+@router.post("/{form_id}/view", status_code=204)
+def record_form_view(
+    form_id: int,
+    payload: FormViewPayload,
+    session: Session = Depends(get_session),
+):
+    f = session.get(SignupForm, form_id)
+    if not f:
+        raise HTTPException(status_code=404, detail="Formulario no encontrado")
+    email = (payload.email or "").strip().lower() or None
+    source = (payload.source or "page").strip()[:32] or "page"
+    session.add(FormView(form_id=form_id, email=email, source=source))
+    session.commit()
+    return Response(headers=_cors_headers())
 
 
 @router.options("/{form_id}/submit")
@@ -652,6 +686,20 @@ def _build_form_landing_page(f: SignupForm) -> str:
   </div>
   <main id="hb-landing"></main>
   <script>window.HB_FORM_CONTAINER = 'hb-landing';</script>
+  <script>
+    (function() {{
+      var api = {json.dumps(api_base)};
+      var fid = {f.id};
+      var m = location.search.match(/[?&]email=([^&]*)/i);
+      var email = m ? decodeURIComponent(m[1].replace(/\\+/g, ' ')).trim() : '';
+      fetch(api + '/api/forms/' + fid + '/view', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ source: 'page', email: email || null }}),
+        keepalive: true
+      }}).catch(function() {{}});
+    }})();
+  </script>
   <script src="{script_url}" defer></script>
 </body>
 </html>"""
@@ -1042,6 +1090,16 @@ def _build_embed_js(cfg: dict) -> str:
       // ── Show popup ──────────────────────────────────────────────────────────
       function showPopup() {{
         if (document.getElementById('hb-popup-overlay') || document.getElementById('hb-popup-box')) return;
+        try {{
+          var _vm = location.search.match(/[?&]email=([^&]*)/i);
+          var _ve = _vm ? decodeURIComponent(_vm[1].replace(/\\+/g, ' ')).trim() : '';
+          fetch(C.api + '/api/forms/' + C.id + '/view', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{ source: C.standalone ? 'page' : 'embed', email: _ve || null }}),
+            keepalive: true
+          }}).catch(function(){{}});
+        }} catch(e) {{}}
 
         var box = document.createElement('div');
         box.id = 'hb-popup-box';

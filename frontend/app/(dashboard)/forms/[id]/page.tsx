@@ -4,13 +4,14 @@ import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formsApi } from "@/lib/api";
-import { SignupForm, FormSubmission, FormField, FormDesign, FormStep, AbFormVariant, AbFormStats, getRegaladosFromSubmission } from "@/lib/types";
+import { SignupForm, FormSubmission, FormField, FormDesign, FormStep, AbFormVariant, AbFormStats, FormStats, getRegaladosFromSubmission } from "@/lib/types";
 import type { Automation } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import {
   ArrowLeft, Copy, Check, Users, Code, Plus, Trash2,
   ChevronUp, ChevronDown, Save, Eye, Palette, Layers,
   Tag, Settings, GripVertical, FlaskConical, Link2, ExternalLink,
+  CheckCircle2, Percent, ShoppingBag,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -1279,6 +1280,13 @@ export default function FormDetailPage() {
     enabled: !!formId,
   });
 
+  const { data: stats } = useQuery<FormStats>({
+    queryKey: ["form-stats", formId],
+    queryFn: () => formsApi.stats(formId).then((r) => r.data),
+    staleTime: 30_000,
+    enabled: !!formId,
+  });
+
   const saveMutation = useMutation({
     mutationFn: (data: Partial<SignupForm>) => formsApi.update(formId, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["form", formId] }),
@@ -1355,9 +1363,40 @@ export default function FormDetailPage() {
             {form.ab_variants && form.ab_variants.length >= 2 && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">Test A/B activo ({form.ab_variants.length} variantes)</span>}
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-3xl font-bold text-gray-900">{subsData?.total ?? "—"}</p>
-          <p className="text-xs text-gray-400 flex items-center gap-1 justify-end mt-0.5"><Users size={11} /> suscriptores</p>
+        <div className="grid grid-cols-3 gap-3 shrink-0">
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-right min-w-[120px]">
+            <div className="flex items-center justify-end gap-1.5 text-xs text-gray-400 mb-1">
+              <CheckCircle2 size={12} className="text-green-600" />
+              Completados
+            </div>
+            <p className="text-2xl font-bold text-gray-900">{stats?.completed ?? subsData?.total ?? "—"}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-right min-w-[120px]">
+            <div className="flex items-center justify-end gap-1.5 text-xs text-gray-400 mb-1">
+              <Percent size={12} className="text-brand-600" />
+              Tasa completados
+            </div>
+            <p className="text-2xl font-bold text-gray-900">
+              {stats ? (stats.received > 0 ? `${stats.completion_rate.toFixed(1)}%` : "—") : "—"}
+            </p>
+            {stats && stats.received > 0 && (
+              <p className="text-[11px] text-gray-400 mt-0.5">{stats.received.toLocaleString("es-CL")} recibieron</p>
+            )}
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-right min-w-[120px]">
+            <div className="flex items-center justify-end gap-1.5 text-xs text-gray-400 mb-1">
+              <ShoppingBag size={12} className="text-amber-600" />
+              Ventas totales
+            </div>
+            <p className="text-2xl font-bold text-gray-900">
+              {stats ? `$${Math.round(stats.total_revenue).toLocaleString("es-CL")}` : "—"}
+            </p>
+            {stats && (
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                {stats.total_orders.toLocaleString("es-CL")} pedido{stats.total_orders === 1 ? "" : "s"}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

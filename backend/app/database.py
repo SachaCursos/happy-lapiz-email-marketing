@@ -203,6 +203,15 @@ def _run_migrations():
              WHERE rn > 1
            )""",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_sends_campaign_contact ON campaign_sends (campaign_id, contact_id)",
+        """CREATE TABLE IF NOT EXISTS form_views (
+            id SERIAL PRIMARY KEY,
+            form_id INTEGER NOT NULL REFERENCES signup_forms(id),
+            email VARCHAR,
+            source VARCHAR NOT NULL DEFAULT 'page',
+            viewed_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_form_views_form_id ON form_views(form_id)",
+        "CREATE INDEX IF NOT EXISTS idx_form_views_form_email ON form_views(form_id, email)",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

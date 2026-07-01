@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
 import { formsApi, api } from "@/lib/api";
-import { SignupForm } from "@/lib/types";
+import { SignupForm, FormStats } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { Plus, MousePointerClick, ExternalLink, Trash2, ToggleLeft, ToggleRight, Gift, Copy, Check, Calendar, Settings2 } from "lucide-react";
 import Link from "next/link";
@@ -163,6 +163,19 @@ export default function FormsPage() {
     staleTime: 30_000,
   });
 
+  const statsQueries = useQueries({
+    queries: forms.map((f) => ({
+      queryKey: ["form-stats", f.id],
+      queryFn: () => formsApi.stats(f.id).then((r) => r.data as FormStats),
+      staleTime: 30_000,
+    })),
+  });
+
+  const statsMap: Record<number, FormStats> = {};
+  statsQueries.forEach((q, i) => {
+    if (q.data) statsMap[forms[i]?.id] = q.data;
+  });
+
   const toggleMutation = useMutation({
     mutationFn: (f: SignupForm) =>
       formsApi.update(f.id, { status: f.status === "active" ? "paused" : "active" }),
@@ -231,7 +244,9 @@ export default function FormsPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {forms.map((f) => (
+            {forms.map((f) => {
+              const st = statsMap[f.id];
+              return (
               <div key={f.id} className="bg-white border border-gray-200 rounded-xl p-5 flex items-center gap-5">
                 <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center shrink-0">
                   <MousePointerClick size={18} className="text-sky-600" />
@@ -251,7 +266,24 @@ export default function FormsPage() {
                     {f.popup_trigger === "scroll" && ` (${f.popup_scroll_pct}%)`}
                   </p>
                 </div>
-                <p className="text-xs text-gray-400 shrink-0">{formatDate(f.created_at)}</p>
+                <div className="hidden sm:grid grid-cols-3 gap-4 shrink-0 text-right">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-gray-400">Completados</p>
+                    <p className="text-sm font-semibold text-gray-900">{st?.completed ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-gray-400">Tasa</p>
+                    <p className="text-sm font-semibold text-gray-900">{st ? (st.received > 0 ? `${st.completion_rate.toFixed(1)}%` : "—") : "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-gray-400">Ventas</p>
+                    <p className="text-sm font-semibold text-gray-900">{st ? `$${Math.round(st.total_revenue).toLocaleString("es-CL")}` : "—"}</p>
+                    {st && st.total_orders > 0 && (
+                      <p className="text-[10px] text-gray-400">{st.total_orders} ped.</p>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 shrink-0 hidden md:block">{formatDate(f.created_at)}</p>
                 <div className="flex items-center gap-2 shrink-0">
                   <Link href={`/forms/${f.id}`} className="p-2 rounded-lg border border-brand-200 text-brand-600 hover:bg-brand-50 transition-colors" title="Configurar diseño y ajustes">
                     <Settings2 size={14} />
@@ -264,7 +296,8 @@ export default function FormsPage() {
                   </button>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
       </div>

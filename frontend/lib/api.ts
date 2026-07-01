@@ -136,6 +136,7 @@ export const formsApi = {
   update: (id: number, data: unknown) => api.patch(`/forms/${id}`, data),
   delete: (id: number) => api.delete(`/forms/${id}`),
   submissions: (id: number) => api.get(`/forms/${id}/submissions`),
+  stats: (id: number) => api.get(`/forms/${id}/stats`),
 };
 
 // HTML blocks (dynamic email snippets)

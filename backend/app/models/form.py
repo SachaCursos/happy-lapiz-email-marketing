@@ -63,6 +63,17 @@ class FormSubmission(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class FormView(SQLModel, table=True):
+    __tablename__ = "form_views"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    form_id: int = Field(foreign_key="signup_forms.id", index=True)
+    email: Optional[str] = Field(default=None, index=True)
+    # page | embed
+    source: str = Field(default="page")
+    viewed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class SignupFormCreate(SQLModel):
     name: str
     title: str
@@ -139,3 +150,8 @@ class FormSubmitPayload(SQLModel):
     source_url: Optional[str] = None
     extra_data: Optional[dict] = None
     ab_variant: Optional[str] = None
+
+
+class FormViewPayload(SQLModel):
+    email: Optional[str] = None
+    source: str = "page"
