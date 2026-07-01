@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import desc, nulls_last, text
 from sqlmodel import Session, select, func
 from jinja2 import Template as JTemplate
 import resend
@@ -48,7 +48,13 @@ router = APIRouter()
 
 @router.get("", response_model=List[CampaignRead])
 def list_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return session.exec(select(Campaign).order_by(Campaign.created_at.desc())).all()
+    return session.exec(
+        select(Campaign).order_by(
+            nulls_last(desc(Campaign.sent_at)),
+            nulls_last(desc(Campaign.scheduled_at)),
+            desc(Campaign.created_at),
+        )
+    ).all()
 
 
 @router.post("", response_model=CampaignRead, status_code=201)
