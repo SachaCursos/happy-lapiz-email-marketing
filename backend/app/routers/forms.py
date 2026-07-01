@@ -383,7 +383,8 @@ def submit_form(
     elif f.coupon_code:
         coupon_code = f.coupon_code
 
-    _ed = payload.extra_data or {}
+    _ed = dict(payload.extra_data or {})
+    visitor_sid = (_ed.pop("_hb_visitor_sid", None) or "").strip()
     regalados = _parse_regalados(_ed)
     from app.services.regalado_vars import sanitize_regalados_list
     regalados = sanitize_regalados_list(regalados)
@@ -451,6 +452,13 @@ def submit_form(
         nombre_regalado2=regalado_cols.get("nombre_regalado2"),
         fecha_nacimiento_regalado2=regalado_cols.get("fecha_nacimiento_regalado2"),
     ))
+    if visitor_sid:
+        anon_key = visitor_sid if visitor_sid.startswith("anon:") else f"anon:{visitor_sid}"
+        session.execute(
+            text("DELETE FROM form_views WHERE form_id = :fid AND LOWER(email) = LOWER(:anon)"),
+            {"fid": form_id, "anon": anon_key},
+        )
+    session.add(FormView(form_id=form_id, email=email, source="submit"))
     session.commit()
 
     # Enroll in automation for coupon email if configured
@@ -1453,6 +1461,9 @@ def _build_embed_js(cfg: dict) -> str:
           btn.textContent = 'Enviando…';
 
           var payload = Object.assign({{}}, collectedData);
+          payload.extra_data = payload.extra_data || {{}};
+          var _vsid = _ss.getItem('hb_visitor_' + C.id);
+          if (_vsid) payload.extra_data._hb_visitor_sid = _vsid;
           if (!Object.keys(payload.extra_data||{{}}).length) delete payload.extra_data;
           if (_abVariant) payload.ab_variant = String(_abVariant.id);
 

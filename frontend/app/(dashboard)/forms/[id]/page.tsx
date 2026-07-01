@@ -1297,7 +1297,7 @@ export default function FormDetailPage() {
   const [localDesign, setLocalDesign] = useState<FormDesign | null>(null);
   const [localSteps, setLocalSteps] = useState<FormStep[] | null | "unset">("unset");
 
-  const embedCode = `<script src="${BACKEND_URL}/api/forms/${formId}/embed.js" async></script>`;
+  const embedCode = `<script src="${BACKEND_URL}/api/forms/${formId}/embed.js?v=${encodeURIComponent(form?.updated_at ?? "")}" async></script>`;
   const campaignUrl = `${BACKEND_URL}/api/forms/${formId}/page`;
   const campaignUrlWithEmail = `${campaignUrl}?email={{ email }}`;
 
@@ -1381,9 +1381,11 @@ export default function FormDetailPage() {
             </p>
             {stats && (
               <p className="text-[11px] text-gray-400 mt-0.5">
-                {stats.popup_viewers.toLocaleString("es-CL")} personas vieron el formulario
-                {stats.completed > 0 && (
-                  <> · {stats.completed.toLocaleString("es-CL")} completaron</>
+                {stats.audience_size.toLocaleString("es-CL")} vieron el formulario
+                {" · "}
+                {stats.completed.toLocaleString("es-CL")} completaron
+                {stats.anonymous_viewers != null && stats.anonymous_viewers > 0 && (
+                  <> ({stats.anonymous_viewers.toLocaleString("es-CL")} sin completar)</>
                 )}
               </p>
             )}

@@ -276,9 +276,9 @@ export default function FormsPage() {
                     <p className="text-sm font-semibold text-gray-900">
                       {st?.completion_rate != null ? `${st.completion_rate.toFixed(1)}%` : "—"}
                     </p>
-                    {st && st.popup_viewers > 0 && (
+                    {st && (
                       <p className="text-[10px] text-gray-400">
-                        {st.popup_viewers} vieron · {st.completed} completaron
+                        {st.audience_size} vieron · {st.completed} completaron
                       </p>
                     )}
                   </div>
