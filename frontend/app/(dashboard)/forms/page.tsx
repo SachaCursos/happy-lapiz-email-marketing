@@ -273,7 +273,14 @@ export default function FormsPage() {
                   </div>
                   <div>
                     <p className="text-[10px] uppercase tracking-wider text-gray-400">Tasa</p>
-                    <p className="text-sm font-semibold text-gray-900">{st ? (st.received > 0 ? `${st.completion_rate.toFixed(1)}%` : "—") : "—"}</p>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {st?.completion_rate != null ? `${st.completion_rate.toFixed(1)}%` : "—"}
+                    </p>
+                    {st && st.popup_viewers > 0 && (
+                      <p className="text-[10px] text-gray-400">
+                        {st.popup_viewers} vieron · {st.completed} completaron
+                      </p>
+                    )}
                   </div>
                   <div>
                     <p className="text-[10px] uppercase tracking-wider text-gray-400">Ventas</p>

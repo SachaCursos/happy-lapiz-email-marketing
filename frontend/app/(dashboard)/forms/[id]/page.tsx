@@ -1377,10 +1377,15 @@ export default function FormDetailPage() {
               Tasa completados
             </div>
             <p className="text-2xl font-bold text-gray-900">
-              {stats ? (stats.received > 0 ? `${stats.completion_rate.toFixed(1)}%` : "—") : "—"}
+              {stats?.completion_rate != null ? `${stats.completion_rate.toFixed(1)}%` : "—"}
             </p>
-            {stats && stats.received > 0 && (
-              <p className="text-[11px] text-gray-400 mt-0.5">{stats.received.toLocaleString("es-CL")} recibieron</p>
+            {stats && (
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                {stats.popup_viewers.toLocaleString("es-CL")} personas vieron el formulario
+                {stats.completed > 0 && (
+                  <> · {stats.completed.toLocaleString("es-CL")} completaron</>
+                )}
+              </p>
             )}
           </div>
           <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-right min-w-[120px]">

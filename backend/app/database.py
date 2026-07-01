@@ -212,6 +212,7 @@ def _run_migrations():
         )""",
         "CREATE INDEX IF NOT EXISTS idx_form_views_form_id ON form_views(form_id)",
         "CREATE INDEX IF NOT EXISTS idx_form_views_form_email ON form_views(form_id, email)",
+        "DELETE FROM form_views WHERE source = 'backfill'",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

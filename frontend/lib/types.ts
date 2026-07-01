@@ -253,7 +253,9 @@ export interface FormStats {
   form_id: number;
   completed: number;
   received: number;
-  completion_rate: number;
+  popup_views: number;
+  popup_viewers: number;
+  completion_rate: number | null;
   total_revenue: number;
   total_orders: number;
 }

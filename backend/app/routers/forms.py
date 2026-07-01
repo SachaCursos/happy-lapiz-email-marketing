@@ -203,12 +203,36 @@ def list_submissions(
 
 # ── Public endpoints (no auth) ────────────────────────────────────────────────
 
+# 1×1 transparent GIF
+_PIXEL_GIF = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff"
+    b"\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00"
+    b"\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+)
+
+
 def _cors_headers() -> dict:
     return {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
     }
+
+
+def _record_form_view(
+    session: Session,
+    form_id: int,
+    *,
+    email: str | None,
+    source: str,
+) -> None:
+    f = session.get(SignupForm, form_id)
+    if not f:
+        raise HTTPException(status_code=404, detail="Formulario no encontrado")
+    clean_email = (email or "").strip().lower() or None
+    clean_source = (source or "page").strip()[:32] or "page"
+    session.add(FormView(form_id=form_id, email=clean_email, source=clean_source))
+    session.commit()
 
 
 @router.options("/{form_id}/view")
@@ -222,14 +246,27 @@ def record_form_view(
     payload: FormViewPayload,
     session: Session = Depends(get_session),
 ):
-    f = session.get(SignupForm, form_id)
-    if not f:
-        raise HTTPException(status_code=404, detail="Formulario no encontrado")
-    email = (payload.email or "").strip().lower() or None
-    source = (payload.source or "page").strip()[:32] or "page"
-    session.add(FormView(form_id=form_id, email=email, source=source))
-    session.commit()
+    _record_form_view(session, form_id, email=payload.email, source=payload.source)
     return Response(headers=_cors_headers())
+
+
+@router.get("/{form_id}/open.gif")
+def record_form_open_pixel(
+    form_id: int,
+    session: Session = Depends(get_session),
+    email: str | None = Query(None),
+    source: str = Query("embed"),
+):
+    """Tracking pixel — evita problemas de CORS con fetch desde la tienda Shopify."""
+    try:
+        _record_form_view(session, form_id, email=email, source=source)
+    except HTTPException:
+        pass
+    return Response(
+        content=_PIXEL_GIF,
+        media_type="image/gif",
+        headers={**_cors_headers(), "Cache-Control": "no-store"},
+    )
 
 
 @router.options("/{form_id}/submit")
@@ -691,13 +728,15 @@ def _build_form_landing_page(f: SignupForm) -> str:
       var api = {json.dumps(api_base)};
       var fid = {f.id};
       var m = location.search.match(/[?&]email=([^&]*)/i);
-      var email = m ? decodeURIComponent(m[1].replace(/\\+/g, ' ')).trim() : '';
-      fetch(api + '/api/forms/' + fid + '/view', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ source: 'page', email: email || null }}),
-        keepalive: true
-      }}).catch(function() {{}});
+      var email = m ? decodeURIComponent(m[1].replace(/\\+/g, ' ')).trim().toLowerCase() : '';
+      var sid = sessionStorage.getItem('hb_visitor_' + fid);
+      if (!sid) {{
+        sid = 'v_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        try {{ sessionStorage.setItem('hb_visitor_' + fid, sid); }} catch(e) {{}}
+      }}
+      var viewerKey = email || ('anon:' + sid);
+      var src = api + '/api/forms/' + fid + '/open.gif?source=page&email=' + encodeURIComponent(viewerKey);
+      new Image().src = src;
     }})();
   </script>
   <script src="{script_url}" defer></script>
@@ -1087,19 +1126,35 @@ def _build_embed_js(cfg: dict) -> str:
         );
       }}
 
+      // ── Track popup / page open (pixel — sin CORS) ─────────────────────────
+      function trackFormOpen() {{
+        try {{
+          if (_ss.getItem('hb_view_tracked_' + C.id)) return;
+          _ss.setItem('hb_view_tracked_' + C.id, '1');
+          var _ve = '';
+          var _vm = location.search.match(/[?&]email=([^&]*)/i);
+          if (_vm) _ve = decodeURIComponent(_vm[1].replace(/\\+/g, ' ')).trim();
+          if (!_ve) {{
+            try {{
+              _ve = (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.email) || '';
+            }} catch(e) {{}}
+          }}
+          var _sid = _ss.getItem('hb_visitor_' + C.id);
+          if (!_sid) {{
+            _sid = 'v_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+            _ss.setItem('hb_visitor_' + C.id, _sid);
+          }}
+          var viewerKey = _ve ? _ve.toLowerCase() : ('anon:' + _sid);
+          var src = C.api + '/api/forms/' + C.id + '/open.gif?source=' + (C.standalone ? 'page' : 'embed');
+          src += '&email=' + encodeURIComponent(viewerKey);
+          new Image().src = src;
+        }} catch(e) {{}}
+      }}
+
       // ── Show popup ──────────────────────────────────────────────────────────
       function showPopup() {{
         if (document.getElementById('hb-popup-overlay') || document.getElementById('hb-popup-box')) return;
-        try {{
-          var _vm = location.search.match(/[?&]email=([^&]*)/i);
-          var _ve = _vm ? decodeURIComponent(_vm[1].replace(/\\+/g, ' ')).trim() : '';
-          fetch(C.api + '/api/forms/' + C.id + '/view', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{ source: C.standalone ? 'page' : 'embed', email: _ve || null }}),
-            keepalive: true
-          }}).catch(function(){{}});
-        }} catch(e) {{}}
+        trackFormOpen();
 
         var box = document.createElement('div');
         box.id = 'hb-popup-box';
