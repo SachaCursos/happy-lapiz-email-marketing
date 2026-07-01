@@ -53,6 +53,8 @@ def on_startup():
             ensure_managed_block_templates(session)
             from app.services.birthday_automation_seed import ensure_birthday_reminder_setup
             ensure_birthday_reminder_setup(session)
+            from app.services.email_sender import finalize_stuck_sending_campaigns
+            finalize_stuck_sending_campaigns(session)
     except Exception:
         pass  # DB may not be ready on first deploy tick
 

@@ -167,6 +167,42 @@ def _run_migrations():
             updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
         "ALTER TABLE dynamic_html_blocks ADD COLUMN IF NOT EXISTS design_config JSONB",
+        """DELETE FROM campaign_sends q
+           WHERE q.status = 'queued'
+             AND EXISTS (
+               SELECT 1 FROM campaign_sends ok
+               WHERE ok.campaign_id = q.campaign_id
+                 AND ok.contact_id = q.contact_id
+                 AND ok.status IN (
+                   'sent','delivered','opened','clicked','bounced','complained'
+                 )
+                 AND ok.id <> q.id
+             )""",
+        """DELETE FROM campaign_sends cs
+           WHERE cs.id IN (
+             SELECT id FROM (
+               SELECT id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY campaign_id, contact_id
+                   ORDER BY
+                     CASE status
+                       WHEN 'delivered' THEN 1
+                       WHEN 'opened' THEN 2
+                       WHEN 'clicked' THEN 3
+                       WHEN 'sent' THEN 4
+                       WHEN 'bounced' THEN 5
+                       WHEN 'complained' THEN 6
+                       WHEN 'failed' THEN 7
+                       ELSE 8
+                     END,
+                     sent_at DESC NULLS LAST,
+                     id DESC
+                 ) AS rn
+               FROM campaign_sends
+             ) ranked
+             WHERE rn > 1
+           )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_sends_campaign_contact ON campaign_sends (campaign_id, contact_id)",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

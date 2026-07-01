@@ -5,6 +5,7 @@ import time
 from typing import List
 from datetime import datetime, timezone, timedelta
 import resend
+from sqlalchemy import text
 from jinja2 import Environment, ChainableUndefined, Template as Jinja2Template
 from sqlmodel import Session, select, func
 from app.core.config import settings
@@ -36,6 +37,8 @@ CAMPAIGN_SEND_ATTEMPTED: tuple[str, ...] = (
     "sent", "delivered", "opened", "clicked", "bounced", "complained",
 )
 CAMPAIGN_SEND_COMPLETION: tuple[str, ...] = CAMPAIGN_SEND_ATTEMPTED + ("failed",)
+COMPLETION_STALL_SECONDS = 600  # sin envíos nuevos → cerrar si ≥99.5% entregado
+SUCCESS_COMPLETION_RATIO = 0.995
 
 _FOOTER = """<div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
 text-align:center;font-size:12px;color:#9ca3af;
@@ -453,7 +456,109 @@ def count_audience_completion_attempts(
     ).one()
 
 
+def reconcile_campaign_sends(session: Session, campaign_id: int) -> int:
+    """Remove orphan queued rows and duplicate send records for one campaign."""
+    removed = 0
+    removed += session.execute(
+        text("""
+            DELETE FROM campaign_sends q
+            WHERE q.campaign_id = :cid AND q.status = 'queued'
+              AND EXISTS (
+                SELECT 1 FROM campaign_sends ok
+                WHERE ok.campaign_id = q.campaign_id
+                  AND ok.contact_id = q.contact_id
+                  AND ok.status IN (
+                    'sent','delivered','opened','clicked','bounced','complained'
+                  )
+                  AND ok.id <> q.id
+              )
+        """),
+        {"cid": campaign_id},
+    ).rowcount or 0
+
+    removed += session.execute(
+        text("""
+            DELETE FROM campaign_sends cs
+            WHERE cs.campaign_id = :cid
+              AND cs.id IN (
+                SELECT id FROM (
+                  SELECT id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY campaign_id, contact_id
+                      ORDER BY
+                        CASE status
+                          WHEN 'delivered' THEN 1
+                          WHEN 'opened' THEN 2
+                          WHEN 'clicked' THEN 3
+                          WHEN 'sent' THEN 4
+                          WHEN 'bounced' THEN 5
+                          WHEN 'complained' THEN 6
+                          WHEN 'failed' THEN 7
+                          ELSE 8
+                        END,
+                        sent_at DESC NULLS LAST,
+                        id DESC
+                    ) AS rn
+                  FROM campaign_sends
+                  WHERE campaign_id = :cid
+                ) ranked
+                WHERE rn > 1
+              )
+        """),
+        {"cid": campaign_id},
+    ).rowcount or 0
+    if removed:
+        session.commit()
+    return removed
+
+
+def count_recipients_with_success(
+    session: Session, campaign: Campaign, recipient_ids: List[int] | None = None,
+) -> int:
+    if recipient_ids is None:
+        from app.services.campaign_audience import get_campaign_recipient_ids
+
+        recipient_ids = get_campaign_recipient_ids(
+            session, campaign.segment_id, campaign.exclude_segment_ids,
+        )
+    if not recipient_ids:
+        return 0
+    return session.exec(
+        select(func.count(func.distinct(CampaignSend.contact_id))).where(
+            CampaignSend.campaign_id == campaign.id,
+            CampaignSend.contact_id.in_(recipient_ids),
+            CampaignSend.status.in_(CAMPAIGN_SEND_ATTEMPTED),
+        )
+    ).one()
+
+
+def _only_failures_remain(
+    session: Session, campaign_id: int, pending_ids: List[int],
+) -> bool:
+    """True when every pending contact was attempted and only has failed rows."""
+    if not pending_ids:
+        return True
+    for cid in pending_ids:
+        statuses = session.exec(
+            select(CampaignSend.status).where(
+                CampaignSend.campaign_id == campaign_id,
+                CampaignSend.contact_id == cid,
+            )
+        ).all()
+        if not statuses:
+            return False
+        if any(s in CAMPAIGN_SEND_ATTEMPTED for s in statuses):
+            return False
+        if any(s == "queued" for s in statuses):
+            return False
+        if not any(s == "failed" for s in statuses):
+            return False
+    return True
+
+
 def is_campaign_audience_complete(session: Session, campaign: Campaign) -> bool:
+    """True when every current recipient has a successful send (or campaign stalled at ≥99.5%)."""
+    reconcile_campaign_sends(session, campaign.id)
     from app.services.campaign_audience import get_campaign_recipient_ids
 
     recipient_ids = get_campaign_recipient_ids(
@@ -461,26 +566,54 @@ def is_campaign_audience_complete(session: Session, campaign: Campaign) -> bool:
     )
     if not recipient_ids:
         return True
-    return count_audience_completion_attempts(session, campaign, recipient_ids) >= len(
-        recipient_ids
-    )
+
+    total = len(recipient_ids)
+    success = count_recipients_with_success(session, campaign, recipient_ids)
+    if success >= total:
+        return True
+
+    pending = get_pending_contact_ids(session, campaign)
+    if not pending:
+        return True
+
+    if success >= int(total * SUCCESS_COMPLETION_RATIO) and _only_failures_remain(
+        session, campaign.id, pending,
+    ):
+        return True
+
+    if success >= int(total * SUCCESS_COMPLETION_RATIO):
+        last_sent_at = session.exec(
+            select(func.max(CampaignSend.sent_at)).where(
+                CampaignSend.campaign_id == campaign.id,
+                CampaignSend.sent_at.isnot(None),
+            )
+        ).one()
+        if last_sent_at and (
+            datetime.utcnow() - last_sent_at
+        ).total_seconds() >= COMPLETION_STALL_SECONDS:
+            return True
+
+    return False
 
 
 def get_campaign_send_progress(session: Session, campaign: Campaign) -> dict:
     """Progress metrics aligned with finalize_campaign_status (current audience)."""
-    from app.services.campaign_audience import count_campaign_recipients
+    reconcile_campaign_sends(session, campaign.id)
+    from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipient_ids
 
     counts = count_campaign_recipients(
         session, campaign.segment_id, campaign.exclude_segment_ids,
     )
     total = counts["recipient_count"]
-    completed = count_audience_completion_attempts(session, campaign)
-    already_sent = count_attempted_campaign_sends(session, campaign.id)
+    recipient_ids = get_campaign_recipient_ids(
+        session, campaign.segment_id, campaign.exclude_segment_ids,
+    )
+    delivered = count_recipients_with_success(session, campaign, recipient_ids)
     pending = len(get_pending_contact_ids(session, campaign))
     return {
         "total_in_segment": total,
-        "already_sent": already_sent,
-        "audience_completed": completed,
+        "already_sent": delivered,
+        "audience_completed": delivered,
         "pending": pending,
         "audience_complete": is_campaign_audience_complete(session, campaign),
     }
@@ -506,9 +639,18 @@ def finalize_campaign_status(
         )
         total_in_segment = counts["recipient_count"]
 
+    reconcile_campaign_sends(session, campaign.id)
+
     if is_campaign_audience_complete(session, campaign):
         campaign.status = "sent"
-        campaign.sent_at = campaign.sent_at or datetime.utcnow()
+        if not campaign.sent_at:
+            first_sent = session.exec(
+                select(func.min(CampaignSend.sent_at)).where(
+                    CampaignSend.campaign_id == campaign.id,
+                    CampaignSend.sent_at.isnot(None),
+                )
+            ).one()
+            campaign.sent_at = first_sent or datetime.utcnow()
         session.add(campaign)
         return
 
@@ -545,17 +687,21 @@ def get_pending_contact_ids(session: Session, campaign: Campaign) -> List[int]:
 
 def _ensure_send_records(session: Session, campaign_id: int, contact_ids: List[int]) -> None:
     for cid in contact_ids:
-        exists = session.exec(
+        rows = session.exec(
             select(CampaignSend).where(
                 CampaignSend.campaign_id == campaign_id,
                 CampaignSend.contact_id == cid,
             )
-        ).first()
-        if not exists:
+        ).all()
+        if not rows:
             session.add(CampaignSend(campaign_id=campaign_id, contact_id=cid))
-        elif exists.status == "failed":
-            exists.status = "queued"
-            session.add(exists)
+            continue
+        if any(r.status in CAMPAIGN_SEND_ATTEMPTED for r in rows):
+            continue
+        failed = next((r for r in rows if r.status == "failed"), None)
+        if failed:
+            failed.status = "queued"
+            session.add(failed)
 
 
 def send_campaign_until_idle(
@@ -677,6 +823,27 @@ def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segmen
     )
 
 
+def finalize_stuck_sending_campaigns(session: Session) -> int:
+    """On startup, reconcile and close campaigns that finished sending but stayed in 'sending'."""
+    campaigns = session.exec(select(Campaign).where(Campaign.status == "sending")).all()
+    closed = 0
+    for campaign in campaigns:
+        reconcile_campaign_sends(session, campaign.id)
+        if is_campaign_audience_complete(session, campaign):
+            from app.services.campaign_audience import count_campaign_recipients
+
+            counts = count_campaign_recipients(
+                session, campaign.segment_id, campaign.exclude_segment_ids,
+            )
+            finalize_campaign_status(
+                session, campaign, counts["recipient_count"], auto_resume=False,
+            )
+            closed += 1
+    if closed:
+        session.commit()
+    return closed
+
+
 def resume_pending_campaign_sends() -> None:
     """Reanuda campañas en 'sending' con contactos pendientes (tras crash, deploy o timeout)."""
     to_resume: list[int] = []
@@ -685,6 +852,7 @@ def resume_pending_campaign_sends() -> None:
         now = datetime.utcnow()
         for campaign in sending:
             try:
+                reconcile_campaign_sends(session, campaign.id)
                 pending = get_pending_contact_ids(session, campaign)
                 if not pending or is_campaign_audience_complete(session, campaign):
                     from app.services.campaign_audience import count_campaign_recipients
