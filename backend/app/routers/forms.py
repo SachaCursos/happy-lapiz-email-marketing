@@ -636,7 +636,7 @@ def form_loader_js(
     )
 
 
-@router.get("/{form_id}/embed.js", response_class=PlainTextResponse))
+@router.get("/{form_id}/embed.js", response_class=PlainTextResponse)
 def embed_js(
     form_id: int,
     standalone: bool = Query(False),
