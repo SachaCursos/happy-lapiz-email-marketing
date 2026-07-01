@@ -55,6 +55,97 @@ def _build_clause(node: dict) -> Optional[Any]:
     op = node.get("op")
     value = node.get("value")
 
+    # Condición especial: Nº de rebotes en campañas (campaign_sends con status bounced)
+    if field == "campaign_bounce_count":
+        try:
+            threshold = int(value)
+        except (TypeError, ValueError):
+            return None
+        op_sql = {
+            "gte": ">=",
+            "gt": ">",
+            "eq": "=",
+            "lte": "<=",
+            "lt": "<",
+        }.get(op)
+        if not op_sql:
+            return None
+        return text(f"""
+            contacts.id IN (
+                SELECT cs.contact_id
+                FROM campaign_sends cs
+                WHERE cs.status = 'bounced' OR cs.bounced_at IS NOT NULL
+                GROUP BY cs.contact_id
+                HAVING COUNT(*) {op_sql} :threshold
+            )
+        """).bindparams(threshold=threshold)
+
+    # Condición especial: sin aperturas en los últimos N envíos (campañas + automatizaciones + evergreen)
+    if field == "no_open_in_last_n_emails":
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return None
+        if n <= 0:
+            return None
+        return text("""
+            contacts.id IN (
+                WITH all_sends AS (
+                    SELECT cs.contact_id,
+                           cs.sent_at AS ts,
+                           cs.opened_at
+                    FROM campaign_sends cs
+                    WHERE cs.contact_id IS NOT NULL
+                      AND cs.sent_at IS NOT NULL
+                      AND cs.status NOT IN ('failed', 'queued')
+                    UNION ALL
+                    SELECT COALESCE(
+                        ar.contact_id,
+                        (SELECT c2.id FROM contacts c2
+                         WHERE LOWER(c2.email) = LOWER(ar.contact_email) LIMIT 1)
+                    ),
+                    COALESCE(ar.executed_at, ar.triggered_at),
+                    ar.opened_at
+                    FROM automation_runs ar
+                    WHERE ar.status = 'sent'
+                      AND COALESCE(ar.executed_at, ar.triggered_at) IS NOT NULL
+                    UNION ALL
+                    SELECT es.contact_id,
+                           es.sent_at,
+                           es.opened_at
+                    FROM evergreen_sends es
+                    WHERE es.contact_id IS NOT NULL
+                      AND es.sent_at IS NOT NULL
+                      AND es.status NOT IN ('failed', 'queued')
+                ),
+                valid_sends AS (
+                    SELECT contact_id, ts, opened_at
+                    FROM all_sends
+                    WHERE contact_id IS NOT NULL
+                ),
+                ranked AS (
+                    SELECT contact_id,
+                           opened_at,
+                           ROW_NUMBER() OVER (PARTITION BY contact_id ORDER BY ts DESC) AS rn
+                    FROM valid_sends
+                ),
+                last_n AS (
+                    SELECT contact_id, opened_at
+                    FROM ranked
+                    WHERE rn <= :n
+                ),
+                agg AS (
+                    SELECT contact_id,
+                           COUNT(*)::int AS send_count,
+                           COUNT(opened_at)::int AS open_count
+                    FROM last_n
+                    GROUP BY contact_id
+                )
+                SELECT contact_id FROM agg
+                WHERE send_count = :n AND open_count = 0
+            )
+        """).bindparams(n=n)
+
     # Condición especial: tiene o no tiene regalado registrado
     if field == "has_gift_recipient":
         is_true = str(value).lower() in ("true", "1")

@@ -23,6 +23,8 @@ const FIELDS = [
   { value: "smile_points",         label: "Puntos de fidelidad",    type: "number" },
   { value: "has_gift_recipient",   label: "Tiene regalado registrado", type: "boolean" },
   { value: "has_form_submission",  label: "Rellenó formulario",        type: "form_submission" },
+  { value: "campaign_bounce_count", label: "Rebotes en campañas",      type: "number" },
+  { value: "no_open_in_last_n_emails", label: "Sin apertura en últimos N correos", type: "last_n_no_open" },
 ];
 
 const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
@@ -297,12 +299,17 @@ export default function NewSegmentPage() {
                         const nextValue =
                           nextField === "has_form_submission"
                             ? defaultFormSubmissionValue(defaultFormId)
+                            : nextField === "no_open_in_last_n_emails"
+                              ? 5
                             : nextType === "boolean"
                               ? true
                               : "";
                         updateRule(i, {
                           field: nextField,
-                          op: OPS_BY_TYPE[nextType]?.[0]?.value ?? "eq",
+                          op:
+                            nextType === "last_n_no_open"
+                              ? "eq"
+                              : OPS_BY_TYPE[nextType]?.[0]?.value ?? "eq",
                           value: nextValue,
                         });
                       }}
@@ -312,7 +319,7 @@ export default function NewSegmentPage() {
                         <option key={f.value} value={f.value}>{f.label}</option>
                       ))}
                     </select>
-                    {fieldType !== "form_submission" && (
+                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && (
                       <select
                         value={rule.op}
                         onChange={(e) => updateRule(i, { op: e.target.value })}
@@ -363,6 +370,20 @@ export default function NewSegmentPage() {
                           <option value="false">No, no lo ha rellenado</option>
                         </select>
                       </>
+                    ) : fieldType === "last_n_no_open" ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">últimos</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={Number(rule.value) || 5}
+                          onChange={(e) =>
+                            updateRule(i, { op: "eq", value: Number(e.target.value) || 5 })
+                          }
+                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-20 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <span className="text-sm text-gray-500">correos sin abrir</span>
+                      </div>
                     ) : fieldType === "boolean" ? (
                       <select
                         value={String(rule.value)}

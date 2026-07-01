@@ -55,6 +55,10 @@ def on_startup():
             ensure_birthday_reminder_setup(session)
             from app.services.email_sender import finalize_stuck_sending_campaigns
             finalize_stuck_sending_campaigns(session)
+            from app.services.bounce_segment_seed import ensure_repeat_bounce_segment
+            ensure_repeat_bounce_segment(session)
+            from app.services.no_open_segment_seed import ensure_no_open_segment
+            ensure_no_open_segment(session)
     except Exception:
         pass  # DB may not be ready on first deploy tick
 
