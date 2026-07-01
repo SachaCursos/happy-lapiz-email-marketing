@@ -23,6 +23,7 @@ from app.models.form import (
 from app.models.gift_recipient import GiftRecipient, GiftRecipientCreate, GiftRecipientRead, RELACION_OPTIONS
 from app.models.user import User
 from app.services.form_stats import get_form_stats
+from app.services.form_embed_snippet import build_install_snippet, build_loader_js, form_loader_url
 
 router = APIRouter()
 
@@ -458,7 +459,6 @@ def submit_form(
             text("DELETE FROM form_views WHERE form_id = :fid AND LOWER(email) = LOWER(:anon)"),
             {"fid": form_id, "anon": anon_key},
         )
-    session.add(FormView(form_id=form_id, email=email, source="submit"))
     session.commit()
 
     # Enroll in automation for coupon email if configured
@@ -606,7 +606,37 @@ def form_landing_page(form_id: int, session: Session = Depends(get_session)):
     )
 
 
-@router.get("/{form_id}/embed.js", response_class=PlainTextResponse)
+@router.get("/{form_id}/install-snippet")
+def form_install_snippet(
+    form_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    f = session.get(SignupForm, form_id)
+    if not f:
+        raise HTTPException(status_code=404, detail="Formulario no encontrado")
+    return {
+        "snippet": build_install_snippet(f),
+        "loader_url": form_loader_url(f),
+    }
+
+
+@router.get("/{form_id}/loader.js", response_class=PlainTextResponse)
+def form_loader_js(
+    form_id: int,
+    session: Session = Depends(get_session),
+):
+    f = session.get(SignupForm, form_id)
+    if not f or f.status != "active":
+        return PlainTextResponse("/* form not found */", media_type="application/javascript")
+    return PlainTextResponse(
+        build_loader_js(f),
+        media_type="application/javascript",
+        headers={**_cors_headers(), "Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
+@router.get("/{form_id}/embed.js", response_class=PlainTextResponse))
 def embed_js(
     form_id: int,
     standalone: bool = Query(False),
@@ -737,10 +767,10 @@ def _build_form_landing_page(f: SignupForm) -> str:
       var fid = {f.id};
       var m = location.search.match(/[?&]email=([^&]*)/i);
       var email = m ? decodeURIComponent(m[1].replace(/\\+/g, ' ')).trim().toLowerCase() : '';
-      var sid = sessionStorage.getItem('hb_visitor_' + fid);
+      var sid = localStorage.getItem('hb_vid_' + fid);
       if (!sid) {{
         sid = 'v_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-        try {{ sessionStorage.setItem('hb_visitor_' + fid, sid); }} catch(e) {{}}
+        try {{ localStorage.setItem('hb_vid_' + fid, sid); }} catch(e) {{}}
       }}
       var viewerKey = email || ('anon:' + sid);
       var src = api + '/api/forms/' + fid + '/open.gif?source=page&email=' + encodeURIComponent(viewerKey);
@@ -1137,8 +1167,10 @@ def _build_embed_js(cfg: dict) -> str:
       // ── Track popup / page open (pixel — sin CORS) ─────────────────────────
       function trackFormOpen() {{
         try {{
-          if (_ss.getItem('hb_view_tracked_' + C.id)) return;
-          _ss.setItem('hb_view_tracked_' + C.id, '1');
+          if (typeof window.__hbFormTrackOpen === 'function') {{
+            window.__hbFormTrackOpen();
+            return;
+          }}
           var _ve = '';
           var _vm = location.search.match(/[?&]email=([^&]*)/i);
           if (_vm) _ve = decodeURIComponent(_vm[1].replace(/\\+/g, ' ')).trim();
@@ -1147,14 +1179,15 @@ def _build_embed_js(cfg: dict) -> str:
               _ve = (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.email) || '';
             }} catch(e) {{}}
           }}
-          var _sid = _ss.getItem('hb_visitor_' + C.id);
+          var _vidKey = 'hb_vid_' + C.id;
+          var _sid = _ls.getItem(_vidKey);
           if (!_sid) {{
             _sid = 'v_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-            _ss.setItem('hb_visitor_' + C.id, _sid);
+            _ls.setItem(_vidKey, _sid);
           }}
           var viewerKey = _ve ? _ve.toLowerCase() : ('anon:' + _sid);
           var src = C.api + '/api/forms/' + C.id + '/open.gif?source=' + (C.standalone ? 'page' : 'embed');
-          src += '&email=' + encodeURIComponent(viewerKey);
+          src += '&email=' + encodeURIComponent(viewerKey) + '&t=' + Date.now();
           new Image().src = src;
         }} catch(e) {{}}
       }}
@@ -1462,7 +1495,7 @@ def _build_embed_js(cfg: dict) -> str:
 
           var payload = Object.assign({{}}, collectedData);
           payload.extra_data = payload.extra_data || {{}};
-          var _vsid = _ss.getItem('hb_visitor_' + C.id);
+          var _vsid = _ls.getItem('hb_vid_' + C.id) || _ss.getItem('hb_visitor_' + C.id);
           if (_vsid) payload.extra_data._hb_visitor_sid = _vsid;
           if (!Object.keys(payload.extra_data||{{}}).length) delete payload.extra_data;
           if (_abVariant) payload.ab_variant = String(_abVariant.id);

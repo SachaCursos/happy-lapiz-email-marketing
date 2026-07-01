@@ -1297,7 +1297,7 @@ export default function FormDetailPage() {
   const [localDesign, setLocalDesign] = useState<FormDesign | null>(null);
   const [localSteps, setLocalSteps] = useState<FormStep[] | null | "unset">("unset");
 
-  const embedCode = `<script src="${BACKEND_URL}/api/forms/${formId}/embed.js?v=${encodeURIComponent(form?.updated_at ?? "")}" async></script>`;
+  const embedCode = `<script src="${BACKEND_URL}/api/forms/${formId}/loader.js?v=${encodeURIComponent(form?.updated_at ?? "")}" async></script>`;
   const campaignUrl = `${BACKEND_URL}/api/forms/${formId}/page`;
   const campaignUrlWithEmail = `${campaignUrl}?email={{ email }}`;
 
@@ -1381,11 +1381,11 @@ export default function FormDetailPage() {
             </p>
             {stats && (
               <p className="text-[11px] text-gray-400 mt-0.5">
-                {stats.audience_size.toLocaleString("es-CL")} vieron el formulario
+                {stats.popup_viewers.toLocaleString("es-CL")} abrieron el popup
                 {" · "}
                 {stats.completed.toLocaleString("es-CL")} completaron
-                {stats.anonymous_viewers != null && stats.anonymous_viewers > 0 && (
-                  <> ({stats.anonymous_viewers.toLocaleString("es-CL")} sin completar)</>
+                {!stats.tracking_ready && stats.completed > 0 && (
+                  <> · recopilando aperturas</>
                 )}
               </p>
             )}
@@ -1437,7 +1437,10 @@ export default function FormDetailPage() {
                     {copied ? "¡Copiado!" : "Copiar"}
                   </button>
                 </div>
-                <p className="text-xs text-gray-500 mb-3">Pega esto antes del <code className="text-gray-400">&lt;/body&gt;</code> de tu sitio:</p>
+                <p className="text-xs text-gray-500 mb-3">
+                  Pega esto antes del <code className="text-gray-400">&lt;/body&gt;</code> de tu sitio.
+                  Registra cada apertura del popup para calcular la tasa real de completados.
+                </p>
                 <pre className="text-xs text-green-400 font-mono break-all whitespace-pre-wrap">{embedCode}</pre>
               </div>
 

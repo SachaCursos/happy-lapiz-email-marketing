@@ -258,6 +258,7 @@ export interface FormStats {
   popup_viewers: number;
   anonymous_viewers?: number;
   completion_rate: number | null;
+  tracking_ready?: boolean;
   total_revenue: number;
   total_orders: number;
 }

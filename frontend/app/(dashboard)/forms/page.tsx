@@ -278,7 +278,7 @@ export default function FormsPage() {
                     </p>
                     {st && (
                       <p className="text-[10px] text-gray-400">
-                        {st.audience_size} vieron · {st.completed} completaron
+                        {st.popup_viewers} abrieron · {st.completed} completaron
                       </p>
                     )}
                   </div>

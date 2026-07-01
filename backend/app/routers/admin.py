@@ -811,6 +811,16 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
     return {"ok": False, "error": r.text[:200]}
 
 
+@router.post("/sync-shopify-form-embeds")
+def sync_shopify_form_embeds(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Actualiza en Shopify el script del formulario (loader.js con tracking)."""
+    from app.services.form_embed_snippet import sync_form_embed_to_shopify
+    return sync_form_embed_to_shopify(session)
+
+
 @router.post("/upload-image")
 async def upload_image_to_shopify(
     file: UploadFile = File(...),
