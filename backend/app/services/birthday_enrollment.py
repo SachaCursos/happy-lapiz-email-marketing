@@ -139,23 +139,20 @@ def try_enroll_birthday(
             continue
 
         enroll_start = first_send - timedelta(days=enroll_early_days)
-        if today < enroll_start or today > bday:
+        if today < enroll_start or today > first_send:
             continue
 
         trigger_key = f"birthday:{owner_key}:{date_field}:{bday.year}:{days_before}"
         if _already_enrolled(session, auto.id, trigger_key):
             continue
 
-        if enroll_early_days > 0 and today <= first_send:
+        if enroll_early_days > 0 and today < first_send:
             delay_hours = _delay_hours_until(first_send, now)
         else:
             steps = auto.steps or []
             if isinstance(steps, str):
                 steps = json.loads(steps)
             delay_hours = float(steps[0].get("delay_hours", 0)) if steps else 0.0
-
-        if first_send <= today:
-            delay_hours = 0.0
 
         extra_vars = _build_extra_vars(
             contact,
