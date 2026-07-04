@@ -14,7 +14,7 @@ router = APIRouter()
 
 @router.get("", response_model=List[SegmentRead])
 def list_segments(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    segments = session.exec(select(Segment)).all()
+    segments = session.exec(select(Segment).order_by(Segment.created_at.desc())).all()
     result = []
     for seg in segments:
         read = SegmentRead.model_validate(seg)
