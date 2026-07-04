@@ -117,6 +117,8 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     logo_width: "160",
     bg_color: "#ffffff",
     link: "https://www.happylapiz.cl",
+    padding_y: "20",
+    padding_x: "32",
   },
   text: {
     content: `<p style="margin:0;font-size:15px;line-height:1.75;color:#222222;font-family:'Helvetica Neue',Arial,sans-serif;">Hola, <strong>{{ nombre }}</strong> 👋<br/><br/>Escribe tu mensaje aquí.</p>`,
@@ -132,8 +134,10 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     link: "",
     border_radius: "0",
     bg_color: "#ffffff",
-    width: "",        // empty = 100%; pixel value = fixed width centered
+    width: "",
     align: "center",
+    padding_y: "0",
+    padding_x: "0",
   },
   button: {
     text: "Ver más",
@@ -146,6 +150,8 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     letter_spacing: "1",
     font_family: "'Helvetica Neue', Arial, sans-serif",
     full_width: false,
+    padding_y: "16",
+    padding_x: "32",
   },
   product: {
     title: "Nombre del producto",
@@ -159,6 +165,8 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     show_button: true,
     price_color: "#e53e3e",
     bg_color: "#ffffff",
+    padding_y: "9",
+    padding_x: "9",
   },
   coupon: {
     title: "Tu código de descuento",
@@ -167,11 +175,14 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     bg_color: "#f9fafb",
     text_color: "#111111",
     border_color: "#682ae7",
+    padding_y: "28",
+    padding_x: "32",
   },
   divider: {
     color: "#e5e7eb",
     thickness: "1",
     padding_y: "16",
+    padding_x: "32",
   },
   spacer: {
     height: "32",
@@ -199,6 +210,8 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     label_hours: "HRS",
     label_minutes: "MIN",
     label_seconds: "SEG",
+    padding_y: "32",
+    padding_x: "24",
   },
 };
 
@@ -710,7 +723,7 @@ function blockHtml(block: Block): string {
   const p = block.props;
   switch (block.type) {
     case "header":
-      return `<div style="background:${p.bg_color};padding:20px 32px;text-align:center;border-bottom:1px solid #f3f4f6;">
+      return `<div style="background:${p.bg_color};padding:${p.padding_y || "20"}px ${p.padding_x || "32"}px;text-align:center;border-bottom:1px solid #f3f4f6;">
   <a href="${p.link}" style="display:inline-block;text-decoration:none;">
     <img src="${p.logo_url}" alt="Happy Lápiz" width="${p.logo_width}" style="height:auto;display:block;margin:0 auto;" />
   </a>
@@ -732,8 +745,8 @@ function blockHtml(block: Block): string {
         ? `width:100%;height:auto;display:block;${rStr}`
         : `width:${wPx}px;max-width:100%;height:auto;display:inline-block;${rStr}`;
       const wrapStyle = isFull
-        ? `background:${p.bg_color};`
-        : `background:${p.bg_color};text-align:${p.align || "center"};`;
+        ? `background:${p.bg_color};padding:${p.padding_y || "0"}px ${p.padding_x || "0"}px;`
+        : `background:${p.bg_color};padding:${p.padding_y || "0"}px ${p.padding_x || "0"}px;text-align:${p.align || "center"};`;
       const imgTag = `<img src="${p.src}" alt="${p.alt}" width="${isFull ? "600" : wPx}" style="${imgStyle}" />`;
       return `<div style="${wrapStyle}">
   ${p.link ? `<a href="${p.link}" style="display:${isFull ? "block" : "inline-block"};">${imgTag}</a>` : imgTag}
@@ -746,13 +759,13 @@ function blockHtml(block: Block): string {
       const ls = p.letter_spacing ? `letter-spacing:${p.letter_spacing}px;` : "";
       if (p.full_width) {
         // Full-width CTA bar (like Klaviyo kl-header-link-bar)
-        return `<div style="background:${p.bg_color};padding:12px 0;text-align:center;">
+        return `<div style="background:${p.bg_color};padding:${p.padding_y || "12"}px 0;text-align:center;">
   <a href="${p.url}" style="color:${p.text_color};font-size:${p.font_size}px;font-weight:400;text-decoration:none;font-family:${ff};${ls}display:inline-block;padding:4px 8px;">
     ${p.text}
   </a>
 </div>`;
       }
-      return `<div style="padding:16px 32px;text-align:${align};background:#ffffff;">
+      return `<div style="padding:${p.padding_y || "16"}px ${p.padding_x || "32"}px;text-align:${align};background:#ffffff;">
   <a href="${p.url}" style="display:inline-block;background:${p.bg_color};color:${p.text_color};font-size:${p.font_size}px;font-weight:400;padding:10px 24px;border-radius:${p.border_radius}px;text-decoration:none;font-family:${ff};${ls}">
     ${p.text}
   </a>
@@ -765,7 +778,7 @@ function blockHtml(block: Block): string {
       const priceInline = (p.compare_at_price as string)
         ? `<p style="margin:0 0 5px;text-align:center;"><span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:${font};margin-right:6px;">${p.compare_at_price}</span><span style="font-size:14px;font-weight:bold;color:${saleColor};font-family:${font};">${p.price}</span></p>`
         : `<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:${saleColor};font-family:${font};text-align:center;">${p.price}</p>`;
-      return `<div style="background:${p.bg_color};padding:9px;text-align:center;">
+      return `<div style="background:${p.bg_color};padding:${p.padding_y || "9"}px ${p.padding_x || "9"}px;text-align:center;">
   ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" /></a>` : ""}
   <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:${font};text-align:center;">${p.title}</p>
   ${priceInline}
@@ -775,7 +788,7 @@ function blockHtml(block: Block): string {
     }
 
     case "coupon":
-      return `<div style="background:${p.bg_color};padding:28px 32px;text-align:center;">
+      return `<div style="background:${p.bg_color};padding:${p.padding_y || "28"}px ${p.padding_x || "32"}px;text-align:center;">
   <p style="margin:0 0 14px;font-size:16px;font-weight:600;color:${p.text_color};font-family:-apple-system,sans-serif;">${p.title}</p>
   <div style="display:inline-block;border:2px dashed ${p.border_color};border-radius:10px;padding:14px 32px;background:#ffffff;">
     <span style="font-size:24px;font-weight:800;letter-spacing:4px;color:${p.text_color};font-family:monospace;">${p.code}</span>
@@ -784,7 +797,7 @@ function blockHtml(block: Block): string {
 </div>`;
 
     case "divider":
-      return `<div style="padding:${p.padding_y}px 32px;background:#ffffff;">
+      return `<div style="padding:${p.padding_y}px ${p.padding_x || "32"}px;background:#ffffff;">
   <div style="height:${p.thickness}px;background:${p.color};"></div>
 </div>`;
 
@@ -841,7 +854,7 @@ function blockHtml(block: Block): string {
         const cells = tUnits.map((u, i) =>
           `${i > 0 ? `<td style="padding:0 6px;vertical-align:middle;"><span style="font-size:28px;color:rgba(255,255,255,0.3);font-weight:300;font-family:${tf};">:</span></td>` : ""}<td style="text-align:center;padding:0 4px;"><div style="background:${tacc};border-radius:10px;padding:14px 10px;min-width:58px;display:inline-block;"><div style="font-size:38px;font-weight:900;color:${ttc};line-height:1;font-family:${tf};letter-spacing:-1px;">${u.val}</div><div style="font-size:10px;color:rgba(255,255,255,0.65);margin-top:6px;letter-spacing:2px;font-family:${tf};">${u.label}</div></div></td>`
         ).join("");
-        return `<div style="background:${tbg};padding:32px 24px;text-align:center;">
+        return `<div style="background:${tbg};padding:${p.padding_y || "32"}px ${p.padding_x || "24"}px;text-align:center;">
   ${ttitle ? `<p style="margin:0 0 20px;font-size:18px;font-weight:700;color:${ttc};font-family:${tf};">${ttitle}</p>` : ""}
   <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
   ${tsub ? `<p style="margin:20px 0 0;font-size:13px;color:rgba(255,255,255,0.5);font-family:${tf};">${tsub}</p>` : ""}
@@ -852,7 +865,7 @@ function blockHtml(block: Block): string {
         const cells = tUnits.map((u, i) =>
           `${i > 0 ? `<td style="padding:0 4px;vertical-align:top;padding-top:6px;"><span style="font-size:36px;color:${tacc};font-weight:300;font-family:${tf};opacity:0.4;">:</span></td>` : ""}<td style="text-align:center;padding:0 12px;"><div style="font-size:52px;font-weight:900;color:${tacc};line-height:1;font-family:${tf};">${u.val}</div><div style="font-size:11px;color:#9ca3af;margin-top:6px;letter-spacing:2px;font-family:${tf};">${u.label}</div></td>`
         ).join("");
-        return `<div style="background:${tbg};padding:32px 24px;text-align:center;border-top:3px solid ${tacc};">
+        return `<div style="background:${tbg};padding:${p.padding_y || "32"}px ${p.padding_x || "24"}px;text-align:center;border-top:3px solid ${tacc};">
   ${ttitle ? `<p style="margin:0 0 24px;font-size:16px;font-weight:600;color:#222;font-family:${tf};">${ttitle}</p>` : ""}
   <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
   ${tsub ? `<p style="margin:24px 0 0;font-size:13px;color:#6b7280;font-family:${tf};">${tsub}</p>` : ""}
@@ -863,7 +876,7 @@ function blockHtml(block: Block): string {
         const cells = tUnits.map((u, i) =>
           `${i > 0 ? `<td style="padding:0 5px;vertical-align:middle;"><span style="font-size:28px;color:rgba(255,255,255,0.4);font-family:${tf};">:</span></td>` : ""}<td style="text-align:center;padding:0 5px;"><div style="background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.3);border-radius:8px;padding:12px 8px;min-width:56px;display:inline-block;"><div style="font-size:40px;font-weight:900;color:#ffffff;line-height:1;font-family:${tf};">${u.val}</div><div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:5px;letter-spacing:2px;font-family:${tf};">${u.label}</div></div></td>`
         ).join("");
-        return `<div style="background:${tbg};padding:32px 24px;text-align:center;">
+        return `<div style="background:${tbg};padding:${p.padding_y || "32"}px ${p.padding_x || "24"}px;text-align:center;">
   ${ttitle ? `<p style="margin:0 0 16px;font-size:12px;font-weight:700;color:rgba(255,255,255,0.85);letter-spacing:3px;text-transform:uppercase;font-family:${tf};">&#9889; ${ttitle} &#9889;</p>` : ""}
   <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
   ${tsub ? `<p style="margin:20px 0 0;font-size:13px;color:rgba(255,255,255,0.7);font-family:${tf};">${tsub}</p>` : ""}
@@ -874,7 +887,7 @@ function blockHtml(block: Block): string {
       const cells = tUnits.map((u, i) =>
         `${i > 0 ? `<td style="padding:0 8px;vertical-align:top;padding-top:6px;"><span style="font-size:30px;color:${tacc};font-weight:200;font-family:${tf};opacity:0.4;">:</span></td>` : ""}<td style="text-align:center;padding:0 6px;"><div style="border:2px solid ${tacc};border-radius:12px;padding:14px 10px;min-width:62px;display:inline-block;background:#ffffff;"><div style="font-size:38px;font-weight:900;color:${tacc};line-height:1;font-family:${tf};">${u.val}</div><div style="font-size:10px;color:#9ca3af;margin-top:6px;letter-spacing:2px;font-family:${tf};">${u.label}</div></div></td>`
       ).join("");
-      return `<div style="background:${tbg};padding:36px 24px;text-align:center;">
+      return `<div style="background:${tbg};padding:${p.padding_y || "32"}px ${p.padding_x || "24"}px;text-align:center;">
   ${ttitle ? `<p style="margin:0 0 6px;font-size:12px;font-weight:600;color:${tacc};letter-spacing:3px;text-transform:uppercase;font-family:${tf};">${ttitle}</p><div style="width:48px;height:2px;background:${tacc};margin:0 auto 20px;"></div>` : ""}
   <table role="presentation" width="auto" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>${cells}</tr></table>
   ${tsub ? `<p style="margin:24px 0 0;font-size:13px;color:#6b7280;font-family:${tf};">${tsub}</p>` : ""}
@@ -1035,7 +1048,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
   switch (block.type) {
     case "header":
       return (
-        <div style={{ background: p.bg_color as string, padding: "14px 24px", textAlign: "center", borderBottom: "1px solid #f3f4f6" }}>
+        <div style={{ background: p.bg_color as string, padding: `${p.padding_y || "20"}px ${p.padding_x || "32"}px`, textAlign: "center", borderBottom: "1px solid #f3f4f6" }}>
           {p.logo_url && !imgError
             ? <img
                 src={p.logo_url as string}
@@ -1064,7 +1077,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
       const isFull = !wPx || wPx >= 560;
       const br = p.border_radius && p.border_radius !== "0" ? `${p.border_radius}px` : 0;
       return p.src
-        ? <div style={{ background: p.bg_color as string, textAlign: isFull ? undefined : ((p.align || "center") as "center" | "left" | "right") }}>
+        ? <div style={{ background: p.bg_color as string, padding: `${p.padding_y || "0"}px ${p.padding_x || "0"}px`, textAlign: isFull ? undefined : ((p.align || "center") as "center" | "left" | "right") }}>
             <img src={p.src as string} alt={p.alt as string}
               style={{ width: isFull ? "100%" : `${wPx}px`, maxWidth: "100%", height: "auto", display: isFull ? "block" : "inline-block", borderRadius: br }} />
           </div>
@@ -1077,7 +1090,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
       const ls = p.letter_spacing ? `${p.letter_spacing}px` : "normal";
       if (p.full_width) {
         return (
-          <div style={{ background: p.bg_color as string, padding: "12px 0", textAlign: "center" }}>
+          <div style={{ background: p.bg_color as string, padding: `${p.padding_y || "12"}px 0`, textAlign: "center" }}>
             <span style={{ color: p.text_color as string, fontSize: `${p.font_size}px`, fontWeight: 400, letterSpacing: ls }}>
               {p.text as string}
             </span>
@@ -1085,7 +1098,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
         );
       }
       return (
-        <div style={{ padding: "14px 24px", textAlign: align as "center" | "left" | "right", background: "#ffffff" }}>
+        <div style={{ padding: `${p.padding_y || "16"}px ${p.padding_x || "32"}px`, textAlign: align as "center" | "left" | "right", background: "#ffffff" }}>
           <span style={{ display: "inline-block", background: p.bg_color as string, color: p.text_color as string, padding: "10px 24px", borderRadius: `${p.border_radius}px`, fontSize: `${p.font_size}px`, fontWeight: 400, letterSpacing: ls }}>
             {p.text as string}
           </span>
@@ -1094,7 +1107,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
     }
     case "product": {
       // Shared vertical card layout (same for single and multi-column)
-      const cardStyle: React.CSSProperties = { background: p.bg_color as string, padding: compact ? "12px 8px" : "14px 24px", textAlign: "center", height: "100%" };
+      const cardStyle: React.CSSProperties = { background: p.bg_color as string, padding: compact ? "12px 8px" : `${p.padding_y || "9"}px ${p.padding_x || "9"}px`, textAlign: "center", height: "100%" };
       const imgH = compact ? 110 : 140;
       return (
         <div style={cardStyle}>
@@ -1116,7 +1129,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
     }
     case "coupon":
       return (
-        <div style={{ background: p.bg_color as string, padding: "16px 24px", textAlign: "center" }}>
+        <div style={{ background: p.bg_color as string, padding: `${p.padding_y || "28"}px ${p.padding_x || "32"}px`, textAlign: "center" }}>
           <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 13, color: p.text_color as string }}>{p.title as string}</p>
           <div style={{ display: "inline-block", border: `2px dashed ${p.border_color}`, borderRadius: 8, padding: "8px 20px", background: "#fff" }}>
             <span style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 18, letterSpacing: 3 }}>{p.code as string}</span>
@@ -1192,7 +1205,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
         : tacc;
 
       if (tdesign === "clasico") return (
-        <div style={{ background: tbg, padding: "24px", textAlign: "center" }}>
+        <div style={{ background: tbg, padding: `${p.padding_y || "32"}px ${p.padding_x || "24"}px`, textAlign: "center" }}>
           {ttitle && <p style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: ttc, fontFamily: "'Helvetica Neue',sans-serif" }}>{ttitle}</p>}
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6 }}>
             {tUnits.map((u, i) => (
@@ -1210,7 +1223,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
       );
 
       if (tdesign === "minimal") return (
-        <div style={{ background: tbg, padding: "24px", textAlign: "center", borderTop: `3px solid ${tacc}` }}>
+        <div style={{ background: tbg, padding: `${p.padding_y || "32"}px ${p.padding_x || "24"}px`, textAlign: "center", borderTop: `3px solid ${tacc}` }}>
           {ttitle && <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#222", fontFamily: "'Helvetica Neue',sans-serif" }}>{ttitle}</p>}
           <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", gap: 4 }}>
             {tUnits.map((u, i) => (
@@ -1228,7 +1241,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
       );
 
       if (tdesign === "urgencia") return (
-        <div style={{ background: tbg, padding: "24px", textAlign: "center" }}>
+        <div style={{ background: tbg, padding: `${p.padding_y || "32"}px ${p.padding_x || "24"}px`, textAlign: "center" }}>
           {ttitle && <p style={{ margin: "0 0 12px", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.85)", letterSpacing: 3, textTransform: "uppercase" }}>⚡ {ttitle} ⚡</p>}
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6 }}>
             {tUnits.map((u, i) => (
@@ -1247,7 +1260,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
 
       // elegante
       return (
-        <div style={{ background: tbg, padding: "24px", textAlign: "center" }}>
+        <div style={{ background: tbg, padding: `${p.padding_y || "32"}px ${p.padding_x || "24"}px`, textAlign: "center" }}>
           {ttitle && <>
             <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 600, color: tacc, letterSpacing: 3, textTransform: "uppercase" }}>{ttitle}</p>
             <div style={{ width: 40, height: 2, background: tacc, margin: "0 auto 16px" }} />
@@ -1673,6 +1686,10 @@ function PropsPanel({
   return (
     <div className="space-y-4">
       {block.type === "header" && <>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Espaciado vertical"><NI value={(p.padding_y as string) || "20"} onChange={(v) => set("padding_y", v)} min={0} max={100} /></Field>
+          <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "32"} onChange={(v) => set("padding_x", v)} min={0} max={100} /></Field>
+        </div>
         <Field label="URL del Logo"><TI value={p.logo_url as string} onChange={(v) => set("logo_url", v)} placeholder="https://..." /></Field>
         <Field label="Tamaño del logo">
           <div className="flex gap-2 mb-2">
@@ -1825,6 +1842,10 @@ function PropsPanel({
         </Field>
         <Field label="Border radius (px)"><NI value={p.border_radius as string} onChange={(v) => set("border_radius", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Espaciado vertical"><NI value={(p.padding_y as string) || "0"} onChange={(v) => set("padding_y", v)} min={0} max={100} /></Field>
+          <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "0"} onChange={(v) => set("padding_x", v)} min={0} max={100} /></Field>
+        </div>
       </>}
 
       {block.type === "button" && <>
@@ -1860,6 +1881,10 @@ function PropsPanel({
           <Field label="Fuente (px)"><NI value={p.font_size as string} onChange={(v) => set("font_size", v)} min={10} max={36} /></Field>
           <Field label="Letter-spacing"><NI value={(p.letter_spacing as string) || "0"} onChange={(v) => set("letter_spacing", v)} min={0} max={10} /></Field>
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Espaciado vertical"><NI value={(p.padding_y as string) || "16"} onChange={(v) => set("padding_y", v)} min={0} max={100} /></Field>
+          {!p.full_width && <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "32"} onChange={(v) => set("padding_x", v)} min={0} max={100} /></Field>}
+        </div>
       </>}
 
       {block.type === "product" && <>
@@ -1893,6 +1918,10 @@ function PropsPanel({
         </>}
         <Field label="Color del precio"><CI value={(p.price_color as string) || "#e53e3e"} onChange={(v) => set("price_color", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Espaciado vertical"><NI value={(p.padding_y as string) || "9"} onChange={(v) => set("padding_y", v)} min={0} max={100} /></Field>
+          <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "9"} onChange={(v) => set("padding_x", v)} min={0} max={100} /></Field>
+        </div>
       </>}
 
       {block.type === "coupon" && <>
@@ -1905,12 +1934,19 @@ function PropsPanel({
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
         <Field label="Color del texto"><CI value={p.text_color as string} onChange={(v) => set("text_color", v)} /></Field>
         <Field label="Color del borde"><CI value={p.border_color as string} onChange={(v) => set("border_color", v)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Espaciado vertical"><NI value={(p.padding_y as string) || "28"} onChange={(v) => set("padding_y", v)} min={0} max={100} /></Field>
+          <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "32"} onChange={(v) => set("padding_x", v)} min={0} max={100} /></Field>
+        </div>
       </>}
 
       {block.type === "divider" && <>
         <Field label="Color"><CI value={p.color as string} onChange={(v) => set("color", v)} /></Field>
         <Field label="Grosor (px)"><NI value={p.thickness as string} onChange={(v) => set("thickness", v)} min={1} max={12} /></Field>
-        <Field label="Padding vertical (px)"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Espaciado vertical"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} min={0} max={100} /></Field>
+          <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "32"} onChange={(v) => set("padding_x", v)} min={0} max={100} /></Field>
+        </div>
       </>}
 
       {block.type === "spacer" && <>
@@ -1932,7 +1968,10 @@ function PropsPanel({
         </Field>
         <Field label="Color botones"><CI value={p.btn_color as string ?? "#f97316"} onChange={(v) => set("btn_color", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
-        <Field label="Padding vertical (px)"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} min={0} max={80} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Espaciado vertical"><NI value={p.padding_y as string} onChange={(v) => set("padding_y", v)} min={0} max={80} /></Field>
+          <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "0"} onChange={(v) => set("padding_x", v)} min={0} max={80} /></Field>
+        </div>
         <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3 leading-relaxed">
           Este bloque inserta <code className="font-mono bg-gray-100 px-1 rounded">{"{{ variable }}"}</code> en el HTML. Los productos reales se inyectan automáticamente en cada automatización. La vista previa del editor usa productos de ejemplo.
         </div>
@@ -2001,6 +2040,10 @@ function PropsPanel({
             <Field label="Color de fondo"><CI value={(p.bg_color as string) || "#111111"} onChange={(v) => set("bg_color", v)} /></Field>
             <Field label="Color de acento"><CI value={(p.accent_color as string) || "#682ae7"} onChange={(v) => set("accent_color", v)} /></Field>
             <Field label="Color del texto"><CI value={(p.text_color as string) || "#ffffff"} onChange={(v) => set("text_color", v)} /></Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Espaciado vertical"><NI value={(p.padding_y as string) || "32"} onChange={(v) => set("padding_y", v)} min={0} max={100} /></Field>
+              <Field label="Espaciado horizontal"><NI value={(p.padding_x as string) || "24"} onChange={(v) => set("padding_x", v)} min={0} max={100} /></Field>
+            </div>
             <Field label="Etiquetas">
               <div className="grid grid-cols-4 gap-1">
                 {([
