@@ -1264,6 +1264,13 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
 
         items = payload.get("line_items", [])
 
+        # Apply items count filter (number of distinct line items in this order)
+        items_count_filter = config.get("items_count_filter")
+        if items_count_filter and not _passes_order_count_filter(items_count_filter, len(items)):
+            session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
+            session.commit()
+            continue
+
         # Apply product filter for ordered_product trigger
         product_filter_ids = config.get("product_filter_ids", [])
         if product_filter_ids and trigger_type == "ordered_product":

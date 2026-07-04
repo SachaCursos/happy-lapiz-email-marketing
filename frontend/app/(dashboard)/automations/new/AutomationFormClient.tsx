@@ -745,6 +745,10 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
   const [orderCountPreset, setOrderCountPreset] = useState("none");
   const [orderCountCustom, setOrderCountCustom] = useState(1);
 
+  // Items count filter (products per order)
+  const [itemsCountPreset, setItemsCountPreset] = useState("none");
+  const [itemsCountCustom, setItemsCountCustom] = useState(2);
+
   // Location-based delay
   const [locationDelayEnabled, setLocationDelayEnabled] = useState(false);
   const [locationDelayRules, setLocationDelayRules] = useState<LocationDelayRule[]>([
@@ -761,6 +765,24 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
   const [crossSellCollectionId, setCrossSellCollectionId] = useState("");
   const [crossSellProductIds, setCrossSellProductIds] = useState<string[]>([]);
   const [crossSellMaxProducts, setCrossSellMaxProducts] = useState(4);
+
+  function buildItemsCountFilter(): Record<string, unknown> | undefined {
+    const presets: Record<string, { operator: string; value: number }> = {
+      eq_1: { operator: "eq", value: 1 },
+      eq_2: { operator: "eq", value: 2 },
+      eq_3: { operator: "eq", value: 3 },
+      gte_2: { operator: "gte", value: 2 },
+      gte_3: { operator: "gte", value: 3 },
+      lte_1: { operator: "lte", value: 1 },
+      lte_2: { operator: "lte", value: 2 },
+    };
+    if (itemsCountPreset === "none") return undefined;
+    if (presets[itemsCountPreset]) return presets[itemsCountPreset];
+    if (itemsCountPreset === "eq_custom")  return { operator: "eq",  value: itemsCountCustom };
+    if (itemsCountPreset === "gte_custom") return { operator: "gte", value: itemsCountCustom };
+    if (itemsCountPreset === "lte_custom") return { operator: "lte", value: itemsCountCustom };
+    return undefined;
+  }
 
   function buildOrderCountFilter(): Record<string, unknown> | undefined {
     const presets: Record<string, { operator: string; value: number }> = {
@@ -967,6 +989,12 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       const orderFilter = buildOrderCountFilter();
       if (orderFilter && ORDER_COUNT_FILTERABLE.has(triggerType)) {
         triggerConfig.order_count_filter = orderFilter;
+      }
+
+      // Attach items count filter if configured
+      const itemsFilter = buildItemsCountFilter();
+      if (itemsFilter && ORDER_COUNT_FILTERABLE.has(triggerType)) {
+        triggerConfig.items_count_filter = itemsFilter;
       }
 
       // Attach location delay rules if configured
@@ -1618,6 +1646,51 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
                     ? <>Para carrito abandonado, el conteo refleja pedidos <strong>ya completados</strong> antes de este evento. «Primera compra» = clientes que nunca han comprado.</>
                     : <>Para pedidos de Shopify, el conteo incluye el pedido actual. «Primera compra» (#1) = este es su primer pedido histórico en la tienda.</>
                   }
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Items count filter */}
+          {ORDER_COUNT_FILTERABLE.has(triggerType) && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5 flex items-center gap-1.5">
+                <ShoppingCart size={13} className="text-gray-400" />
+                Filtro por cantidad de productos en la orden
+              </label>
+              <select
+                value={itemsCountPreset}
+                onChange={(e) => setItemsCountPreset(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="none">Sin filtro — cualquier cantidad</option>
+                <optgroup label="Exacto">
+                  <option value="eq_1">Exactamente 1 producto</option>
+                  <option value="eq_2">Exactamente 2 productos</option>
+                  <option value="eq_3">Exactamente 3 productos</option>
+                  <option value="eq_custom">Cantidad exacta...</option>
+                </optgroup>
+                <optgroup label="Rango">
+                  <option value="gte_2">2 productos o más</option>
+                  <option value="gte_3">3 productos o más</option>
+                  <option value="gte_custom">A partir de N productos...</option>
+                  <option value="lte_1">Solo 1 producto</option>
+                  <option value="lte_2">Hasta 2 productos</option>
+                  <option value="lte_custom">Hasta N productos...</option>
+                </optgroup>
+              </select>
+
+              {itemsCountPreset.endsWith("_custom") && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-sm text-gray-600">
+                    {itemsCountPreset.startsWith("eq") ? "Exactamente" : itemsCountPreset.startsWith("gte") ? "A partir de" : "Hasta"}
+                  </span>
+                  <input
+                    type="number" min={1} max={99} value={itemsCountCustom}
+                    onChange={(e) => setItemsCountCustom(Math.max(1, Number(e.target.value)))}
+                    className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <span className="text-sm text-gray-600">productos</span>
                 </div>
               )}
             </div>
