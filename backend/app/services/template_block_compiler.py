@@ -13,15 +13,16 @@ def _product_price_html(p: dict) -> str:
     font = FF
     compare_at = p.get("compare_at_price") or ""
     price = p.get("price") or ""
+    sale_color = p.get("price_color") or "#e53e3e"
     if compare_at:
         return (
             f'<p style="margin:0 0 5px;text-align:center;">'
             f'<span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:{font};margin-right:6px;">{compare_at}</span>'
-            f'<span style="font-size:14px;font-weight:bold;color:#e53e3e;font-family:{font};">{price}</span>'
+            f'<span style="font-size:14px;font-weight:bold;color:{sale_color};font-family:{font};">{price}</span>'
             f"</p>"
         )
     return (
-        f'<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:#222222;font-family:{font};text-align:center;">{price}</p>'
+        f'<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:{sale_color};font-family:{font};text-align:center;">{price}</p>'
     )
 
 
@@ -34,6 +35,11 @@ def _product_block_html(p: dict) -> str:
     button_color = p.get("button_color") or "#111111"
     bg_color = p.get("bg_color") or "#ffffff"
     description = p.get("description") or ""
+    show_button = p.get("show_button", True)
+    if show_button is None:
+        show_button = True
+    padding_y = p.get("padding_y") or "9"
+    padding_x = p.get("padding_x") or "9"
     img = (
         f'<a href="{url}" style="display:block;text-decoration:none;">'
         f'<img src="{image_url}" alt="{title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" />'
@@ -46,12 +52,17 @@ def _product_block_html(p: dict) -> str:
         if description
         else ""
     )
-    return f"""<div style="background:{bg_color};padding:9px;text-align:center;">
+    btn = (
+        f'<a href="{url}" style="display:inline-block;margin-top:9px;background:{button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:{font};">{button_text}</a>'
+        if show_button
+        else ""
+    )
+    return f"""<div style="background:{bg_color};padding:{padding_y}px {padding_x}px;text-align:center;">
   {img}
   <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:{font};text-align:center;">{title}</p>
   {_product_price_html(p)}
   {desc}
-  <a href="{url}" style="display:inline-block;margin-top:9px;background:{button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:{font};">{button_text}</a>
+  {btn}
 </div>"""
 
 
@@ -68,6 +79,9 @@ def _product_row_html(products: list[dict]) -> str:
         url = p.get("url") or "#"
         button_text = p.get("button_text") or "Comprar"
         button_color = p.get("button_color") or "#111111"
+        show_button = p.get("show_button", True)
+        if show_button is None:
+            show_button = True
         img = (
             f'<a href="{url}" style="display:block;text-decoration:none;">'
             f'<img src="{image_url}" alt="{title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" />'
@@ -75,12 +89,17 @@ def _product_row_html(products: list[dict]) -> str:
             if image_url
             else ""
         )
+        btn = (
+            f'<a href="{url}" style="display:inline-block;margin-top:9px;background:{button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:{font};">{button_text}</a>'
+            if show_button
+            else ""
+        )
         cols.append(
             f'<td width="{col_pct}" valign="top" style="padding:9px 9px;text-align:center;vertical-align:top;">\n'
             f"  {img}\n"
             f'  <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:{font};text-align:center;">{title}</p>\n'
             f"  {_product_price_html(p)}\n"
-            f'  <a href="{url}" style="display:inline-block;margin-top:9px;background:{button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:{font};">{button_text}</a>\n'
+            f"  {btn}\n"
             f"</td>"
         )
     return f"""<div style="background:{bg};padding:8px 0;">
@@ -95,7 +114,9 @@ def block_to_html(block: dict) -> str:
     p = block.get("props") or {}
 
     if t == "header":
-        return f"""<div style="background:{p.get('bg_color', '#ffffff')};padding:20px 32px;text-align:center;border-bottom:1px solid #f3f4f6;">
+        py = p.get("padding_y") or "20"
+        px = p.get("padding_x") or "32"
+        return f"""<div style="background:{p.get('bg_color', '#ffffff')};padding:{py}px {px}px;text-align:center;border-bottom:1px solid #f3f4f6;">
   <a href="{p.get('link', 'https://www.happylapiz.cl')}" style="display:inline-block;text-decoration:none;">
     <img src="{p.get('logo_url', '')}" alt="Happy Lápiz" width="{p.get('logo_width', '160')}" style="height:auto;display:block;margin:0 auto;" />
   </a>
@@ -121,9 +142,11 @@ def block_to_html(block: dict) -> str:
         src = p.get("src") or ""
         alt = p.get("alt") or ""
         link = p.get("link") or ""
+        img_py = p.get("padding_y") or "0"
+        img_px = p.get("padding_x") or "0"
         if is_full:
             img_style = f"width:100%;height:auto;display:block;{r_str}"
-            wrap_style = f"background:{bg};"
+            wrap_style = f"background:{bg};padding:{img_py}px {img_px}px;"
             width_attr = "600"
             link_display = "block"
         else:
@@ -131,7 +154,7 @@ def block_to_html(block: dict) -> str:
             if align not in ("left", "right", "center"):
                 align = "center"
             img_style = f"width:{w_px}px;max-width:100%;height:auto;display:inline-block;{r_str}"
-            wrap_style = f"background:{bg};text-align:{align};"
+            wrap_style = f"background:{bg};padding:{img_py}px {img_px}px;text-align:{align};"
             width_attr = str(w_px)
             link_display = "inline-block"
         img_tag = f'<img src="{src}" alt="{alt}" width="{width_attr}" style="{img_style}" />'
@@ -150,20 +173,22 @@ def block_to_html(block: dict) -> str:
             align = "center"
         ff = p.get("font_family") or FF
         ls = f"letter-spacing:{p.get('letter_spacing', '0')}px;" if p.get("letter_spacing") else ""
+        btn_py = p.get("padding_y") or "12"
+        btn_px = p.get("padding_x") or "32"
         if p.get("full_width"):
-            return f"""<div style="background:{p.get('bg_color', '#111111')};padding:12px 0;text-align:center;">
+            return f"""<div style="background:{p.get('bg_color', '#111111')};padding:{btn_py}px 0;text-align:center;">
   <a href="{p.get('url', '#')}" style="color:{p.get('text_color', '#ffffff')};font-size:{p.get('font_size', '16')}px;font-weight:400;text-decoration:none;font-family:{ff};{ls}display:inline-block;padding:4px 8px;">
     {p.get('text', 'Ver más')}
   </a>
 </div>"""
-        return f"""<div style="padding:16px 32px;text-align:{align};background:#ffffff;">
+        return f"""<div style="padding:{btn_py}px {btn_px}px;text-align:{align};background:#ffffff;">
   <a href="{p.get('url', '#')}" style="display:inline-block;background:{p.get('bg_color', '#111111')};color:{p.get('text_color', '#ffffff')};font-size:{p.get('font_size', '16')}px;font-weight:400;padding:10px 24px;border-radius:{p.get('border_radius', '5')}px;text-decoration:none;font-family:{ff};{ls}">
     {p.get('text', 'Ver más')}
   </a>
 </div>"""
 
     if t == "divider":
-        return f"""<div style="padding:{p.get('padding_y', '16')}px 32px;background:#ffffff;">
+        return f"""<div style="padding:{p.get('padding_y', '16')}px {p.get('padding_x', '32')}px;background:#ffffff;">
   <div style="height:{p.get('thickness', '1')}px;background:{p.get('color', '#e5e7eb')};"></div>
 </div>"""
 
@@ -185,7 +210,7 @@ def block_to_html(block: dict) -> str:
             if subtitle
             else ""
         )
-        return f"""<div style="background:{p.get('bg_color', '#f9fafb')};padding:28px 32px;text-align:center;">
+        return f"""<div style="background:{p.get('bg_color', '#f9fafb')};padding:{p.get('padding_y', '28')}px {p.get('padding_x', '32')}px;text-align:center;">
   <p style="margin:0 0 14px;font-size:16px;font-weight:600;color:{p.get('text_color', '#111111')};font-family:-apple-system,sans-serif;">{p.get('title', '')}</p>
   <div style="display:inline-block;border:2px dashed {p.get('border_color', '#682ae7')};border-radius:10px;padding:14px 32px;background:#ffffff;">
     <span style="font-size:24px;font-weight:800;letter-spacing:4px;color:{p.get('text_color', '#111111')};font-family:monospace;">{p.get('code', '')}</span>
