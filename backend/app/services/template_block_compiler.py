@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 FF = "'Helvetica Neue', Arial, sans-serif"
@@ -107,6 +108,42 @@ def block_to_html(block: dict) -> str:
   {p.get('content', '')}
 </div>"""
 
+    if t == "image":
+        w_raw = p.get("width") or ""
+        try:
+            w_px = int(w_raw) if w_raw else 0
+        except (TypeError, ValueError):
+            w_px = 0
+        is_full = not w_px or w_px >= 560
+        border_radius = p.get("border_radius") or "0"
+        r_str = f"border-radius:{border_radius}px;" if border_radius != "0" else ""
+        bg = p.get("bg_color") or "#ffffff"
+        src = p.get("src") or ""
+        alt = p.get("alt") or ""
+        link = p.get("link") or ""
+        if is_full:
+            img_style = f"width:100%;height:auto;display:block;{r_str}"
+            wrap_style = f"background:{bg};"
+            width_attr = "600"
+            link_display = "block"
+        else:
+            align = p.get("align") or "center"
+            if align not in ("left", "right", "center"):
+                align = "center"
+            img_style = f"width:{w_px}px;max-width:100%;height:auto;display:inline-block;{r_str}"
+            wrap_style = f"background:{bg};text-align:{align};"
+            width_attr = str(w_px)
+            link_display = "inline-block"
+        img_tag = f'<img src="{src}" alt="{alt}" width="{width_attr}" style="{img_style}" />'
+        inner = (
+            f'<a href="{link}" style="display:{link_display};">{img_tag}</a>'
+            if link
+            else img_tag
+        )
+        return f"""<div style="{wrap_style}">
+  {inner}
+</div>"""
+
     if t == "button":
         align = p.get("align") or "center"
         if align not in ("left", "right", "center"):
@@ -155,6 +192,51 @@ def block_to_html(block: dict) -> str:
   </div>
   {sub_html}
 </div>"""
+
+    if t == "timer":
+        if p.get("timer_mode") == "relativo":
+            cfg = {
+                "design": p.get("design") or "clasico",
+                "duration_hours": float(p.get("duration_hours") or 24) or 24,
+                "bg_color": p.get("bg_color") or "#111111",
+                "accent_color": p.get("accent_color") or "#682ae7",
+                "text_color": p.get("text_color") or "#ffffff",
+                "title": p.get("title") or "",
+                "subtitle": p.get("subtitle") or "",
+                "show_seconds": p.get("show_seconds", True) is not False,
+                "label_days": p.get("label_days") or "DÍAS",
+                "label_hours": p.get("label_hours") or "HRS",
+                "label_minutes": p.get("label_minutes") or "MIN",
+                "label_seconds": p.get("label_seconds") or "SEG",
+            }
+            return f"<!-- HOTBOAT_TIMER_RELATIVE:{json.dumps(cfg, ensure_ascii=False)} -->"
+
+        target_str = p.get("target_date") or ""
+        try:
+            target = datetime.fromisoformat(str(target_str).replace("Z", "+00:00"))
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            target = datetime.now(timezone.utc) + timedelta(days=3)
+        now = datetime.now(timezone.utc)
+        diff_secs = max(0.0, (target - now).total_seconds())
+        cfg = {
+            "design": p.get("design") or "clasico",
+            "duration_hours": diff_secs / 3600.0,
+            "bg_color": p.get("bg_color") or "#111111",
+            "accent_color": p.get("accent_color") or "#682ae7",
+            "text_color": p.get("text_color") or "#ffffff",
+            "title": p.get("title") or "",
+            "subtitle": p.get("subtitle") or "",
+            "show_seconds": p.get("show_seconds", True) is not False,
+            "label_days": p.get("label_days") or "DÍAS",
+            "label_hours": p.get("label_hours") or "HRS",
+            "label_minutes": p.get("label_minutes") or "MIN",
+            "label_seconds": p.get("label_seconds") or "SEG",
+        }
+        from app.services.email_sender import _render_timer_html
+
+        return _render_timer_html(cfg, now)
 
     return ""
 
