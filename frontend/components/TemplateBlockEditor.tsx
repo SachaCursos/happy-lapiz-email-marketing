@@ -156,6 +156,7 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     description: "",
     button_text: "Comprar",
     button_color: "#111111",
+    show_button: true,
     price_color: "#e53e3e",
     bg_color: "#ffffff",
   },
@@ -769,7 +770,7 @@ function blockHtml(block: Block): string {
   <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:${font};text-align:center;">${p.title}</p>
   ${priceInline}
   ${p.description ? `<p style="margin:0 0 8px;font-size:13px;color:#666666;font-family:${font};text-align:center;">${p.description}</p>` : ""}
-  <a href="${p.url}" style="display:inline-block;margin-top:9px;background:${p.button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:${font};">${p.button_text}</a>
+  ${p.show_button !== false ? `<a href="${p.url}" style="display:inline-block;margin-top:9px;background:${p.button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:${font};">${p.button_text}</a>` : ""}
 </div>`;
     }
 
@@ -901,7 +902,7 @@ function productRowHtml(products: Block[]): string {
   ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" /></a>` : ""}
   <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:${font};text-align:center;">${p.title}</p>
   ${priceInline}
-  <a href="${p.url}" style="display:inline-block;margin-top:9px;background:${p.button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:${font};">${p.button_text}</a>
+  ${p.show_button !== false ? `<a href="${p.url}" style="display:inline-block;margin-top:9px;background:${p.button_color};color:#ffffff;font-size:16px;font-weight:400;padding:10px 10px;border-radius:5px;text-decoration:none;font-family:${font};">${p.button_text}</a>` : ""}
 </td>`;
   }).join("\n");
   return `<div style="background:${bg};padding:8px 0;">
@@ -1107,7 +1108,9 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
                 <span style={{ fontSize: 13, fontWeight: 700, color: (p.price_color as string) || "#e53e3e" }}>{p.price as string}</span>
               </p>
             : <p style={{ margin: "0 0 8px", fontWeight: 400, fontSize: compact ? 12 : 14, color: (p.price_color as string) || "#e53e3e" }}>{p.price as string}</p>}
-          <span style={{ background: p.button_color as string, color: "#fff", padding: compact ? "4px 12px" : "8px 18px", borderRadius: 5, fontSize: compact ? 10 : 13, fontWeight: 400, display: "inline-block" }}>{p.button_text as string}</span>
+          {p.show_button !== false && (
+            <span style={{ background: p.button_color as string, color: "#fff", padding: compact ? "4px 12px" : "8px 18px", borderRadius: 5, fontSize: compact ? 10 : 13, fontWeight: 400, display: "inline-block" }}>{p.button_text as string}</span>
+          )}
         </div>
       );
     }
@@ -1873,8 +1876,21 @@ function PropsPanel({
         <Field label="URL de la imagen"><TI value={p.image_url as string} onChange={(v) => set("image_url", v)} placeholder="https://cdn.shopify.com/..." /></Field>
         <Field label="URL del producto"><TI value={p.url as string} onChange={(v) => set("url", v)} placeholder="https://..." /></Field>
         <Field label="Descripción"><TI value={p.description as string} onChange={(v) => set("description", v)} /></Field>
-        <Field label="Texto del botón"><TI value={p.button_text as string} onChange={(v) => set("button_text", v)} /></Field>
-        <Field label="Color del botón"><CI value={p.button_color as string} onChange={(v) => set("button_color", v)} /></Field>
+        <Field label="Botón">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={p.show_button !== false}
+              onChange={(e) => set("show_button", e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+            />
+            <span className="text-sm text-gray-700">Mostrar botón</span>
+          </label>
+        </Field>
+        {p.show_button !== false && <>
+          <Field label="Texto del botón"><TI value={p.button_text as string} onChange={(v) => set("button_text", v)} /></Field>
+          <Field label="Color del botón"><CI value={p.button_color as string} onChange={(v) => set("button_color", v)} /></Field>
+        </>}
         <Field label="Color del precio"><CI value={(p.price_color as string) || "#e53e3e"} onChange={(v) => set("price_color", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
       </>}
