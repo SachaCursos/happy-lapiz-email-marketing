@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { ClipboardList, Plus, Users, ExternalLink } from "lucide-react";
+import { ClipboardList, Plus, Users, ExternalLink, Pencil } from "lucide-react";
 
 interface Survey {
   id: number;
@@ -89,6 +89,12 @@ export default function EncuestasPage() {
                   className="flex-1 text-center text-xs font-medium py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
                 >
                   Ver respuestas
+                </Link>
+                <Link
+                  href={`/encuestas/${s.id}/edit`}
+                  className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                >
+                  <Pencil size={11} /> Editar
                 </Link>
                 <a
                   href={surveyUrl(s.slug)}
