@@ -3,7 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { ArrowLeft, Download, Star, Trash2, Users } from "lucide-react";
+import { ArrowLeft, Download, Star, Trash2, Users, Pencil } from "lucide-react";
 import Link from "next/link";
 
 interface Question {
@@ -163,6 +163,12 @@ export default function SurveyResponsesPage() {
               <Download size={14} /> Exportar CSV
             </button>
           )}
+          <Link
+            href={`/encuestas/${surveyId}/edit`}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+          >
+            <Pencil size={14} /> Editar
+          </Link>
           <button
             onClick={() => { if (confirm("¿Eliminar esta encuesta y todas sus respuestas?")) deleteMutation.mutate(); }}
             className="flex items-center gap-2 px-3 py-2 border border-red-200 text-red-500 rounded-lg text-sm hover:bg-red-50"

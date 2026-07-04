@@ -130,6 +130,81 @@ def create_survey(
     return {"id": survey_id, "slug": slug}
 
 
+@router.get("/{survey_id}")
+def get_survey(
+    survey_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
+    import json
+    survey = session.execute(
+        text("SELECT id, name, slug, description, status FROM surveys WHERE id = :id"),
+        {"id": survey_id},
+    ).fetchone()
+    if not survey:
+        raise HTTPException(status_code=404, detail="Encuesta no encontrada")
+    questions = session.execute(
+        text("SELECT id, question, type, options, required, sort_order FROM survey_questions WHERE survey_id = :sid ORDER BY sort_order"),
+        {"sid": survey_id},
+    ).fetchall()
+    return {
+        "id": survey[0], "name": survey[1], "slug": survey[2],
+        "description": survey[3], "status": survey[4],
+        "questions": [
+            {
+                "id": q[0], "question": q[1], "type": q[2],
+                "options": json.loads(q[3]) if q[3] else None,
+                "required": q[4], "sort_order": q[5],
+            }
+            for q in questions
+        ],
+    }
+
+
+@router.put("/{survey_id}")
+def update_survey(
+    survey_id: int,
+    body: SurveyCreate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    import json
+    survey = session.execute(
+        text("SELECT id FROM surveys WHERE id = :id"), {"id": survey_id}
+    ).fetchone()
+    if not survey:
+        raise HTTPException(status_code=404, detail="Encuesta no encontrada")
+
+    slug = body.slug.lower().strip().replace(" ", "-")
+    conflict = session.execute(
+        text("SELECT id FROM surveys WHERE slug = :slug AND id != :id"),
+        {"slug": slug, "id": survey_id},
+    ).fetchone()
+    if conflict:
+        raise HTTPException(status_code=400, detail="Ya existe otra encuesta con ese slug.")
+
+    session.execute(
+        text("UPDATE surveys SET name = :name, slug = :slug, description = :desc WHERE id = :id"),
+        {"name": body.name, "slug": slug, "desc": body.description, "id": survey_id},
+    )
+    # Replace all questions
+    session.execute(text("DELETE FROM survey_questions WHERE survey_id = :sid"), {"sid": survey_id})
+    for q in body.questions:
+        session.execute(
+            text("""
+                INSERT INTO survey_questions (survey_id, question, type, options, required, sort_order)
+                VALUES (:sid, :q, :t, :opts, :req, :ord)
+            """),
+            {
+                "sid": survey_id, "q": q.question, "t": q.type,
+                "opts": json.dumps(q.options) if q.options else None,
+                "req": q.required, "ord": q.sort_order,
+            },
+        )
+    session.commit()
+    return {"id": survey_id, "slug": slug}
+
+
 @router.get("")
 def list_surveys(
     session: Session = Depends(get_session),
