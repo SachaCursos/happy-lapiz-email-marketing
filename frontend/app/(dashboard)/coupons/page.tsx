@@ -35,6 +35,9 @@ function NewCampaignModal({ onClose }: { onClose: () => void }) {
   const [form, setForm] = useState({
     name: "", discount_type: "percentage", discount_value: 10,
     min_purchase: 0, prefix: "HL", expires_at: "", static_code: "",
+    combines_with_order_discounts: false,
+    combines_with_product_discounts: false,
+    combines_with_shipping_discounts: false,
   });
   const [createdStaticCode, setCreatedStaticCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -198,6 +201,27 @@ function NewCampaignModal({ onClose }: { onClose: () => void }) {
               <input type="datetime-local" value={form.expires_at}
                 onChange={(e) => setForm({ ...form, expires_at: e.target.value })}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-2">Combinar con otros descuentos</label>
+            <div className="space-y-2">
+              {[
+                { key: "combines_with_order_discounts" as const, label: "Descuentos de orden" },
+                { key: "combines_with_product_discounts" as const, label: "Descuentos de producto" },
+                { key: "combines_with_shipping_discounts" as const, label: "Descuentos de envío" },
+              ].map(({ key, label }) => (
+                <label key={key} className="flex items-center gap-2.5 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={form[key]}
+                    onChange={(e) => setForm({ ...form, [key]: e.target.checked })}
+                    className="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                  />
+                  <span className="text-sm text-gray-700 group-hover:text-gray-900">{label}</span>
+                </label>
+              ))}
             </div>
           </div>
         </div>

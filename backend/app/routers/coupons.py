@@ -37,6 +37,9 @@ class CouponCampaignCreate(BaseModel):
     applies_to: str = "all"
     coupon_mode: str = "dynamic"   # "dynamic" | "static"
     static_code: Optional[str] = None  # only for static mode
+    combines_with_order_discounts: bool = False
+    combines_with_product_discounts: bool = False
+    combines_with_shipping_discounts: bool = False
 
 
 class GenerateCouponRequest(BaseModel):
@@ -85,6 +88,11 @@ def create_coupon_campaign(
             "minimumRequirement": {
                 "subtotal": {"greaterThanOrEqualToSubtotal": str(body.min_purchase)}
             } if body.min_purchase > 0 else None,
+            "combinesWith": {
+                "orderDiscounts": body.combines_with_order_discounts,
+                "productDiscounts": body.combines_with_product_discounts,
+                "shippingDiscounts": body.combines_with_shipping_discounts,
+            },
         }
     }
 
@@ -104,6 +112,9 @@ def create_coupon_campaign(
     for col_sql in [
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS combines_with_order_discounts BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS combines_with_product_discounts BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS combines_with_shipping_discounts BOOLEAN NOT NULL DEFAULT FALSE",
     ]:
         try:
             session.execute(text(col_sql))
@@ -113,21 +124,30 @@ def create_coupon_campaign(
 
     result = session.execute(text("""
         INSERT INTO coupon_campaigns (name, shopify_discount_id, discount_type, discount_value,
-            min_purchase, prefix, expires_at, applies_to, coupon_mode, static_code, created_by)
-        VALUES (:name, :sid, :dtype, :dval, :minp, :prefix, :exp, :applies, :mode, :scode, :uid)
-        RETURNING id, name, discount_type, discount_value, prefix, coupon_mode, static_code
+            min_purchase, prefix, expires_at, applies_to, coupon_mode, static_code, created_by,
+            combines_with_order_discounts, combines_with_product_discounts, combines_with_shipping_discounts)
+        VALUES (:name, :sid, :dtype, :dval, :minp, :prefix, :exp, :applies, :mode, :scode, :uid,
+            :cwo, :cwp, :cws)
+        RETURNING id, name, discount_type, discount_value, prefix, coupon_mode, static_code,
+            combines_with_order_discounts, combines_with_product_discounts, combines_with_shipping_discounts
     """), {
         "name": body.name, "sid": shopify_id, "dtype": body.discount_type,
         "dval": body.discount_value, "minp": body.min_purchase, "prefix": body.prefix,
         "exp": expires_iso, "applies": body.applies_to, "uid": current_user.id,
         "mode": body.coupon_mode,
         "scode": initial_code if body.coupon_mode == "static" else None,
+        "cwo": body.combines_with_order_discounts,
+        "cwp": body.combines_with_product_discounts,
+        "cws": body.combines_with_shipping_discounts,
     }).fetchone()
     session.commit()
     return {
         "id": result[0], "name": result[1], "discount_type": result[2],
         "discount_value": result[3], "prefix": result[4],
         "coupon_mode": result[5], "static_code": result[6],
+        "combines_with_order_discounts": result[7],
+        "combines_with_product_discounts": result[8],
+        "combines_with_shipping_discounts": result[9],
         "shopify_id": shopify_id,
     }
 
@@ -140,7 +160,10 @@ def list_coupon_campaigns(session: Session = Depends(get_session), _: User = Dep
             SELECT id, name, discount_type, discount_value, prefix, expires_at, status, created_at,
                    (SELECT COUNT(*) FROM coupon_sends WHERE coupon_campaign_id = cc.id) as codes_sent,
                    COALESCE(coupon_mode, 'dynamic') as coupon_mode,
-                   static_code
+                   static_code,
+                   COALESCE(combines_with_order_discounts, FALSE),
+                   COALESCE(combines_with_product_discounts, FALSE),
+                   COALESCE(combines_with_shipping_discounts, FALSE)
             FROM coupon_campaigns cc ORDER BY created_at DESC
         """)).fetchall()
     except Exception:
@@ -152,10 +175,14 @@ def list_coupon_campaigns(session: Session = Depends(get_session), _: User = Dep
         """)).fetchall()
         return [{"id": r[0], "name": r[1], "discount_type": r[2], "discount_value": float(r[3]),
                  "prefix": r[4], "expires_at": r[5], "status": r[6], "created_at": r[7],
-                 "codes_sent": r[8], "coupon_mode": "dynamic", "static_code": None} for r in rows]
+                 "codes_sent": r[8], "coupon_mode": "dynamic", "static_code": None,
+                 "combines_with_order_discounts": False, "combines_with_product_discounts": False,
+                 "combines_with_shipping_discounts": False} for r in rows]
     return [{"id": r[0], "name": r[1], "discount_type": r[2], "discount_value": float(r[3]),
              "prefix": r[4], "expires_at": r[5], "status": r[6], "created_at": r[7],
-             "codes_sent": r[8], "coupon_mode": r[9], "static_code": r[10]} for r in rows]
+             "codes_sent": r[8], "coupon_mode": r[9], "static_code": r[10],
+             "combines_with_order_discounts": r[11], "combines_with_product_discounts": r[12],
+             "combines_with_shipping_discounts": r[13]} for r in rows]
 
 
 @router.post("/generate")
