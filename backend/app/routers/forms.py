@@ -593,6 +593,9 @@ def _trigger_form_submitted_automations(
         session.add(enrollment)
     session.commit()
 
+    from app.services.birthday_enrollment import enroll_birthday_for_email
+    enroll_birthday_for_email(session, email)
+
 
 @router.get("/{form_id}/page", response_class=HTMLResponse)
 def form_landing_page(form_id: int, session: Session = Depends(get_session)):
@@ -1659,6 +1662,10 @@ def submit_gift_form(
     session.add(recipient)
     session.commit()
     session.refresh(recipient)
+
+    from app.services.birthday_enrollment import enroll_birthday_for_email
+    enroll_birthday_for_email(session, email)
+
     return {"ok": True, "id": recipient.id}
 
 

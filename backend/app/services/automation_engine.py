@@ -1301,115 +1301,12 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
 
 
 def _check_birthday_reminder(auto: Automation, session: Session) -> None:
-    """
-    Birthday reminder enrollment. Early preview in «Próximos envíos» (enroll_early_days)
-    only applies when data_source is form or gift_popup.
-    trigger_config keys:
-      data_source: str        — contacts (default) | form | gift_popup
-      form_id: int            — required when data_source=form
-      days_before: int        — days before birthday to send (default 30)
-      enroll_early_days: int  — only used with form / gift_popup sources
-      birthday_field: str     — date field (default "fecha_nacimiento")
-      name_field: str         — name field (default "nombre_regalado")
-      relation_field: str     — relation field (default "relacion")
-    """
-    from app.models.contact import Contact
-    from app.services.birthday_triggers import (
-        iter_contacts_on_mmdd,
-        iter_form_on_mmdd,
-        iter_gift_flow_on_mmdd,
-    )
-    from app.services.birthday_config import (
-        repair_birthday_automation_if_needed,
-        resolve_birthday_data_source,
-        resolve_enroll_early_days,
-    )
-    from app.services.regalado_vars import (
-        get_regalado_field,
-        infer_relation_field,
-        parse_birthday_mmdd,
-        prepare_regalado_vars,
-    )
+    """Birthday reminder enrollment — see birthday_enrollment.run_birthday_reminder."""
+    from app.services.birthday_enrollment import run_birthday_reminder
 
-    repair_birthday_automation_if_needed(auto, session)
-    config = auto.trigger_config or {}
-    days_before = int(config.get("days_before", 30))
-    data_source = resolve_birthday_data_source(auto)
-    enroll_early_days = resolve_enroll_early_days(auto, data_source)
-    birthday_field = config.get("birthday_field", "fecha_nacimiento")
-    name_field = config.get("name_field", "nombre_regalado")
-    relation_field = infer_relation_field(
-        name_field,
-        config.get("relation_field", "relacion"),
-    )
-
-    steps = _get_steps(auto)
-    if not steps:
+    if not _get_steps(auto):
         return
-    first_delay = float(steps[0].get("delay_hours", 0))
-    if enroll_early_days > 0:
-        first_delay = enroll_early_days * 24
-
-    today = datetime.utcnow().date()
-    enroll_when_days_before = days_before + enroll_early_days
-    target = today + timedelta(days=enroll_when_days_before)
-    target_mmdd = f"{target.month:02d}-{target.day:02d}"
-
-    seen: set[tuple] = set()
-
-    def _try_enroll(email: str, contact: Contact | None, data: dict) -> None:
-        raw_date = get_regalado_field(data, birthday_field)
-        if not raw_date or parse_birthday_mmdd(raw_date) != target_mmdd:
-            return
-
-        email_l = email.lower()
-        dedupe = (email_l, birthday_field, target.year, days_before)
-        if dedupe in seen:
-            return
-        seen.add(dedupe)
-
-        child_name = get_regalado_field(data, name_field)
-        relation = get_regalado_field(data, relation_field)
-        contact_name = (contact.name if contact else None) or data.get("nombre") or email
-        first = str(contact_name).split()[0]
-
-        owner_key = contact.id if contact else email_l
-        trigger_key = f"birthday:{owner_key}:{birthday_field}:{target.year}:{days_before}"
-        extra_vars = {
-            **{k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)},
-            "nombre": contact_name,
-            "first_name": first,
-            "nombre_regalado": child_name,
-            "relacion": relation,
-            "dias_para_cumpleanos": days_before,
-            "fecha_cumpleanos": str(target),
-        }
-        if isinstance(data.get("regalados"), list):
-            extra_vars["regalados"] = data["regalados"]
-        prepare_regalado_vars(extra_vars)
-        _enroll(session, auto, email_l, trigger_key, first_delay, extra_vars)
-
-    if data_source == "gift_popup":
-        for email, data, contact in iter_gift_flow_on_mmdd(
-            session, target.month, target.day
-        ):
-            _try_enroll(email, contact, data)
-        return
-
-    if data_source == "form":
-        form_id = config.get("form_id")
-        if not form_id:
-            return
-        for email, data, contact in iter_form_on_mmdd(
-            session, int(form_id), target.month, target.day
-        ):
-            _try_enroll(email, contact, data)
-        return
-
-    for email, data, contact in iter_contacts_on_mmdd(
-        session, target.month, target.day, birthday_field
-    ):
-        _try_enroll(email, contact, data)
+    run_birthday_reminder(auto, session)
 
 
 def _check_product_of_month(auto: Automation, session: Session) -> None:

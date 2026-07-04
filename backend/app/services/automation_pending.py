@@ -99,18 +99,8 @@ def _cached_will_enter(auto: Automation, session: Session) -> dict | None:
 
 
 def _first_send_date(raw_date: str, days_before: int, today: date) -> tuple[date, date] | None:
-    mmdd = parse_birthday_mmdd(raw_date)
-    if not mmdd:
-        return None
-    month, day = map(int, mmdd.split("-"))
-    bday = date(today.year, month, day)
-    if bday < today:
-        bday = date(today.year + 1, month, day)
-    first_send = bday - timedelta(days=days_before)
-    if first_send < today:
-        bday = date(bday.year + 1, month, day)
-        first_send = bday - timedelta(days=days_before)
-    return bday, first_send
+    from app.services.birthday_enrollment import first_send_date
+    return first_send_date(raw_date, days_before, today)
 
 
 def _already_in_flow(session: Session, auto_id: int, trigger_key: str) -> bool:

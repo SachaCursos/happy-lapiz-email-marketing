@@ -64,6 +64,8 @@ def on_startup():
             log_shopify_form_sync(session)
             from app.services.form_stats import ensure_form_stats_epoch
             ensure_form_stats_epoch(session)
+            from app.services.birthday_enrollment import backfill_birthday_enrollments
+            backfill_birthday_enrollments(session)
     except Exception:
         pass  # DB may not be ready on first deploy tick
 
