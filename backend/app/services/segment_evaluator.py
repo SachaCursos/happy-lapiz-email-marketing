@@ -55,6 +55,22 @@ def _build_clause(node: dict) -> Optional[Any]:
     op = node.get("op")
     value = node.get("value")
 
+    # Condición especial: producto comprado (busca en shopify_events ordered_product)
+    if field == "purchased_product":
+        if not isinstance(value, dict):
+            return None
+        product_id = str(value.get("product_id", "")).strip()
+        if not product_id:
+            return None
+        return text("""
+            LOWER(contacts.email) IN (
+                SELECT LOWER(email) FROM shopify_events
+                WHERE automation_triggered = 'ordered_product'
+                AND email IS NOT NULL AND email != ''
+                AND payload->'_item'->>'product_id' = :product_id
+            )
+        """).bindparams(product_id=product_id)
+
     # Condición especial: Nº de rebotes en campañas (campaign_sends con status bounced)
     if field == "campaign_bounce_count":
         try:

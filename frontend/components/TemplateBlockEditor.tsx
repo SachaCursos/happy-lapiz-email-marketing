@@ -156,6 +156,7 @@ const DEFAULTS: Record<BlockType, Record<string, string | number | boolean>> = {
     description: "",
     button_text: "Comprar",
     button_color: "#111111",
+    price_color: "#e53e3e",
     bg_color: "#ffffff",
   },
   coupon: {
@@ -759,9 +760,10 @@ function blockHtml(block: Block): string {
 
     case "product": {
       const font = "'Helvetica Neue', Arial, sans-serif";
+      const saleColor = (p.price_color as string) || "#e53e3e";
       const priceInline = (p.compare_at_price as string)
-        ? `<p style="margin:0 0 5px;text-align:center;"><span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:${font};margin-right:6px;">${p.compare_at_price}</span><span style="font-size:14px;font-weight:bold;color:#e53e3e;font-family:${font};">${p.price}</span></p>`
-        : `<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:#222222;font-family:${font};text-align:center;">${p.price}</p>`;
+        ? `<p style="margin:0 0 5px;text-align:center;"><span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:${font};margin-right:6px;">${p.compare_at_price}</span><span style="font-size:14px;font-weight:bold;color:${saleColor};font-family:${font};">${p.price}</span></p>`
+        : `<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:${saleColor};font-family:${font};text-align:center;">${p.price}</p>`;
       return `<div style="background:${p.bg_color};padding:9px;text-align:center;">
   ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" /></a>` : ""}
   <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:${font};text-align:center;">${p.title}</p>
@@ -891,9 +893,10 @@ function productRowHtml(products: Block[]): string {
   const font = "'Helvetica Neue',Arial,sans-serif";
   const cols = products.map((b) => {
     const p = b.props;
+    const sc = (p.price_color as string) || "#e53e3e";
     const priceInline = p.compare_at_price
-      ? `<p style="margin:0 0 5px;text-align:center;"><span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:${font};margin-right:6px;">${p.compare_at_price}</span><span style="font-size:14px;font-weight:bold;color:#e53e3e;font-family:${font};">${p.price}</span></p>`
-      : `<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:#222222;font-family:${font};text-align:center;">${p.price}</p>`;
+      ? `<p style="margin:0 0 5px;text-align:center;"><span style="font-size:13px;color:#9ca3af;text-decoration:line-through;font-family:${font};margin-right:6px;">${p.compare_at_price}</span><span style="font-size:14px;font-weight:bold;color:${sc};font-family:${font};">${p.price}</span></p>`
+      : `<p style="margin:0 0 5px;font-size:14px;font-weight:normal;color:${sc};font-family:${font};text-align:center;">${p.price}</p>`;
     return `<td width="${colPct}" valign="top" style="padding:9px 9px;text-align:center;vertical-align:top;">
   ${p.image_url ? `<a href="${p.url}" style="display:block;text-decoration:none;"><img src="${p.image_url}" alt="${p.title}" style="display:block;margin:0 auto 8px;max-width:100%;max-height:125px;width:auto;" /></a>` : ""}
   <p style="margin:0 0 5px;font-size:14px;font-weight:bold;color:#222222;font-family:${font};text-align:center;">${p.title}</p>
@@ -1101,9 +1104,9 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
           {p.compare_at_price
             ? <p style={{ margin: "0 0 8px" }}>
                 <span style={{ fontSize: 11, color: "#9ca3af", textDecoration: "line-through", marginRight: 5 }}>{p.compare_at_price as string}</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#e53e3e" }}>{p.price as string}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: (p.price_color as string) || "#e53e3e" }}>{p.price as string}</span>
               </p>
-            : <p style={{ margin: "0 0 8px", fontWeight: 400, fontSize: compact ? 12 : 14, color: "#222222" }}>{p.price as string}</p>}
+            : <p style={{ margin: "0 0 8px", fontWeight: 400, fontSize: compact ? 12 : 14, color: (p.price_color as string) || "#e53e3e" }}>{p.price as string}</p>}
           <span style={{ background: p.button_color as string, color: "#fff", padding: compact ? "4px 12px" : "8px 18px", borderRadius: 5, fontSize: compact ? 10 : 13, fontWeight: 400, display: "inline-block" }}>{p.button_text as string}</span>
         </div>
       );
@@ -1872,6 +1875,7 @@ function PropsPanel({
         <Field label="Descripción"><TI value={p.description as string} onChange={(v) => set("description", v)} /></Field>
         <Field label="Texto del botón"><TI value={p.button_text as string} onChange={(v) => set("button_text", v)} /></Field>
         <Field label="Color del botón"><CI value={p.button_color as string} onChange={(v) => set("button_color", v)} /></Field>
+        <Field label="Color del precio"><CI value={(p.price_color as string) || "#e53e3e"} onChange={(v) => set("price_color", v)} /></Field>
         <Field label="Color de fondo"><CI value={p.bg_color as string} onChange={(v) => set("bg_color", v)} /></Field>
       </>}
 

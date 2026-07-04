@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { segmentsApi, contactsApi, formsApi } from "@/lib/api";
+import { segmentsApi, contactsApi, formsApi, shopifyApi, ShopifyProduct } from "@/lib/api";
 import { SegmentConditions, SegmentRule, SignupForm } from "@/lib/types";
 import { ArrowLeft, Plus, Trash2, Search, X, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -25,6 +25,7 @@ const FIELDS = [
   { value: "has_form_submission",  label: "Rellenó formulario",        type: "form_submission" },
   { value: "campaign_bounce_count", label: "Rebotes en campañas",      type: "number" },
   { value: "no_open_in_last_n_emails", label: "Sin apertura en últimos N correos", type: "last_n_no_open" },
+  { value: "purchased_product",        label: "Producto comprado",                type: "product_shopify" },
 ];
 
 const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
@@ -159,6 +160,111 @@ function ContactPicker({
   );
 }
 
+interface ProductValue { product_id: string; product_title: string; }
+
+function parseProductValue(value: unknown): ProductValue {
+  if (value && typeof value === "object" && "product_id" in value) {
+    const v = value as { product_id?: unknown; product_title?: unknown };
+    return { product_id: String(v.product_id || ""), product_title: String(v.product_title || "") };
+  }
+  return { product_id: "", product_title: "" };
+}
+
+function ShopifyProductPicker({
+  value,
+  onChange,
+}: {
+  value: ProductValue;
+  onChange: (v: ProductValue) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  const { data: products = [], isLoading } = useQuery<ShopifyProduct[]>({
+    queryKey: ["shopify-products-segment"],
+    queryFn: () => shopifyApi.products().then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+
+  useEffect(() => {
+    function h(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const filtered = products.filter((p) =>
+    p.title.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 min-w-[220px]"
+      >
+        {value.product_title
+          ? <span className="flex-1 text-left truncate text-gray-900">{value.product_title}</span>
+          : <span className="flex-1 text-left text-gray-400">Seleccionar producto...</span>}
+        <Search size={13} className="text-gray-400 shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 w-80">
+          <div className="p-2 border-b border-gray-100">
+            <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-1.5">
+              <Search size={13} className="text-gray-400 shrink-0" />
+              <input
+                autoFocus
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar producto..."
+                className="flex-1 text-sm focus:outline-none"
+              />
+              {search && (
+                <button onClick={() => setSearch("")} className="text-gray-400 hover:text-gray-600">
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="max-h-60 overflow-y-auto">
+            {isLoading && (
+              <div className="px-4 py-6 text-center text-sm text-gray-400">Cargando productos...</div>
+            )}
+            {!isLoading && filtered.length === 0 && (
+              <div className="px-4 py-6 text-center text-sm text-gray-400">Sin resultados</div>
+            )}
+            {filtered.map((prod) => (
+              <button
+                key={prod.id}
+                type="button"
+                onClick={() => {
+                  onChange({ product_id: prod.id, product_title: prod.title });
+                  setOpen(false);
+                  setSearch("");
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0 ${value.product_id === prod.id ? "bg-brand-50" : ""}`}
+              >
+                {prod.image_url
+                  ? <img src={prod.image_url} alt="" className="w-10 h-10 object-cover rounded-lg shrink-0" />
+                  : <div className="w-10 h-10 bg-gray-100 rounded-lg shrink-0" />}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{prod.title}</p>
+                  <p className="text-xs text-gray-400">${parseFloat(prod.price).toLocaleString("es-CL")}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function NewSegmentPage() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -289,6 +395,7 @@ export default function NewSegmentPage() {
                 const fieldType = getFieldType(rule.field);
                 const ops = OPS_BY_TYPE[fieldType] ?? OPS_BY_TYPE.string;
                 const formSubmissionValue = parseFormSubmissionValue(rule.value, defaultFormId);
+                const productValue = parseProductValue(rule.value);
                 return (
                   <div key={i} className="flex items-center gap-2 flex-wrap">
                     <select
@@ -301,15 +408,14 @@ export default function NewSegmentPage() {
                             ? defaultFormSubmissionValue(defaultFormId)
                             : nextField === "no_open_in_last_n_emails"
                               ? 5
+                            : nextField === "purchased_product"
+                              ? { product_id: "", product_title: "" }
                             : nextType === "boolean"
                               ? true
                               : "";
                         updateRule(i, {
                           field: nextField,
-                          op:
-                            nextType === "last_n_no_open"
-                              ? "eq"
-                              : OPS_BY_TYPE[nextType]?.[0]?.value ?? "eq",
+                          op: "eq",
                           value: nextValue,
                         });
                       }}
@@ -319,7 +425,7 @@ export default function NewSegmentPage() {
                         <option key={f.value} value={f.value}>{f.label}</option>
                       ))}
                     </select>
-                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && (
+                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && fieldType !== "product_shopify" && (
                       <select
                         value={rule.op}
                         onChange={(e) => updateRule(i, { op: e.target.value })}
@@ -384,6 +490,11 @@ export default function NewSegmentPage() {
                         />
                         <span className="text-sm text-gray-500">correos sin abrir</span>
                       </div>
+                    ) : fieldType === "product_shopify" ? (
+                      <ShopifyProductPicker
+                        value={productValue}
+                        onChange={(v) => updateRule(i, { op: "eq", value: v })}
+                      />
                     ) : fieldType === "boolean" ? (
                       <select
                         value={String(rule.value)}
