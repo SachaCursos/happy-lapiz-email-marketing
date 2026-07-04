@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks, surveys
 from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
 from app.models import form as _form_model  # noqa: F401 — form_views table
 from app.models import evergreen as _evergreen_model  # noqa: F401
@@ -38,6 +38,7 @@ app.include_router(coupons.router, prefix="/api/coupons", tags=["coupons"])
 app.include_router(shopify_webhooks.router, prefix="/api/shopify", tags=["shopify"])
 app.include_router(html_blocks.router, prefix="/api/html-blocks", tags=["html-blocks"])
 app.include_router(favorite_blocks.router, prefix="/api/favorite-blocks", tags=["favorite-blocks"])
+app.include_router(surveys.router, prefix="/api/surveys", tags=["surveys"])
 
 
 @app.on_event("startup")

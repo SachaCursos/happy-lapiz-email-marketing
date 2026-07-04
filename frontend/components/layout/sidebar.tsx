@@ -21,6 +21,7 @@ import {
   ShoppingBag,
   Code2,
   Star,
+  ClipboardList,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,7 @@ const nav = [
   { href: "/forms",        label: "Formularios",      icon: MousePointerClick },
   { href: "/asuntos",      label: "Asuntos",          icon: BarChart2 },
   { href: "/coupons",      label: "Cupones",           icon: Tag },
+  { href: "/encuestas",    label: "Encuestas",         icon: ClipboardList },
   { href: "/brand",        label: "Marca",             icon: Palette },
 ];
 
