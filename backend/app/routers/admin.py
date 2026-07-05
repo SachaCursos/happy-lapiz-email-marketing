@@ -660,6 +660,91 @@ _SORT_COLUMNS = {
     "inventory_total": "inventory_total",
 }
 
+@router.post("/backfill-shopify-orders")
+async def backfill_shopify_orders(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Importa el historial completo de órdenes de Shopify a shopify_events para el filtro 'producto comprado'."""
+    import json as _json
+    from datetime import timezone
+
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN no configurado"}
+
+    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+    orders_imported = 0
+    items_imported = 0
+    orders_skipped = 0
+    since_id = 0
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        while True:
+            r = await client.get(
+                f"https://{domain}/admin/api/2024-01/orders.json",
+                params={"status": "any", "limit": 250, "since_id": since_id,
+                        "fields": "id,email,created_at,line_items"},
+                headers=headers,
+            )
+            if r.status_code != 200:
+                return {"ok": False, "error": f"Shopify API {r.status_code}", "detail": r.text[:300]}
+
+            orders = r.json().get("orders", [])
+            if not orders:
+                break
+
+            for order in orders:
+                order_id = str(order["id"])
+                email = order.get("email") or ""
+                try:
+                    created_at = datetime.fromisoformat(
+                        (order.get("created_at") or "").replace("Z", "+00:00")
+                    )
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
+                except Exception:
+                    created_at = datetime.now(timezone.utc)
+
+                existing = session.execute(
+                    text("SELECT 1 FROM shopify_events WHERE shopify_id=:oid AND automation_triggered='ordered_product' LIMIT 1"),
+                    {"oid": order_id},
+                ).first()
+                if existing:
+                    orders_skipped += 1
+                    continue
+
+                for item in order.get("line_items", []):
+                    session.execute(
+                        text("""
+                            INSERT INTO shopify_events (topic, shopify_id, email, payload, automation_triggered, created_at)
+                            VALUES ('ordered_product', :oid, :email, CAST(:payload AS jsonb), 'ordered_product', :ts)
+                        """),
+                        {
+                            "oid": order_id,
+                            "email": email or None,
+                            "payload": _json.dumps({"_item": item}),
+                            "ts": created_at,
+                        },
+                    )
+                    items_imported += 1
+
+                session.commit()
+                orders_imported += 1
+
+            since_id = orders[-1]["id"]
+            if len(orders) < 250:
+                break
+
+    return {
+        "ok": True,
+        "orders_imported": orders_imported,
+        "orders_skipped": orders_skipped,
+        "items_imported": items_imported,
+    }
+
+
 @router.get("/products")
 def list_synced_products(
     search: str = "",

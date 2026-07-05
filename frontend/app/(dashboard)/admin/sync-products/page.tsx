@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { adminApi } from "@/lib/api";
-import { RefreshCw, CheckCircle, AlertCircle, Package } from "lucide-react";
+import { RefreshCw, CheckCircle, AlertCircle, Package, ShoppingCart } from "lucide-react";
 
 export default function SyncProductsPage() {
   const [status, setStatus] = useState<"idle" | "running" | "ok" | "error">("idle");
   const [result, setResult] = useState<{ synced?: number; total_fetched?: number; error?: string } | null>(null);
   const [seedStatus, setSeedStatus] = useState<"idle" | "running" | "ok" | "error">("idle");
+  const [backfillStatus, setBackfillStatus] = useState<"idle" | "running" | "ok" | "error">("idle");
+  const [backfillResult, setBackfillResult] = useState<{ orders_imported?: number; orders_skipped?: number; items_imported?: number; error?: string } | null>(null);
 
   async function runSync() {
     setStatus("running");
@@ -20,6 +22,20 @@ export default function SyncProductsPage() {
       const msg = e instanceof Error ? e.message : String(e);
       setResult({ error: msg });
       setStatus("error");
+    }
+  }
+
+  async function runBackfill() {
+    setBackfillStatus("running");
+    setBackfillResult(null);
+    try {
+      const r = await adminApi.backfillOrders();
+      setBackfillResult(r.data);
+      setBackfillStatus(r.data.ok ? "ok" : "error");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setBackfillResult({ error: msg });
+      setBackfillStatus("error");
     }
   }
 
@@ -108,6 +124,44 @@ export default function SyncProductsPage() {
           <p className="mt-3 text-sm text-red-700 flex items-center gap-1.5">
             <AlertCircle size={14} /> Error al crear la plantilla.
           </p>
+        )}
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-6 space-y-4">
+        <div className="flex items-center gap-2 mb-1">
+          <ShoppingCart size={16} className="text-brand-600" />
+          <h2 className="font-semibold text-gray-800">3. Importar historial de órdenes</h2>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">
+          Importa todas las órdenes históricas de Shopify a la base de datos para que el filtro{" "}
+          <strong>"Producto comprado"</strong> en segmentos funcione con compradores anteriores a la
+          integración de webhooks. Es idempotente: se puede ejecutar varias veces sin duplicar datos.
+        </p>
+        <button
+          onClick={runBackfill}
+          disabled={backfillStatus === "running"}
+          className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          <RefreshCw size={15} className={backfillStatus === "running" ? "animate-spin" : ""} />
+          {backfillStatus === "running" ? "Importando órdenes... (puede tardar un minuto)" : "Importar historial de órdenes"}
+        </button>
+
+        {backfillStatus === "ok" && backfillResult && (
+          <div className="flex items-start gap-3 p-4 bg-green-50 border border-green-200 rounded-xl text-sm">
+            <CheckCircle size={16} className="text-green-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold text-green-800">Importación completada</p>
+              <p className="text-green-700">
+                {backfillResult.orders_imported} órdenes importadas · {backfillResult.orders_skipped} ya existían · {backfillResult.items_imported} productos registrados.
+              </p>
+            </div>
+          </div>
+        )}
+        {backfillStatus === "error" && (
+          <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-sm">
+            <AlertCircle size={16} className="text-red-600 mt-0.5 shrink-0" />
+            <p className="text-red-700">{backfillResult?.error || "Error desconocido"}</p>
+          </div>
         )}
       </div>
 

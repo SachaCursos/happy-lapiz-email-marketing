@@ -208,6 +208,7 @@ export const syncApi = {
 export const adminApi = {
   syncProducts: () => api.post("/admin/sync-products"),
   seedTemplates: () => api.post("/admin/seed-templates"),
+  backfillOrders: () => api.post("/admin/backfill-shopify-orders"),
   getProducts: (params?: { search?: string; product_type?: string; page?: number; sort_by?: string; sort_dir?: string }) =>
     api.get<{ total: number; page: number; per_page: number; products: SyncedProduct[]; product_types: string[] }>(
       "/admin/products",
