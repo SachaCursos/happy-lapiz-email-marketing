@@ -27,6 +27,7 @@ def list_templates(session: Session = Depends(get_session), _: User = Depends(ge
             Template.name,
             Template.subject_default,
             Template.preview_text,
+            Template.html_content,
             Template.created_by,
             Template.created_at,
             Template.updated_at,

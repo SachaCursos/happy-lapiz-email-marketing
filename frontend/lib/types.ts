@@ -93,13 +93,13 @@ export interface TemplateSummary {
   name: string;
   subject_default: string;
   preview_text: string | null;
+  html_content: string | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface Template extends TemplateSummary {
-  html_content?: string;
   json_blocks?: unknown[] | Record<string, unknown> | null;
 }
 

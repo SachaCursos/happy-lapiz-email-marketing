@@ -48,11 +48,12 @@ class TemplateRead(SQLModel):
 
 
 class TemplateSummary(SQLModel):
-    """List endpoint — excludes heavy html_content / json_blocks."""
+    """List endpoint — includes compiled html_content for thumbnail previews."""
     id: int
     name: str
     subject_default: Optional[str] = ""
     preview_text: Optional[str] = None
+    html_content: Optional[str] = None
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
