@@ -111,7 +111,8 @@ export interface Campaign {
   subject: string;
   preview_text: string | null;
   template_id: number;
-  segment_id: number;
+  segment_id: number | null;
+  segment_ids: number[] | null;
   exclude_segment_ids: number[] | null;
   status: CampaignStatus;
   scheduled_at: string | null;

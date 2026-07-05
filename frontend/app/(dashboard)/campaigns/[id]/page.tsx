@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { campaignsApi, contactsApi, segmentsApi, templatesApi } from "@/lib/api";
 import { Campaign, CampaignStats, CampaignConversions, Segment, Template } from "@/lib/types";
-import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Calendar, UserMinus, BarChart2, ShoppingCart, Pause } from "lucide-react";
+import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Check, Calendar, UserMinus, BarChart2, ShoppingCart, Pause } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
 import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
@@ -76,7 +76,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<{
     name: string; subject: string; preview_text: string;
-    segment_id: number; template_id: number; scheduled_at: string;
+    segment_ids: number[]; template_id: number; scheduled_at: string;
     exclude_segment_ids: number[];
   } | null>(null);
   type SortCol = "name" | "sent_at" | "delivered_at" | "opened_at" | "clicked_at" | "bounced_at" | "opted_in";
@@ -99,6 +99,19 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     queryFn: () => templatesApi.list().then((r) => r.data),
     enabled: editing,
   });
+
+  function toggleInclude(id: number) {
+    setEditForm((f) => {
+      if (!f) return f;
+      return {
+        ...f,
+        segment_ids: f.segment_ids.includes(id)
+          ? f.segment_ids.filter((x) => x !== id)
+          : [...f.segment_ids, id],
+        exclude_segment_ids: f.exclude_segment_ids.filter((x) => x !== id),
+      };
+    });
+  }
 
   function toggleExclude(id: number) {
     setEditForm((f) => {
@@ -240,7 +253,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                   name: campaign.name,
                   subject: campaign.subject,
                   preview_text: campaign.preview_text ?? "",
-                  segment_id: campaign.segment_id,
+                  segment_ids: campaign.segment_ids ?? (campaign.segment_id ? [campaign.segment_id] : []),
                   template_id: campaign.template_id,
                   exclude_segment_ids: campaign.exclude_segment_ids ?? [],
                   scheduled_at: campaign.scheduled_at
@@ -387,43 +400,55 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Segmento</label>
-              <select
-                value={editForm.segment_id}
-                onChange={(e) => {
-                  const segment_id = Number(e.target.value);
-                  setEditForm((f) => f && ({
-                    ...f,
-                    segment_id,
-                    exclude_segment_ids: f.exclude_segment_ids.filter((x) => x !== segment_id),
-                  }));
-                }}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
-                <option value={0}>— Seleccionar —</option>
-                {segments.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.contact_count?.toLocaleString()} contactos)</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Plantilla</label>
-              <select value={editForm.template_id} onChange={(e) => setEditForm((f) => f && ({ ...f, template_id: Number(e.target.value) }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
-                <option value={0}>— Seleccionar —</option>
-                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Plantilla</label>
+            <select value={editForm.template_id} onChange={(e) => setEditForm((f) => f && ({ ...f, template_id: Number(e.target.value) }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
+              <option value={0}>— Seleccionar —</option>
+              {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Enviar a</h3>
+            <p className="text-xs text-gray-400 mb-2">Selecciona uno o más segmentos</p>
+            {segments.length === 0 ? (
+              <p className="text-sm text-gray-500">No hay segmentos disponibles.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {segments.map((s) => {
+                  const checked = editForm.segment_ids.includes(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggleInclude(s.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 border rounded-xl text-left transition-colors ${checked ? "border-brand-500 bg-brand-50" : "border-gray-200 hover:border-gray-300"}`}
+                    >
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${checked ? "border-brand-500 bg-brand-500" : "border-gray-300"}`}>
+                        {checked && <Check size={10} className="text-white" strokeWidth={3} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-gray-900 text-sm">{s.name}</p>
+                        {s.description && <p className="text-xs text-gray-400 truncate">{s.description}</p>}
+                      </div>
+                      <span className="text-sm font-semibold text-gray-500 shrink-0">{s.contact_count?.toLocaleString()}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="border-t border-gray-100 pt-4">
             <h3 className="text-sm font-semibold text-gray-900 mb-1">Excluir segmentos</h3>
-            <p className="text-xs text-gray-400 mb-3">Opcional — los contactos de estos segmentos no recibirán la campaña</p>
+            <p className="text-xs text-gray-400 mb-2">Opcional — los contactos de estos segmentos no recibirán la campaña</p>
             {segments.length === 0 ? (
               <p className="text-sm text-gray-500">No hay segmentos disponibles.</p>
             ) : (
-              <div className="space-y-2 max-h-48 overflow-y-auto">
+              <div className="space-y-1.5 max-h-36 overflow-y-auto">
                 {segments
-                  .filter((s) => s.id !== editForm.segment_id)
+                  .filter((s) => !editForm.segment_ids.includes(s.id))
                   .map((s) => {
                     const checked = editForm.exclude_segment_ids.includes(s.id);
                     return (
@@ -431,7 +456,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                         key={s.id}
                         type="button"
                         onClick={() => toggleExclude(s.id)}
-                        className={`w-full flex items-center gap-3 px-4 py-3 border rounded-xl text-left transition-colors ${checked ? "border-red-300 bg-red-50" : "border-gray-200 hover:border-gray-300"}`}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 border rounded-xl text-left transition-colors ${checked ? "border-red-300 bg-red-50" : "border-gray-200 hover:border-gray-300"}`}
                       >
                         <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${checked ? "border-red-400 bg-red-400" : "border-gray-300"}`}>
                           {checked && <X size={10} className="text-white" strokeWidth={3} />}
@@ -449,7 +474,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
           </div>
 
           <CampaignAudienceSummary
-            segmentId={editForm.segment_id}
+            segmentIds={editForm.segment_ids}
             excludeSegmentIds={editForm.exclude_segment_ids}
           />
 
@@ -484,7 +509,8 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                   name: editForm.name,
                   subject: editForm.subject,
                   preview_text: editForm.preview_text || undefined,
-                  segment_id: editForm.segment_id || undefined,
+                  segment_ids: editForm.segment_ids,
+                  segment_id: editForm.segment_ids[0] || undefined,
                   template_id: editForm.template_id || undefined,
                   exclude_segment_ids: editForm.exclude_segment_ids,
                   scheduled_at: editForm.scheduled_at ? new Date(editForm.scheduled_at).toISOString() : null,

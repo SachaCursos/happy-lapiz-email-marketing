@@ -19,6 +19,13 @@ from app.models.segment import Segment
 logger = logging.getLogger(__name__)
 
 
+def _campaign_seg_ids(campaign: Campaign) -> list[int]:
+    ids = list(campaign.segment_ids or [])
+    if ids:
+        return ids
+    return [campaign.segment_id] if campaign.segment_id else []
+
+
 def _fmt_nombre(name: str | None, email: str = "") -> str:
     """Return title-cased first name only. Falls back to email prefix or 'cliente'."""
     raw = (name or email.split("@")[0] or "cliente").strip()
@@ -443,7 +450,7 @@ def count_audience_completion_attempts(
         from app.services.campaign_audience import get_campaign_recipient_ids
 
         recipient_ids = get_campaign_recipient_ids(
-            session, campaign.segment_id, campaign.exclude_segment_ids,
+            session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
         )
     if not recipient_ids:
         return 0
@@ -519,7 +526,7 @@ def count_recipients_with_success(
         from app.services.campaign_audience import get_campaign_recipient_ids
 
         recipient_ids = get_campaign_recipient_ids(
-            session, campaign.segment_id, campaign.exclude_segment_ids,
+            session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
         )
     if not recipient_ids:
         return 0
@@ -562,7 +569,7 @@ def is_campaign_audience_complete(session: Session, campaign: Campaign) -> bool:
     from app.services.campaign_audience import get_campaign_recipient_ids
 
     recipient_ids = get_campaign_recipient_ids(
-        session, campaign.segment_id, campaign.exclude_segment_ids,
+        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     if not recipient_ids:
         return True
@@ -602,11 +609,11 @@ def get_campaign_send_progress(session: Session, campaign: Campaign) -> dict:
     from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipient_ids
 
     counts = count_campaign_recipients(
-        session, campaign.segment_id, campaign.exclude_segment_ids,
+        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     total = counts["recipient_count"]
     recipient_ids = get_campaign_recipient_ids(
-        session, campaign.segment_id, campaign.exclude_segment_ids,
+        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     delivered = count_recipients_with_success(session, campaign, recipient_ids)
     pending = len(get_pending_contact_ids(session, campaign))
@@ -635,7 +642,7 @@ def finalize_campaign_status(
 
     if total_in_segment <= 0:
         counts = count_campaign_recipients(
-            session, campaign.segment_id, campaign.exclude_segment_ids,
+            session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
         )
         total_in_segment = counts["recipient_count"]
 
@@ -670,7 +677,7 @@ def get_pending_contact_ids(session: Session, campaign: Campaign) -> List[int]:
     from app.services.campaign_audience import get_campaign_recipient_ids
 
     recipient_ids = get_campaign_recipient_ids(
-        session, campaign.segment_id, campaign.exclude_segment_ids,
+        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     if not recipient_ids:
         return []
@@ -757,7 +764,7 @@ def send_campaign_batch(
         if total_in_segment <= 0:
             from app.services.campaign_audience import count_campaign_recipients
             counts = count_campaign_recipients(
-                session, campaign.segment_id, campaign.exclude_segment_ids,
+                session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
             )
             total_in_segment = counts["recipient_count"]
 
@@ -833,7 +840,7 @@ def finalize_stuck_sending_campaigns(session: Session) -> int:
             from app.services.campaign_audience import count_campaign_recipients
 
             counts = count_campaign_recipients(
-                session, campaign.segment_id, campaign.exclude_segment_ids,
+                session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
             )
             finalize_campaign_status(
                 session, campaign, counts["recipient_count"], auto_resume=False,
@@ -857,7 +864,7 @@ def resume_pending_campaign_sends() -> None:
                 if not pending or is_campaign_audience_complete(session, campaign):
                     from app.services.campaign_audience import count_campaign_recipients
                     counts = count_campaign_recipients(
-                        session, campaign.segment_id, campaign.exclude_segment_ids,
+                        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
                     )
                     finalize_campaign_status(
                         session, campaign, counts["recipient_count"], auto_resume=False,

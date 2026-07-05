@@ -34,7 +34,8 @@ class SendOptions(BaseModel):
 
 
 class AudiencePreviewRequest(BaseModel):
-    segment_id: int
+    segment_id: Optional[int] = None
+    segment_ids: Optional[List[int]] = None
     exclude_segment_ids: List[int] = []
 
 
@@ -79,12 +80,16 @@ def preview_campaign_audience(
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    if not session.get(Segment, payload.segment_id):
-        raise HTTPException(status_code=404, detail="Segmento no encontrado")
+    seg_ids = payload.segment_ids or ([payload.segment_id] if payload.segment_id else [])
+    if not seg_ids:
+        raise HTTPException(status_code=400, detail="No se especificó ningún segmento")
+    for sid in seg_ids:
+        if not session.get(Segment, sid):
+            raise HTTPException(status_code=404, detail=f"Segmento {sid} no encontrado")
     return count_campaign_recipients(
         session,
-        payload.segment_id,
-        payload.exclude_segment_ids or None,
+        segment_ids=seg_ids,
+        exclude_segment_ids=payload.exclude_segment_ids or None,
     )
 
 
@@ -165,11 +170,11 @@ def send_campaign_now(
     if c.status not in ("draft", "scheduled", "sent", "sending", "paused"):
         raise HTTPException(status_code=400, detail=f"Estado inválido para envío: {c.status}")
 
-    seg = session.get(Segment, c.segment_id)
-    if not seg:
-        raise HTTPException(status_code=400, detail="Segmento no encontrado")
+    seg_ids = (c.segment_ids or []) or ([c.segment_id] if c.segment_id else [])
+    if not seg_ids:
+        raise HTTPException(status_code=400, detail="Segmento no configurado")
 
-    contacts = get_campaign_recipients(session, c.segment_id, c.exclude_segment_ids)
+    contacts = get_campaign_recipients(session, segment_ids=seg_ids, exclude_segment_ids=c.exclude_segment_ids)
     if not contacts:
         raise HTTPException(
             status_code=400,

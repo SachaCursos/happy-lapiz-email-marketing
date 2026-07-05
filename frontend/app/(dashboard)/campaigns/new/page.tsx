@@ -19,7 +19,7 @@ export default function NewCampaignPage() {
     name: "",
     subject: "",
     preview_text: "",
-    segment_id: 0,
+    segment_ids: [] as number[],
     exclude_segment_ids: [] as number[],
     template_id: 0,
     scheduled_at: "",
@@ -38,6 +38,8 @@ export default function NewCampaignPage() {
   const mutation = useMutation({
     mutationFn: () => campaignsApi.create({
       ...form,
+      segment_ids: form.segment_ids,
+      segment_id: form.segment_ids[0] ?? undefined,
       exclude_segment_ids: form.exclude_segment_ids.length ? form.exclude_segment_ids : undefined,
       scheduled_at: form.scheduled_at ? new Date(form.scheduled_at).toISOString() : undefined,
       status: form.scheduled_at ? "scheduled" : "draft",
@@ -48,9 +50,19 @@ export default function NewCampaignPage() {
     },
   });
 
-  const selectedSeg = segments.find((s) => s.id === form.segment_id);
+  const selectedSegs = segments.filter((s) => form.segment_ids.includes(s.id));
   const selectedTpl = templates.find((t) => t.id === form.template_id);
   const excludedSegs = segments.filter((s) => form.exclude_segment_ids.includes(s.id));
+
+  function toggleInclude(id: number) {
+    setForm((f) => ({
+      ...f,
+      segment_ids: f.segment_ids.includes(id)
+        ? f.segment_ids.filter((x) => x !== id)
+        : [...f.segment_ids, id],
+      exclude_segment_ids: f.exclude_segment_ids.filter((x) => x !== id),
+    }));
+  }
 
   function toggleExclude(id: number) {
     setForm((f) => ({
@@ -63,7 +75,7 @@ export default function NewCampaignPage() {
 
   function canNext() {
     if (step === 0) return form.name && form.subject;
-    if (step === 1) return form.segment_id > 0;
+    if (step === 1) return form.segment_ids.length > 0;
     if (step === 2) return form.template_id > 0;
     return true;
   }
@@ -126,31 +138,31 @@ export default function NewCampaignPage() {
             {/* Incluir */}
             <div>
               <h2 className="font-semibold text-gray-900 mb-1">Enviar a</h2>
-              <p className="text-xs text-gray-400 mb-3">Selecciona el segmento que recibirá esta campaña</p>
+              <p className="text-xs text-gray-400 mb-3">Selecciona uno o más segmentos. Los contactos duplicados entre segmentos solo recibirán el correo una vez.</p>
               {segments.length === 0 ? (
                 <p className="text-gray-500 text-sm">No hay segmentos. <Link href="/segments/new" className="text-brand-600 underline">Crear uno</Link></p>
               ) : (
-                <div className="space-y-2">
-                  {segments.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => {
-                        setForm((f) => ({
-                          ...f,
-                          segment_id: s.id,
-                          exclude_segment_ids: f.exclude_segment_ids.filter((x) => x !== s.id),
-                        }));
-                      }}
-                      className={`w-full flex items-center justify-between px-4 py-3 border rounded-xl text-left transition-colors ${form.segment_id === s.id ? "border-brand-500 bg-brand-50" : "border-gray-200 hover:border-gray-300"}`}
-                    >
-                      <div>
-                        <p className="font-medium text-gray-900">{s.name}</p>
-                        {s.description && <p className="text-xs text-gray-400">{s.description}</p>}
-                      </div>
-                      <span className="text-sm font-semibold text-gray-600">{s.contact_count?.toLocaleString()} contactos</span>
-                    </button>
-                  ))}
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {segments.map((s) => {
+                    const checked = form.segment_ids.includes(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => toggleInclude(s.id)}
+                        className={`w-full flex items-center gap-3 px-4 py-3 border rounded-xl text-left transition-colors ${checked ? "border-brand-500 bg-brand-50" : "border-gray-200 hover:border-gray-300"}`}
+                      >
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${checked ? "border-brand-500 bg-brand-500" : "border-gray-300"}`}>
+                          {checked && <Check size={10} className="text-white" strokeWidth={3} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-gray-900 text-sm">{s.name}</p>
+                          {s.description && <p className="text-xs text-gray-400 truncate">{s.description}</p>}
+                        </div>
+                        <span className="text-sm font-semibold text-gray-600 shrink-0">{s.contact_count?.toLocaleString()} contactos</span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -161,7 +173,7 @@ export default function NewCampaignPage() {
               <p className="text-xs text-gray-400 mb-3">Opcional — los contactos de estos segmentos no recibirán la campaña</p>
               <div className="space-y-2">
                 {segments
-                  .filter((s) => s.id !== form.segment_id)
+                  .filter((s) => !form.segment_ids.includes(s.id))
                   .map((s) => {
                     const checked = form.exclude_segment_ids.includes(s.id);
                     return (
@@ -186,7 +198,7 @@ export default function NewCampaignPage() {
             </div>
 
             <CampaignAudienceSummary
-              segmentId={form.segment_id}
+              segmentIds={form.segment_ids}
               excludeSegmentIds={form.exclude_segment_ids}
             />
           </div>
@@ -220,14 +232,13 @@ export default function NewCampaignPage() {
             <h2 className="font-semibold text-gray-900 mb-4">Revisar y crear</h2>
 
             <CampaignAudienceSummary
-              segmentId={form.segment_id}
+              segmentIds={form.segment_ids}
               excludeSegmentIds={form.exclude_segment_ids}
             />
 
             {[
               { label: "Nombre", value: form.name },
               { label: "Asunto", value: form.subject },
-              { label: "Enviar a", value: selectedSeg?.name ?? "—" },
               { label: "Plantilla", value: selectedTpl?.name ?? "—" },
               { label: "Programada para", value: form.scheduled_at ? new Date(form.scheduled_at).toLocaleString("es-CL") : "Borrador (envío manual)" },
             ].map(({ label, value }) => (
@@ -236,6 +247,19 @@ export default function NewCampaignPage() {
                 <span className="font-medium text-gray-900">{value}</span>
               </div>
             ))}
+
+            <div className="py-2 border-b border-gray-100 text-sm">
+              <div className="flex justify-between mb-2">
+                <span className="text-gray-500">Enviar a</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 justify-end">
+                {selectedSegs.map((s) => (
+                  <span key={s.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-brand-50 text-brand-700 border border-brand-200 rounded-full text-xs font-medium">
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+            </div>
 
             {excludedSegs.length > 0 && (
               <div className="py-2 border-b border-gray-100 text-sm">

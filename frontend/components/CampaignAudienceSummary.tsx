@@ -6,28 +6,29 @@ import { campaignsApi } from "@/lib/api";
 import { CampaignAudiencePreview } from "@/lib/types";
 
 type Props = {
-  segmentId: number;
+  segmentIds: number[];
   excludeSegmentIds: number[];
   className?: string;
 };
 
-export function CampaignAudienceSummary({ segmentId, excludeSegmentIds, className = "" }: Props) {
+export function CampaignAudienceSummary({ segmentIds, excludeSegmentIds, className = "" }: Props) {
+  const includeKey = [...segmentIds].sort((a, b) => a - b).join(",");
   const excludeKey = [...excludeSegmentIds].sort((a, b) => a - b).join(",");
 
   const { data, isLoading, isError } = useQuery<CampaignAudiencePreview>({
-    queryKey: ["campaign-audience", segmentId, excludeKey],
+    queryKey: ["campaign-audience", includeKey, excludeKey],
     queryFn: () =>
       campaignsApi
         .audiencePreview({
-          segment_id: segmentId,
+          segment_ids: segmentIds,
           exclude_segment_ids: excludeSegmentIds,
         })
         .then((r) => r.data),
-    enabled: segmentId > 0,
+    enabled: segmentIds.length > 0,
     staleTime: 30_000,
   });
 
-  if (segmentId <= 0) return null;
+  if (segmentIds.length === 0) return null;
 
   return (
     <div className={`rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 ${className}`}>
@@ -49,7 +50,7 @@ export function CampaignAudienceSummary({ segmentId, excludeSegmentIds, classNam
                 {data.recipient_count === 1 ? "persona recibirá" : "personas recibirán"} esta campaña
               </p>
               <p className="mt-1 text-xs text-brand-700/80">
-                {data.segment_count.toLocaleString("es-CL")} en el segmento
+                {data.segment_count.toLocaleString("es-CL")} en {segmentIds.length === 1 ? "el segmento" : `los ${segmentIds.length} segmentos`}
                 {data.excluded_count > 0 && (
                   <>
                     {" · "}

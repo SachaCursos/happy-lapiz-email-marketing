@@ -215,6 +215,8 @@ def _run_migrations():
         "DELETE FROM form_views WHERE source = 'backfill'",
         "DELETE FROM form_views WHERE source = 'submit'",
         "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS stats_since TIMESTAMP",
+        "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS segment_ids JSONB",
+        "ALTER TABLE campaigns ALTER COLUMN segment_id DROP NOT NULL",
         """CREATE TABLE IF NOT EXISTS _internal_flags (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT ''
