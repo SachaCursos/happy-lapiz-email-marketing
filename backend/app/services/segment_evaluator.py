@@ -55,7 +55,7 @@ def _build_clause(node: dict) -> Optional[Any]:
     op = node.get("op")
     value = node.get("value")
 
-    # Condición especial: producto comprado (busca en shopify_events ordered_product)
+    # Condición especial: producto comprado
     if field == "purchased_product":
         if not isinstance(value, dict):
             return None
@@ -64,10 +64,11 @@ def _build_clause(node: dict) -> Optional[Any]:
             return None
         return text("""
             LOWER(contacts.email) IN (
-                SELECT LOWER(email) FROM shopify_events
-                WHERE automation_triggered = 'ordered_product'
-                AND email IS NOT NULL AND email != ''
-                AND payload->'_item'->>'product_id' = :product_id
+                SELECT LOWER(o.email)
+                FROM shopify_order_line_items li
+                JOIN shopify_orders o ON o.id = li.order_id
+                WHERE li.product_id = :product_id
+                  AND o.email IS NOT NULL AND o.email != ''
             )
         """).bindparams(product_id=product_id)
 

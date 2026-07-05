@@ -303,6 +303,58 @@ async def shopify_webhook(
             _log_event(cur, "ordered_product", order_id,
                        email, {**payload, "_item": item}, now, "ordered_product")
 
+        # Sync to normalized order tables so the purchased_product segment filter works
+        import json as _json
+        cur.execute("""
+            INSERT INTO shopify_orders (id, order_number, email, phone, financial_status, fulfillment_status,
+                total_price, subtotal_price, total_tax, total_discounts, currency, created_at, customer_id,
+                raw, synced_at, first_name, last_name, order_name, payment_gateway, line_items_json)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (id) DO NOTHING
+        """, (
+            order_id,
+            payload.get("order_number"),
+            email,
+            payload.get("phone"),
+            payload.get("financial_status"),
+            payload.get("fulfillment_status"),
+            float(payload.get("total_price") or 0),
+            float(payload.get("subtotal_price") or 0),
+            float(payload.get("total_tax") or 0),
+            float(payload.get("total_discounts") or 0),
+            payload.get("currency"),
+            now,
+            str(((payload.get("customer") or {}).get("id") or "")),
+            _json.dumps(payload),
+            now,
+            (payload.get("billing_address") or {}).get("first_name") or (payload.get("customer") or {}).get("first_name"),
+            (payload.get("billing_address") or {}).get("last_name") or (payload.get("customer") or {}).get("last_name"),
+            payload.get("name"),
+            payload.get("payment_gateway"),
+            _json.dumps(items),
+        ))
+        order_number = payload.get("order_number")
+        for item in items:
+            cur.execute("""
+                INSERT INTO shopify_order_line_items (id, order_id, order_number, product_id, variant_id,
+                    title, variant_title, sku, quantity, price, total_discount, synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+            """, (
+                str(item.get("id", "")),
+                order_id,
+                order_number,
+                str(item.get("product_id", "")),
+                str(item.get("variant_id", "")),
+                item.get("title", ""),
+                item.get("variant_title", ""),
+                item.get("sku", ""),
+                item.get("quantity", 1),
+                float(item.get("price") or 0),
+                float(item.get("total_discount") or 0),
+                now,
+            ))
+
         # coupon_used: if discount codes present
         for dc in discount_codes:
             code = dc.get("code", "")
