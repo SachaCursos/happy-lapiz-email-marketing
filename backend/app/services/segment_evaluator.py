@@ -72,6 +72,24 @@ def _build_clause(node: dict) -> Optional[Any]:
             )
         """).bindparams(product_id=product_id)
 
+    # Condición especial: recibió (o no) una campaña específica
+    if field == "received_campaign":
+        if not isinstance(value, dict):
+            return None
+        campaign_id = int(value.get("campaign_id", 0) or 0)
+        if not campaign_id:
+            return None
+        received = bool(value.get("received", True))
+        subq = """
+            SELECT DISTINCT cs.contact_id
+            FROM campaign_sends cs
+            WHERE cs.campaign_id = :campaign_id
+              AND cs.status IN ('sent', 'delivered', 'opened', 'clicked', 'bounced', 'complained')
+        """
+        if received:
+            return text(f"contacts.id IN ({subq})").bindparams(campaign_id=campaign_id)
+        return text(f"contacts.id NOT IN ({subq})").bindparams(campaign_id=campaign_id)
+
     # Condición especial: Nº de rebotes en campañas (campaign_sends con status bounced)
     if field == "campaign_bounce_count":
         try:

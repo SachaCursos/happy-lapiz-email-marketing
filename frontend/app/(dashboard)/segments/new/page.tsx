@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { segmentsApi, contactsApi, formsApi, shopifyApi, ShopifyProduct } from "@/lib/api";
+import { segmentsApi, contactsApi, formsApi, shopifyApi, campaignsApi, ShopifyProduct } from "@/lib/api";
+import { Campaign } from "@/lib/types";
 import { SegmentConditions, SegmentRule, SignupForm } from "@/lib/types";
 import { ArrowLeft, Plus, Trash2, Search, X, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -26,6 +27,7 @@ const FIELDS = [
   { value: "campaign_bounce_count", label: "Rebotes en campañas",      type: "number" },
   { value: "no_open_in_last_n_emails", label: "Sin apertura en últimos N correos", type: "last_n_no_open" },
   { value: "purchased_product",        label: "Producto comprado",                type: "product_shopify" },
+  { value: "received_campaign",        label: "Recibió campaña",                  type: "campaign_sent" },
 ];
 
 const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
@@ -265,6 +267,114 @@ function ShopifyProductPicker({
   );
 }
 
+interface CampaignSentValue { campaign_id: number; campaign_name: string; received: boolean; }
+
+function parseCampaignSentValue(value: unknown): CampaignSentValue {
+  if (value && typeof value === "object" && "campaign_id" in value) {
+    const v = value as { campaign_id?: unknown; campaign_name?: unknown; received?: unknown };
+    return {
+      campaign_id: Number(v.campaign_id) || 0,
+      campaign_name: String(v.campaign_name || ""),
+      received: v.received !== false,
+    };
+  }
+  return { campaign_id: 0, campaign_name: "", received: true };
+}
+
+function CampaignSentPicker({
+  value,
+  onChange,
+}: {
+  value: CampaignSentValue;
+  onChange: (v: CampaignSentValue) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const { data: campaigns = [], isLoading } = useQuery<Campaign[]>({
+    queryKey: ["campaigns-segment-picker"],
+    queryFn: () => campaignsApi.list().then((r) => r.data),
+    staleTime: 2 * 60_000,
+  });
+
+  useEffect(() => {
+    function h(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const filtered = campaigns.filter((c) =>
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    c.subject.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <div className="relative" ref={ref}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 min-w-[220px] max-w-[300px]"
+        >
+          {value.campaign_name
+            ? <span className="flex-1 text-left truncate text-gray-900">{value.campaign_name}</span>
+            : <span className="flex-1 text-left text-gray-400">Seleccionar campaña...</span>}
+          <Search size={13} className="text-gray-400 shrink-0" />
+        </button>
+
+        {open && (
+          <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 w-80">
+            <div className="p-2 border-b border-gray-100">
+              <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-1.5">
+                <Search size={13} className="text-gray-400 shrink-0" />
+                <input
+                  autoFocus
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Buscar campaña..."
+                  className="flex-1 text-sm focus:outline-none"
+                />
+                {search && <button onClick={() => setSearch("")} className="text-gray-400 hover:text-gray-600"><X size={12} /></button>}
+              </div>
+            </div>
+            <div className="max-h-60 overflow-y-auto">
+              {isLoading && <div className="px-4 py-6 text-center text-sm text-gray-400">Cargando campañas...</div>}
+              {!isLoading && filtered.length === 0 && <div className="px-4 py-6 text-center text-sm text-gray-400">Sin resultados</div>}
+              {filtered.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    onChange({ ...value, campaign_id: c.id, campaign_name: c.name });
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                  className={`w-full flex flex-col px-4 py-2.5 text-left hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0 ${value.campaign_id === c.id ? "bg-brand-50" : ""}`}
+                >
+                  <p className="text-sm font-medium text-gray-900 truncate">{c.name}</p>
+                  <p className="text-xs text-gray-400 truncate">{c.subject}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <select
+        value={value.received ? "true" : "false"}
+        onChange={(e) => onChange({ ...value, received: e.target.value === "true" })}
+        className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+      >
+        <option value="true">Sí, la recibió</option>
+        <option value="false">No, no la recibió</option>
+      </select>
+    </div>
+  );
+}
+
 export default function NewSegmentPage() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -410,6 +520,8 @@ export default function NewSegmentPage() {
                               ? 5
                             : nextField === "purchased_product"
                               ? { product_id: "", product_title: "" }
+                            : nextField === "received_campaign"
+                              ? { campaign_id: 0, campaign_name: "", received: true }
                             : nextType === "boolean"
                               ? true
                               : "";
@@ -425,7 +537,7 @@ export default function NewSegmentPage() {
                         <option key={f.value} value={f.value}>{f.label}</option>
                       ))}
                     </select>
-                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && fieldType !== "product_shopify" && (
+                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && fieldType !== "product_shopify" && fieldType !== "campaign_sent" && (
                       <select
                         value={rule.op}
                         onChange={(e) => updateRule(i, { op: e.target.value })}
@@ -493,6 +605,11 @@ export default function NewSegmentPage() {
                     ) : fieldType === "product_shopify" ? (
                       <ShopifyProductPicker
                         value={productValue}
+                        onChange={(v) => updateRule(i, { op: "eq", value: v })}
+                      />
+                    ) : fieldType === "campaign_sent" ? (
+                      <CampaignSentPicker
+                        value={parseCampaignSentValue(rule.value)}
                         onChange={(v) => updateRule(i, { op: "eq", value: v })}
                       />
                     ) : fieldType === "boolean" ? (

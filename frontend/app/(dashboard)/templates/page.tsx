@@ -40,7 +40,7 @@ function PreviewModal({ tpl, onClose }: { tpl: Template; onClose: () => void }) 
         </div>
         <div className="flex-1 overflow-y-auto p-4">
           <iframe
-            srcDoc={tpl.html_content}
+            srcDoc={tpl.html_content ?? undefined}
             sandbox="allow-same-origin"
             title={tpl.name}
             className="w-full rounded-lg border border-gray-100"
@@ -236,7 +236,7 @@ export default function TemplatesPage() {
                 onClick={() => setPreview(tpl)}
               >
                 <iframe
-                  srcDoc={tpl.html_content}
+                  srcDoc={tpl.html_content ?? undefined}
                   sandbox="allow-same-origin"
                   title={tpl.name}
                   className="absolute top-0 left-0 border-0 pointer-events-none"
