@@ -7,6 +7,7 @@ import resend
 
 from app.core.config import settings
 from app.models.user import User
+from app.services.email_sender import apply_email_override
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,11 @@ def send_set_password_email(user: User, token: str) -> None:
     </div>
     """
     try:
+        to, subject = apply_email_override([user.email], "Activa tu cuenta")
         resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
-            "to": [user.email],
-            "subject": "Activa tu cuenta",
+            "to": to,
+            "subject": subject,
             "html": html,
         })
     except Exception:

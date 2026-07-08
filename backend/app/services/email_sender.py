@@ -17,6 +17,15 @@ from app.models.template import Template
 logger = logging.getLogger(__name__)
 
 
+def apply_email_override(to: List[str], subject: str) -> tuple[List[str], str]:
+    """When EMAIL_OVERRIDE_TO is set (staging), redirect every outgoing email
+    to that single inbox instead of the real recipient(s), tagging the
+    original recipient(s) into the subject so test sends stay traceable."""
+    if not settings.EMAIL_OVERRIDE_TO:
+        return to, subject
+    return [settings.EMAIL_OVERRIDE_TO], f"[{', '.join(to)}] {subject}"
+
+
 def _fmt_nombre(name: str | None, email: str = "") -> str:
     """Return title-cased first name only. Falls back to email prefix or 'cliente'."""
     raw = (name or email.split("@")[0] or "cliente").strip()
@@ -203,9 +212,10 @@ def _send_one(
     ).first()
 
     try:
+        to, subject = apply_email_override([contact.email], subject)
         response = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
-            "to": [contact.email],
+            "to": to,
             "subject": subject,
             "html": html,
             "headers": _unsub_headers(contact.email),

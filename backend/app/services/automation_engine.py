@@ -30,7 +30,7 @@ from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
-from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre
+from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre, apply_email_override
 from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment
 
@@ -767,10 +767,13 @@ def _send_email_step(
             html = _re.sub(r"(<body[^>]*>)", r"\1" + preheader, html, count=1) if "<body" in html.lower() else preheader + html
 
         resend.api_key = settings.RESEND_API_KEY
+        to, subject = apply_email_override(
+            [contact.email], _env.from_string(str(step.get("subject", ""))).render(**vars_)
+        )
         result = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
-            "to": [contact.email],
-            "subject": _env.from_string(str(step.get("subject", ""))).render(**vars_),
+            "to": to,
+            "subject": subject,
             "html": html,
             "headers": _unsub_headers(contact.email),
         })
