@@ -93,6 +93,32 @@ def preview_campaign_audience(
     )
 
 
+@router.post("/{campaign_id}/duplicate", response_model=CampaignRead, status_code=201)
+def duplicate_campaign(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_editor),
+):
+    c = session.get(Campaign, campaign_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
+    copy = Campaign(
+        name=f"{c.name} (copia)",
+        subject=c.subject,
+        preview_text=c.preview_text,
+        template_id=c.template_id,
+        segment_id=c.segment_id,
+        segment_ids=c.segment_ids,
+        exclude_segment_ids=c.exclude_segment_ids,
+        status="draft",
+        created_by=current_user.id,
+    )
+    session.add(copy)
+    session.commit()
+    session.refresh(copy)
+    return copy
+
+
 @router.get("/{campaign_id}", response_model=CampaignRead)
 def get_campaign(campaign_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
     c = session.get(Campaign, campaign_id)

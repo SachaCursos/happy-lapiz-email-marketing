@@ -100,13 +100,13 @@ const TEMPLATE_VARS: { group: string; vars: { key: string; desc: string; raw?: b
       { key: "dias_para_cumpleanos",           desc: "Días que faltan para el cumpleaños" },
       { key: "fecha_cumpleanos",               desc: "Fecha del próximo cumpleaños" },
       { key: "edad_regalon",                   desc: "Edad del regalón (custom_fields.edad_regalon)" },
-      { key: "productos_recomendados_edad_html", desc: "Grilla HTML: edad del regalón + más vendidos, sin productos ya comprados" },
+      { key: "productos_recomendados_edad_html", desc: "Grilla HTML — criterios en pestaña Criterios dinámicos → recommended_products" },
     ],
   },
   {
     group: "Cross-sell (con configuración)",
     vars: [
-      { key: "recommended_products_html", desc: "Grilla HTML con los mismos criterios (edad + más vendidos; sin edad → más vendidos). Requiere cross_sell_config." },
+      { key: "recommended_products_html", desc: "Grilla HTML — criterios en Criterios dinámicos → cross sell" },
     ],
   },
 ];

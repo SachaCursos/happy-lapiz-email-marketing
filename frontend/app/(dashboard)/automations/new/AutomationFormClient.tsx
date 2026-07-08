@@ -9,6 +9,7 @@ import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
+import { ProductMultiSelect } from "@/components/ProductMultiSelect";
 
 // ── Trigger definitions ────────────────────────────────────────────────────────
 const TRIGGERS: {
@@ -276,93 +277,6 @@ function CommuneMultiSelect({ selected, onChange }: { selected: string[]; onChan
           </div>
           <div className="p-2 border-t border-gray-100 flex justify-between items-center">
             <button type="button" onClick={() => onChange([])} className="text-xs text-gray-400 hover:text-red-500">Limpiar todo</button>
-            <button type="button" onClick={() => { setOpen(false); setSearch(""); }} className="text-xs text-brand-600 font-medium hover:text-brand-700">Listo ✓</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Product multi-select ─────────────────────────────────────────────────────
-function ProductMultiSelect({ selected, onChange, products, loading }: {
-  selected: string[];
-  onChange: (v: string[]) => void;
-  products: ShopifyProduct[];
-  loading: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const filtered = products.filter((p) => p.title.toLowerCase().includes(search.toLowerCase()));
-  const selectedProducts = products.filter((p) => selected.includes(p.id));
-
-  function toggle(id: string) {
-    onChange(selected.includes(id) ? selected.filter((i) => i !== id) : [...selected, id]);
-  }
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full text-left border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 flex items-center justify-between bg-white"
-      >
-        <span className={selected.length === 0 ? "text-gray-400" : "text-gray-900"}>
-          {loading ? "Cargando productos..." : selected.length === 0
-            ? "Todos los productos (sin filtro)"
-            : `${selected.length} producto${selected.length !== 1 ? "s" : ""} seleccionado${selected.length !== 1 ? "s" : ""}`}
-        </span>
-        <ChevronDown size={14} className="text-gray-400 shrink-0" />
-      </button>
-
-      {selectedProducts.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {selectedProducts.map((p) => (
-            <span key={p.id} className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-0.5 rounded-full max-w-[220px]">
-              <span className="truncate">{p.title}</span>
-              <button type="button" onClick={() => toggle(p.id)} className="hover:text-brand-900 shrink-0"><X size={10} /></button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {open && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl">
-          <div className="p-2 border-b border-gray-100">
-            <input
-              autoFocus
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar producto..."
-              className="w-full text-sm px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-          <div className="max-h-64 overflow-y-auto">
-            {filtered.map((p) => (
-              <label key={p.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-50">
-                <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggle(p.id)} className="accent-brand-600 shrink-0" />
-                {p.image_url && <img src={p.image_url} alt={p.title} className="w-9 h-9 rounded object-cover shrink-0 border border-gray-100" />}
-                <div className="min-w-0">
-                  <p className="text-sm text-gray-800 truncate">{p.title}</p>
-                  {p.price && <p className="text-xs text-gray-400">${parseFloat(p.price).toLocaleString("es-CL")}</p>}
-                </div>
-              </label>
-            ))}
-            {filtered.length === 0 && !loading && <p className="text-sm text-gray-400 px-3 py-3 text-center">Sin resultados</p>}
-            {loading && <p className="text-sm text-gray-400 px-3 py-3 text-center">Cargando...</p>}
-          </div>
-          <div className="p-2 border-t border-gray-100 flex justify-between items-center">
-            <button type="button" onClick={() => onChange([])} className="text-xs text-gray-400 hover:text-red-500">Sin filtro</button>
             <button type="button" onClick={() => { setOpen(false); setSearch(""); }} className="text-xs text-brand-600 font-medium hover:text-brand-700">Listo ✓</button>
           </div>
         </div>
@@ -759,10 +673,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
   // Product filter (for ordered_product trigger)
   const [productFilterIds, setProductFilterIds] = useState<string[]>([]);
 
-  // Cross-sell config (for ordered_product trigger)
-  const [crossSellEnabled, setCrossSellEnabled] = useState(false);
-  const [crossSellMaxProducts, setCrossSellMaxProducts] = useState(4);
-
   function buildItemsCountFilter(): Record<string, unknown> | undefined {
     const presets: Record<string, { operator: string; value: number }> = {
       eq_1: { operator: "eq", value: 1 },
@@ -858,6 +768,12 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       if (lh % 24 === 0) { setLookbackValue(lh / 24); setLookbackUnit("dias"); }
       else { setLookbackValue(lh); setLookbackUnit("horas"); }
     }
+
+    // Product filter (ordered_product)
+    if (Array.isArray(tc.product_filter_ids)) {
+      setProductFilterIds((tc.product_filter_ids as unknown[]).map(String));
+    }
+
     if (existingAuto.coupon_campaign_id) setCouponCampaignId(existingAuto.coupon_campaign_id);
     // Steps
     if (existingAuto.steps?.length) {
@@ -1000,13 +916,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       // Attach product filter if configured
       if (PRODUCT_FILTER_TRIGGERS.has(triggerType) && productFilterIds.length > 0) {
         triggerConfig.product_filter_ids = productFilterIds;
-      }
-
-      // Attach cross-sell config if configured
-      if (crossSellEnabled && PRODUCT_FILTER_TRIGGERS.has(triggerType)) {
-        triggerConfig.cross_sell_config = {
-          max_products: crossSellMaxProducts,
-        };
       }
 
       const stepsPayload: AutomationStep[] = steps.map((s, i) => {
@@ -1384,54 +1293,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
               />
               {productFilterIds.length === 0 && (
                 <p className="text-xs text-gray-400 mt-1">Sin filtro: se activa con cualquier producto comprado.</p>
-              )}
-            </div>
-          )}
-
-          {/* Cross-sell config — only for ordered_product */}
-          {PRODUCT_FILTER_TRIGGERS.has(triggerType) && (
-            <div>
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={crossSellEnabled}
-                  onChange={(e) => setCrossSellEnabled(e.target.checked)}
-                  className="accent-brand-600 w-4 h-4"
-                />
-                <span className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
-                  <ShoppingCart size={13} className="text-gray-400" />
-                  Configurar cross-sell (recomendar otros productos)
-                </span>
-              </label>
-
-              {crossSellEnabled && (
-                <div className="mt-3 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">Mostrar máximo</span>
-                    <input
-                      type="number" min={1} max={8} value={crossSellMaxProducts}
-                      onChange={(e) => setCrossSellMaxProducts(Math.max(1, Math.min(8, Number(e.target.value))))}
-                      className="w-16 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <span className="text-sm text-gray-600">productos</span>
-                  </div>
-
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 space-y-2">
-                    <p className="text-xs font-semibold text-amber-800">Cómo usarlo en tu plantilla:</p>
-                    <div>
-                      <p className="text-xs text-amber-700 mb-0.5">Grilla de productos recomendados:</p>
-                      <code className="text-xs bg-white border border-amber-200 rounded px-1.5 py-0.5 text-amber-900">{"{{ recommended_products_html }}"}</code>
-                    </div>
-                    <div>
-                      <p className="text-xs text-amber-700 mb-0.5">Asunto dinámico (ejemplo):</p>
-                      <code className="text-xs bg-white border border-amber-200 rounded px-1.5 py-0.5 text-amber-900">{"¿Compraste {{ first_product }}? También te puede gustar..."}</code>
-                    </div>
-                    <p className="text-xs text-amber-600">
-                      Filtra por edad del regalón si está disponible; si no, muestra los más vendidos del catálogo.
-                      Excluye productos ya comprados.
-                    </p>
-                  </div>
-                </div>
               )}
             </div>
           )}

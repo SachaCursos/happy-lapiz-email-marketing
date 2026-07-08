@@ -92,6 +92,7 @@ export const campaignsApi = {
   create: (data: unknown) => api.post("/campaigns", data),
   update: (id: number, data: unknown) => api.patch(`/campaigns/${id}`, data),
   delete: (id: number) => api.delete(`/campaigns/${id}`),
+  duplicate: (id: number) => api.post(`/campaigns/${id}/duplicate`),
   send: (id: number, limit?: number) => api.post(`/campaigns/${id}/send`, limit ? { limit } : {}),
   pause: (id: number) => api.post(`/campaigns/${id}/pause`),
   sendTest: (id: number) => api.post(`/campaigns/${id}/send-test`),
@@ -226,6 +227,23 @@ export const adminApi = {
       "/admin/shopify-images",
       { params: after ? { after } : {} }
     ),
+};
+
+// Criterios dinámicos (product recommendations)
+export interface DynamicCriteria {
+  criteria_key: string;
+  name: string;
+  description: string | null;
+  variables: string[];
+  config: Record<string, unknown>;
+  updated_at: string;
+}
+
+export const dynamicCriteriaApi = {
+  list: () => api.get<DynamicCriteria[]>("/dynamic-criteria"),
+  get: (key: string) => api.get<DynamicCriteria>(`/dynamic-criteria/${key}`),
+  update: (key: string, config: Record<string, unknown>) =>
+    api.put<DynamicCriteria>(`/dynamic-criteria/${key}`, { config }),
 };
 
 // Shopify

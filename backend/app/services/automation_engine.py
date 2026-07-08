@@ -303,88 +303,27 @@ def _product_grid_btn_color(tpl: Template) -> str:
     return btn_color
 
 
-def _fetch_recommended_products(
-    session: Session,
-    customer_email: str,
-    edad_regalon: int | None = None,
-    max_products: int = 4,
-) -> list[dict]:
-    """Catalog products with edad_recomendada, exclude purchase history, optional age filter, sort by sales."""
-    history_rows = session.execute(text("""
-        SELECT payload FROM shopify_events
-        WHERE LOWER(email) = LOWER(:email)
-          AND topic = 'orders/create'
-          AND payload IS NOT NULL
-    """), {"email": customer_email}).fetchall()
-
-    ever_bought: set[int] = set()
-    for row in history_rows:
-        try:
-            payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-            for item in payload.get("line_items", []):
-                pid = item.get("product_id")
-                if pid:
-                    ever_bought.add(int(pid))
-        except Exception:
-            pass
-
-    excl_clause = "AND sp.shopify_id != ALL(:excl)" if ever_bought else ""
-    params: dict = {}
-    if ever_bought:
-        params["excl"] = list(ever_bought)
-
-    try:
-        all_rows = session.execute(text(f"""
-            WITH order_counts AS (
-                SELECT (item->>'product_id')::bigint AS product_id, COUNT(*) AS n
-                FROM shopify_events,
-                     jsonb_array_elements(payload->'line_items') AS item
-                WHERE topic = 'orders/create'
-                  AND jsonb_typeof(payload->'line_items') = 'array'
-                GROUP BY 1
-            )
-            SELECT
-                sp.shopify_id,
-                sp.title,
-                sp.handle,
-                COALESCE(sp.imagen_url, sp.image_url) AS img,
-                COALESCE(
-                    sp.price,
-                    sp.precio_min,
-                    (sp.raw->'variants'->0->>'price')::numeric
-                ) AS price,
-                sp.edad_recomendada,
-                COALESCE(oc.n, 0) AS sales
-            FROM shopify_products sp
-            LEFT JOIN order_counts oc ON oc.product_id = sp.shopify_id
-            WHERE sp.status = 'active'
-              AND sp.edad_recomendada IS NOT NULL
-              AND sp.edad_recomendada <> ''
-              {excl_clause}
-            ORDER BY sales DESC
-        """), params).fetchall()
-    except Exception as exc:
-        logger.warning("recommended_products: query failed: %s", exc)
-        return []
-
-    result = []
-    for r in all_rows:
-        if edad_regalon is not None and not _age_matches(r[5] or "", edad_regalon):
-            continue
-        price_val = float(r[4]) if r[4] else 0
-        result.append({
-            "shopify_id": r[0],
-            "title": r[1],
-            "handle": r[2],
-            "image_url": r[3],
-            "price": f"${price_val:,.0f}".replace(",", ".") if price_val else "",
-            "url": f"https://www.happylapiz.cl/products/{r[2] or ''}",
-            "sales": int(r[6]),
-        })
-        if len(result) >= max_products:
-            break
-
-    return result
+def _parse_trigger_product_ids(extra_vars: dict | None) -> list[int]:
+    """Product IDs from the order/event that triggered this automation step."""
+    ids: list[int] = []
+    if not extra_vars:
+        return ids
+    for raw in extra_vars.get("purchased_product_ids") or []:
+        if str(raw).isdigit():
+            ids.append(int(raw))
+    first = extra_vars.get("first_product")
+    if isinstance(first, dict):
+        pid = first.get("product_id")
+        if pid and str(pid).isdigit():
+            ids.append(int(pid))
+    # Deduplicate preserving order
+    seen: set[int] = set()
+    out: list[int] = []
+    for pid in ids:
+        if pid not in seen:
+            seen.add(pid)
+            out.append(pid)
+    return out
 
 
 def _get_purchase_history_items(session: Session, customer_email: str) -> list[dict]:
@@ -648,24 +587,44 @@ def _send_email_step(
             if raw_url:
                 sep = "&" if "?" in raw_url else "?"
                 event_extra["checkout_url_with_coupon"] = f"{raw_url}{sep}discount={coupon_code}"
-        # Product recommendations (age + bestsellers; without age → bestsellers only)
-        cross_sell_cfg = (auto.trigger_config or {}).get("cross_sell_config") if auto.trigger_config else None
-        max_p = int(cross_sell_cfg.get("max_products", 4)) if cross_sell_cfg else 4
+        # Product recommendations — global criteria from Criterios dinámicos
+        from app.services.dynamic_criteria_store import load_criteria_config
+        from app.services.product_recommendations import resolve_recommended_products
+
         edad_int = _resolve_regalon_age(cf, extra_vars)
-        rec = _fetch_recommended_products(session, contact.email, edad_regalon=edad_int, max_products=max_p)
+        trigger_pids = _parse_trigger_product_ids(extra_vars)
         btn_color = _product_grid_btn_color(tpl)
         from app.services.dynamic_html_blocks import render_html_block
 
-        if cross_sell_cfg:
-            vars_["recommended_products"] = rec
-            vars_["recommended_products_html"] = render_html_block(
-                session, "recommended_products_html", rec, btn_color
-            ) or _build_cross_sell_html(rec, btn_color)
+        rec_age_cfg = load_criteria_config(session, "recommended_products")
+        rec_cross_cfg = load_criteria_config(session, "cross_sell")
 
-        vars_["productos_recomendados_edad"] = rec
-        vars_["productos_recomendados_edad_html"] = render_html_block(
-            session, "recommended_products_html", rec, btn_color
-        ) or _build_cross_sell_html(rec, btn_color)
+        rec_age = resolve_recommended_products(
+            session,
+            contact.email,
+            {"product_recommendation_config": rec_age_cfg},
+            edad_regalon=edad_int,
+            trigger_product_ids=trigger_pids,
+        )
+        rec_cross = resolve_recommended_products(
+            session,
+            contact.email,
+            {"product_recommendation_config": rec_cross_cfg},
+            edad_regalon=edad_int,
+            trigger_product_ids=trigger_pids,
+        )
+
+        if rec_age_cfg.get("enabled", True) and rec_age:
+            vars_["productos_recomendados_edad"] = rec_age
+            vars_["productos_recomendados_edad_html"] = render_html_block(
+                session, "recommended_products_html", rec_age, btn_color
+            ) or _build_cross_sell_html(rec_age, btn_color)
+
+        if rec_cross_cfg.get("enabled", True) and rec_cross:
+            vars_["recommended_products"] = rec_cross
+            vars_["recommended_products_html"] = render_html_block(
+                session, "recommended_products_html", rec_cross, btn_color
+            ) or _build_cross_sell_html(rec_cross, btn_color)
 
         # Purchase history variables (always available, derived from shopify_events)
         orders_count_val = contact.orders_count or 0

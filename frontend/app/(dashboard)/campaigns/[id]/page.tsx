@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { campaignsApi, contactsApi, segmentsApi, templatesApi } from "@/lib/api";
 import { Campaign, CampaignStats, CampaignConversions, Segment, Template } from "@/lib/types";
-import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Check, Calendar, UserMinus, BarChart2, ShoppingCart, Pause } from "lucide-react";
+import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Check, Calendar, UserMinus, BarChart2, ShoppingCart, Pause, Copy } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
 import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
@@ -68,6 +69,7 @@ function StatBar({ label, value, total, color }: { label: string; value: number;
 export default function CampaignDetailPage({ params }: { params: { id: string } }) {
   const id = parseInt(params.id);
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [limit, setLimit] = useState(20);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -132,6 +134,11 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
       setEditing(false);
       setEditForm(null);
     },
+  });
+
+  const dupMutation = useMutation({
+    mutationFn: () => campaignsApi.duplicate(id),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["campaigns"] }); router.push("/campaigns"); },
   });
 
   const deleteMutation = useMutation({
@@ -277,6 +284,15 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               {pauseMutation.isPending ? "Pausando..." : "Pausar envío"}
             </button>
           )}
+          <button
+            onClick={() => dupMutation.mutate()}
+            disabled={dupMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+            title="Duplicar campaña como borrador"
+          >
+            <Copy size={13} />
+            {dupMutation.isPending ? "Duplicando..." : "Duplicar"}
+          </button>
           <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColor(campaign.status)}`}>
             {statusLabel(campaign.status)}
           </span>

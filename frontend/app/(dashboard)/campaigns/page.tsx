@@ -7,7 +7,7 @@ import { Campaign, CampaignConversions, CampaignStats, Segment } from "@/lib/typ
 import {
   Plus, Send, Trash2, FlaskConical, MoreHorizontal, Mail,
   Search, CheckCircle, Pencil, ChevronDown, Eye, ShoppingCart,
-  TrendingUp, Users,
+  TrendingUp, Users, Copy,
 } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
@@ -43,8 +43,8 @@ function RevenueCell({ value, orders }: { value: number; orders: number }) {
   );
 }
 
-function ActionsMenu({ campaign, onTest, onSend, onDelete }: {
-  campaign: Campaign; onTest: () => void; onSend: () => void; onDelete: () => void;
+function ActionsMenu({ campaign, onTest, onSend, onDelete, onDuplicate }: {
+  campaign: Campaign; onTest: () => void; onSend: () => void; onDelete: () => void; onDuplicate: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -65,6 +65,9 @@ function ActionsMenu({ campaign, onTest, onSend, onDelete }: {
           <Link href={`/campaigns/${campaign.id}`} className="flex items-center gap-2.5 px-3.5 py-2 hover:bg-gray-50 text-gray-700" onClick={() => setOpen(false)}>
             <Pencil size={13} className="text-gray-400" /> Ver / editar
           </Link>
+          <button onClick={() => { setOpen(false); onDuplicate(); }} className="w-full flex items-center gap-2.5 px-3.5 py-2 hover:bg-gray-50 text-gray-700">
+            <Copy size={13} className="text-gray-400" /> Duplicar
+          </button>
           {canSend && (
             <>
               <button onClick={() => { setOpen(false); onTest(); }} className="w-full flex items-center gap-2.5 px-3.5 py-2 hover:bg-gray-50 text-gray-700">
@@ -301,6 +304,10 @@ export default function CampaignsPage() {
     mutationFn: (id: number) => campaignsApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["campaigns"] }),
   });
+  const dupMutation = useMutation({
+    mutationFn: (id: number) => campaignsApi.duplicate(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["campaigns"] }); showToast("Campaña duplicada como borrador"); },
+  });
 
   const filtered = campaigns.filter((c) => {
     const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.subject.toLowerCase().includes(search.toLowerCase());
@@ -417,7 +424,7 @@ export default function CampaignsPage() {
                     </td>
                   </tr>
                 ) : filtered.map((c) => {
-                  const seg = segMap[c.segment_id];
+                  const seg = c.segment_id != null ? segMap[c.segment_id] : undefined;
                   const stats = statsMap[c.id];
                   const conv = convMap[c.id];
                   const hasSent = c.status === "sent" || (stats != null && stats.sent > 0);
@@ -466,15 +473,25 @@ export default function CampaignsPage() {
                             </>
                           )}
                           {c.status === "sent" && (
-                            <Link href={`/campaigns/${c.id}`}
-                              className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50">
-                              <Eye size={11} /> Stats
-                            </Link>
+                            <>
+                              <Link href={`/campaigns/${c.id}`}
+                                className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50">
+                                <Eye size={11} /> Stats
+                              </Link>
+                              <button
+                                onClick={() => dupMutation.mutate(c.id)}
+                                disabled={dupMutation.isPending}
+                                title="Duplicar campaña"
+                                className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 disabled:opacity-50">
+                                <Copy size={11} /> Duplicar
+                              </button>
+                            </>
                           )}
                           <ActionsMenu campaign={c}
                             onTest={() => testMutation.mutate(c.id)}
                             onSend={() => { if (confirm(`¿Enviar "${c.name}" ahora?`)) sendMutation.mutate(c.id); }}
-                            onDelete={() => { if (confirm("¿Eliminar esta campaña?")) delMutation.mutate(c.id); }} />
+                            onDelete={() => { if (confirm("¿Eliminar esta campaña?")) delMutation.mutate(c.id); }}
+                            onDuplicate={() => dupMutation.mutate(c.id)} />
                         </div>
                       </td>
                     </tr>

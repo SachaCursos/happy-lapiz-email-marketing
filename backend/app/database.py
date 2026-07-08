@@ -229,6 +229,14 @@ def _run_migrations():
             INSERT INTO _internal_flags (key, value) VALUES ('form_stats_v2_reset', 'done');
           END IF;
         END $$""",
+        """CREATE TABLE IF NOT EXISTS dynamic_criteria (
+            criteria_key VARCHAR PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            description TEXT,
+            variables JSONB NOT NULL DEFAULT '[]',
+            config JSONB NOT NULL DEFAULT '{}',
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

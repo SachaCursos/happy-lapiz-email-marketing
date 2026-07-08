@@ -81,10 +81,12 @@ const GROUPS: VarGroup[] = [
   {
     title: "Cross-sell",
     color: "bg-green-50 border-green-200",
-    description: "Variables para emails de recomendación de productos. El motor busca productos relacionados según las compras anteriores del contacto.",
+    description: "Variables para emails de recomendación de productos. Los criterios se configuran en Criterios dinámicos.",
     vars: [
-      { tag: "{{ recommended_products_html }}", description: "Grid HTML listo (2 columnas, imagen + nombre + precio + botón). Insertar tal cual.", example: "<tabla con productos recomendados>" },
-      { tag: "{{ recommended_products }}",      description: "Lista de dicts para render manual: [{title, url, image_url, price}]", example: "[{title: 'Pack...', price: 29990}]" },
+      { tag: "{{ recommended_products_html }}", description: "Grid HTML (criterios cross sell en Criterios dinámicos).", example: "<tabla con productos recomendados>" },
+      { tag: "{{ recommended_products }}",      description: "Lista de dicts [{title, url, image_url, price}]. Usa criterios cross sell.", example: "[{title: 'Pack...', price: 29990}]" },
+      { tag: "{{ productos_recomendados_edad_html }}", description: "Grid HTML con criterios recommended_products (edad + más vendidos).", example: "<tabla con productos recomendados>" },
+      { tag: "{{ productos_recomendados_edad }}", description: "Lista de dicts con criterios recommended_products.", example: "[{title: 'Libro...', price: 32990}]" },
       { tag: "{{ first_product }}",             description: "Nombre del primer producto recomendado (para el asunto del email)", example: "Pack Mi Primer Taladro" },
     ],
   },

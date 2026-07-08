@@ -22,6 +22,7 @@ import {
   Code2,
   Star,
   ClipboardList,
+  SlidersHorizontal,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ const nav = [
   { href: "/automations",  label: "Automatizaciones", icon: Zap },
   { href: "/products",    label: "Productos",          icon: ShoppingBag },
   { href: "/variables",   label: "Variables",         icon: Braces },
+  { href: "/criterios-dinamicos", label: "Criterios dinámicos", icon: SlidersHorizontal },
   { href: "/html-blocks", label: "Bloques HTML",      icon: Code2 },
   { href: "/favorite-blocks", label: "Bloques favoritos", icon: Star },
   { href: "/forms",        label: "Formularios",      icon: MousePointerClick },
