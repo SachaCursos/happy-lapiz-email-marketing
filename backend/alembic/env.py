@@ -11,11 +11,15 @@ from app.database import engine
 from sqlmodel import SQLModel
 
 # Importar todos los modelos para que su metadata quede registrada
-import app.models.user      # noqa
-import app.models.contact   # noqa
-import app.models.segment   # noqa
-import app.models.template  # noqa
-import app.models.campaign  # noqa
+import app.models.shop            # noqa
+import app.models.user            # noqa
+import app.models.contact         # noqa
+import app.models.segment         # noqa
+import app.models.template        # noqa
+import app.models.campaign        # noqa
+import app.models.automation      # noqa
+import app.models.form            # noqa
+import app.models.gift_recipient  # noqa
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

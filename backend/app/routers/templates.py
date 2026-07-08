@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 from app.database import get_session
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.template import Template, TemplateCreate, TemplateRead, TemplateUpdate
 from app.models.campaign import Campaign
 from app.models.automation import Automation
@@ -14,8 +15,8 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[TemplateRead])
-def list_templates(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return session.exec(select(Template)).all()
+def list_templates(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
+    return session.exec(select(Template).where(Template.shop_id == shop.id)).all()
 
 
 @router.post("", response_model=TemplateRead, status_code=201)
@@ -23,8 +24,9 @@ def create_template(
     payload: TemplateCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
-    tpl = Template(**payload.model_dump(), created_by=current_user.id)
+    tpl = Template(**payload.model_dump(), created_by=current_user.id, shop_id=shop.id)
     session.add(tpl)
     session.commit()
     session.refresh(tpl)
@@ -32,9 +34,9 @@ def create_template(
 
 
 @router.get("/{template_id}", response_model=TemplateRead)
-def get_template(template_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_template(template_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
     return tpl
 
@@ -45,9 +47,10 @@ def update_template(
     payload: TemplateUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(tpl, k, v)
@@ -63,9 +66,10 @@ def delete_template(
     template_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
 
     # Nullify FK references so deletion doesn't fail on constraints
@@ -85,9 +89,10 @@ def duplicate_template(
     template_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
     copy = Template(
         name=f"{tpl.name} (copia)",
@@ -96,6 +101,7 @@ def duplicate_template(
         html_content=tpl.html_content,
         json_blocks=tpl.json_blocks,
         created_by=current_user.id,
+        shop_id=shop.id,
     )
     session.add(copy)
     session.commit()
@@ -116,6 +122,7 @@ def send_template_test(
     body: SendTestBody,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """
     Renders a template with real or placeholder variables and sends it to
@@ -131,7 +138,7 @@ def send_template_test(
     from app.services.email_sender import _inject_footer, _unsub_headers, replace_unsub_tag
 
     tpl = session.get(Template, template_id)
-    if not tpl or not tpl.html_content:
+    if not tpl or tpl.shop_id != shop.id or not tpl.html_content:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada o sin contenido HTML")
 
     email = body.to_email.lower().strip()
@@ -149,11 +156,12 @@ def send_template_test(
             SELECT first_name, subtotal_price, line_items, checkout_url
             FROM carritos_abandonados
             WHERE email = %s
+              AND shop_id = %s
               AND (recovered = FALSE OR recovered IS NULL)
               AND checkout_url IS NOT NULL
             ORDER BY created_at DESC
             LIMIT 1
-        """, (email,))
+        """, (email, shop.id))
         row = cur.fetchone()
         if row:
             first_name   = (row[0] or email.split("@")[0]).strip()

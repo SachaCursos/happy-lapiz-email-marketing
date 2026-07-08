@@ -8,6 +8,7 @@ class Automation(SQLModel, table=True):
     __tablename__ = "automations"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     name: str = Field(index=True)
     trigger_type: str
     trigger_config: Optional[Any] = Field(default=None, sa_column=Column(JSON))
@@ -28,6 +29,7 @@ class AutomationEnrollment(SQLModel, table=True):
     __tablename__ = "automation_enrollments"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     automation_id: int = Field(foreign_key="automations.id", index=True)
     contact_email: str = Field(index=True)
     trigger_key: str = Field(index=True)
@@ -44,6 +46,7 @@ class AutomationRun(SQLModel, table=True):
     __tablename__ = "automation_runs"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     automation_id: int = Field(foreign_key="automations.id", index=True)
     contact_id: Optional[int] = Field(default=None, foreign_key="contacts.id", index=True)
     contact_email: str

@@ -11,6 +11,7 @@ class User(SQLModel, table=True):
     name: str
     password_hash: str
     role: str = Field(default="editor")  # admin | editor | viewer
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -26,6 +27,7 @@ class UserRead(SQLModel):
     email: str
     name: str
     role: str
+    shop_id: Optional[int] = None
     created_at: datetime
 
 

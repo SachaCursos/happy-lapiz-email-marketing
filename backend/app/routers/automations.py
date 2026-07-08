@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, func
 from sqlalchemy import text
 from app.database import get_session
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.automation import (
     Automation, AutomationCreate, AutomationRead, AutomationUpdate,
     AutomationEnrollment, AutomationRun, AutomationRunRead,
@@ -15,8 +16,10 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[AutomationRead])
-def list_automations(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return session.exec(select(Automation).order_by(Automation.created_at.desc())).all()
+def list_automations(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
+    return session.exec(
+        select(Automation).where(Automation.shop_id == shop.id).order_by(Automation.created_at.desc())
+    ).all()
 
 
 @router.post("", response_model=AutomationRead, status_code=201)
@@ -24,8 +27,9 @@ def create_automation(
     payload: AutomationCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
-    auto = Automation(**payload.model_dump(), created_by=current_user.id)
+    auto = Automation(**payload.model_dump(), created_by=current_user.id, shop_id=shop.id)
     session.add(auto)
     session.commit()
     session.refresh(auto)
@@ -33,9 +37,9 @@ def create_automation(
 
 
 @router.get("/{auto_id}", response_model=AutomationRead)
-def get_automation(auto_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_automation(auto_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     return a
 
@@ -46,9 +50,10 @@ def update_automation(
     payload: AutomationUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(a, k, v)
@@ -64,9 +69,10 @@ def delete_automation(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     session.delete(a)
     session.commit()
@@ -77,9 +83,10 @@ def toggle_automation(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     a.status = "paused" if a.status == "active" else "active"
     a.updated_at = datetime.utcnow()
@@ -94,7 +101,11 @@ def list_runs(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
     return session.exec(
         select(AutomationRun)
         .where(AutomationRun.automation_id == auto_id)
@@ -108,7 +119,11 @@ def automation_stats(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
     from sqlalchemy import text
     result = session.execute(text("""
         SELECT
@@ -135,12 +150,13 @@ def automation_stats(
         FROM automation_runs ar
         JOIN shopify_orders so
           ON LOWER(so.email) = LOWER(ar.contact_email)
+         AND so.shop_id = :shop_id
          AND so.created_at BETWEEN ar.executed_at
                                AND ar.executed_at + INTERVAL '7 days'
         WHERE ar.automation_id = :aid
           AND ar.status = 'sent'
           AND ar.executed_at IS NOT NULL
-    """), {"aid": auto_id}).fetchone()
+    """), {"aid": auto_id, "shop_id": shop.id}).fetchone()
 
     orders, revenue = conv
 
@@ -188,8 +204,12 @@ def automation_step_stats(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Per-step metrics breakdown, with A/B variant stats per step."""
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
     step_rows = session.execute(text("""
         SELECT
             step_number,
@@ -247,10 +267,11 @@ def automation_pending(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Return active enrollments for this automation (contacts awaiting a send)."""
     auto = session.get(Automation, auto_id)
-    if not auto:
+    if not auto or auto.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
 
     now = datetime.now(timezone.utc)

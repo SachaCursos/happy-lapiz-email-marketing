@@ -13,6 +13,7 @@ class GiftRecipient(SQLModel, table=True):
     __tablename__ = "gift_recipients"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     email: str = Field(index=True)
     relacion: str
     nombre_regalado: str
@@ -28,6 +29,7 @@ class GiftRecipientCreate(SQLModel):
     nombre_regalado: str
     fecha_nacimiento_regalado: Optional[date] = None
     source_url: Optional[str] = None
+    shop_domain: Optional[str] = None  # ej: "mi-tienda.myshopify.com" — lo setea el embed JS
 
 
 class GiftRecipientRead(SQLModel):

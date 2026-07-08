@@ -17,6 +17,7 @@ class Segment(SQLModel, table=True):
     __tablename__ = "segments"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     name: str = Field(index=True)
     description: Optional[str] = None
     conditions: Optional[Dict[str, Any]] = Field(

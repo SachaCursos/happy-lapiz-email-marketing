@@ -9,9 +9,10 @@ from sqlmodel import Session, select
 import resend
 from app.database import get_session
 from app.core.config import settings
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.core.unsub_token import verify_unsub_token
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.models.campaign import Campaign, CampaignSend
 from app.models.automation import AutomationRun
@@ -35,12 +36,13 @@ _SORT_COLUMNS = {
 
 
 @router.get("/stats")
-def contacts_stats(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def contacts_stats(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     from sqlmodel import func
-    total = session.exec(select(func.count(Contact.id))).one()
-    active = session.exec(select(func.count(Contact.id)).where(Contact.accepts_marketing == True)).one()  # noqa
-    unsubscribed = session.exec(select(func.count(Contact.id)).where(Contact.accepts_marketing == False)).one()  # noqa
-    opted_in = session.exec(select(func.count(Contact.id)).where(Contact.opted_in == True)).one()  # noqa
+    base = select(func.count(Contact.id)).where(Contact.shop_id == shop.id)
+    total = session.exec(base).one()
+    active = session.exec(base.where(Contact.accepts_marketing == True)).one()  # noqa
+    unsubscribed = session.exec(base.where(Contact.accepts_marketing == False)).one()  # noqa
+    opted_in = session.exec(base.where(Contact.opted_in == True)).one()  # noqa
     return {"total": total, "active": active, "unsubscribed": unsubscribed, "opted_in": opted_in}
 
 
@@ -54,8 +56,9 @@ def list_contacts(
     sort_dir: Optional[str] = Query("desc"),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
-    query = select(Contact)
+    query = select(Contact).where(Contact.shop_id == shop.id)
     if search:
         query = query.where(
             Contact.email.ilike(f"%{search}%") | Contact.name.ilike(f"%{search}%")
@@ -69,8 +72,8 @@ def list_contacts(
 
 
 @router.get("/count")
-def count_contacts(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return {"count": session.exec(select(Contact)).all().__len__()}
+def count_contacts(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
+    return {"count": session.exec(select(Contact).where(Contact.shop_id == shop.id)).all().__len__()}
 
 
 def _do_unsubscribe(email: str, session: Session) -> None:
@@ -127,11 +130,12 @@ def create_contact(
     payload: ContactCreate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
-    existing = session.exec(select(Contact).where(Contact.email == payload.email)).first()
+    existing = session.exec(select(Contact).where(Contact.email == payload.email, Contact.shop_id == shop.id)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email ya existe")
-    contact = Contact(**payload.model_dump(), opted_in_at=datetime.utcnow() if payload.opted_in else None)
+    contact = Contact(**payload.model_dump(), shop_id=shop.id, opted_in_at=datetime.utcnow() if payload.opted_in else None)
     session.add(contact)
     session.commit()
     session.refresh(contact)
@@ -139,9 +143,9 @@ def create_contact(
 
 
 @router.get("/{contact_id}", response_model=ContactRead)
-def get_contact(contact_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_contact(contact_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     return contact
 
@@ -152,9 +156,10 @@ def update_contact(
     payload: ContactUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     data = payload.model_dump(exclude_unset=True)
     if "opted_in" in data:
@@ -177,9 +182,10 @@ def delete_contact(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     # Delete FK-referencing rows first to avoid constraint violations
     for row in session.exec(select(CampaignSend).where(CampaignSend.contact_id == contact_id)).all():
@@ -195,13 +201,14 @@ def contact_segments(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Devuelve los segmentos a los que pertenece el contacto."""
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
 
-    all_segs = session.exec(select(Segment)).all()
+    all_segs = session.exec(select(Segment).where(Segment.shop_id == shop.id)).all()
     matching = []
     for seg in all_segs:
         q = select(Contact).where(Contact.id == contact_id, Contact.opted_in == True)  # noqa: E712
@@ -221,10 +228,11 @@ def contact_email_activity(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Feed de eventos de email para el contacto (enviados, abiertos, clics)."""
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
 
     sends = session.exec(
@@ -265,10 +273,11 @@ def contact_email_sends(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Resumen por campaña: qué le enviamos, si abrió, si hizo clic."""
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
 
     sends = session.exec(
@@ -302,6 +311,7 @@ def import_csv(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Importa contactos desde CSV. Columnas requeridas: email. Opcionales: name, phone, origin_utm."""
     content = file.file.read().decode("utf-8")
@@ -313,11 +323,12 @@ def import_csv(
         if not email:
             skipped += 1
             continue
-        existing = session.exec(select(Contact).where(Contact.email == email)).first()
+        existing = session.exec(select(Contact).where(Contact.email == email, Contact.shop_id == shop.id)).first()
         if existing:
             skipped += 1
             continue
         contact = Contact(
+            shop_id=shop.id,
             email=email,
             name=row.get("name", "").strip() or None,
             phone=row.get("phone", "").strip() or None,

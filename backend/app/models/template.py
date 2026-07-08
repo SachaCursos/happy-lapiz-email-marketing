@@ -9,6 +9,7 @@ class Template(SQLModel, table=True):
     __tablename__ = "templates"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     name: str = Field(index=True)
     subject_default: str = Field(default="")
     preview_text: Optional[str] = None

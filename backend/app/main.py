@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, shopify_oauth
 from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
 
 app = FastAPI(title="Happy Lápiz Email Marketing API", version="1.0.0", redirect_slashes=False)
@@ -33,6 +33,7 @@ app.include_router(forms.router, prefix="/api/forms", tags=["forms"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(coupons.router, prefix="/api/coupons", tags=["coupons"])
 app.include_router(shopify_webhooks.router, prefix="/api/shopify", tags=["shopify"])
+app.include_router(shopify_oauth.router, prefix="/api/shopify", tags=["shopify-oauth"])
 
 
 @app.on_event("startup")
@@ -54,9 +55,10 @@ def tracking_pixel_root():
     backend = settings.BACKEND_PUBLIC_URL
     js = f"""(function(){{
   var API='{backend}/api/shopify/track';
+  var SHOP_DOMAIN=(window.Shopify&&window.Shopify.shop)||'';
   function send(evt,data){{
     fetch(API,{{method:'POST',headers:{{'Content-Type':'application/json'}},
-      body:JSON.stringify(Object.assign({{event:evt,url:location.href}},data||{{}})),keepalive:true}}).catch(function(){{}});
+      body:JSON.stringify(Object.assign({{event:evt,url:location.href,shop_domain:SHOP_DOMAIN}},data||{{}})),keepalive:true}}).catch(function(){{}});
   }}
   // Viewed Product
   if(window.meta&&window.meta.product){{

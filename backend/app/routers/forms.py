@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.database import get_session
 from app.models.automation import AutomationEnrollment
 from app.models.contact import Contact
@@ -20,7 +20,9 @@ from app.models.form import (
     SignupForm, SignupFormCreate, SignupFormRead, SignupFormUpdate,
 )
 from app.models.gift_recipient import GiftRecipient, GiftRecipientCreate, GiftRecipientRead, RELACION_OPTIONS
+from app.models.shop import Shop
 from app.models.user import User
+from app.services.shopify_client import shopify_headers, shopify_graphql_url
 
 router = APIRouter()
 
@@ -28,8 +30,10 @@ router = APIRouter()
 # ── Authenticated CRUD ────────────────────────────────────────────────────────
 
 @router.get("", response_model=List[SignupFormRead])
-def list_forms(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return session.exec(select(SignupForm).order_by(SignupForm.created_at.desc())).all()
+def list_forms(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
+    return session.exec(
+        select(SignupForm).where(SignupForm.shop_id == shop.id).order_by(SignupForm.created_at.desc())
+    ).all()
 
 
 @router.post("", response_model=SignupFormRead, status_code=201)
@@ -37,8 +41,9 @@ def create_form(
     payload: SignupFormCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
-    form = SignupForm(**payload.model_dump(), created_by=current_user.id)
+    form = SignupForm(**payload.model_dump(), created_by=current_user.id, shop_id=shop.id)
     session.add(form)
     session.commit()
     session.refresh(form)
@@ -46,9 +51,9 @@ def create_form(
 
 
 @router.get("/{form_id}", response_model=SignupFormRead)
-def get_form(form_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_form(form_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     f = session.get(SignupForm, form_id)
-    if not f:
+    if not f or f.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Formulario no encontrado")
     return f
 
@@ -59,9 +64,10 @@ def update_form(
     payload: SignupFormUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     f = session.get(SignupForm, form_id)
-    if not f:
+    if not f or f.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Formulario no encontrado")
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(f, k, v)
@@ -77,9 +83,10 @@ def delete_form(
     form_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     f = session.get(SignupForm, form_id)
-    if not f:
+    if not f or f.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Formulario no encontrado")
     session.delete(f)
     session.commit()
@@ -90,7 +97,11 @@ def form_ab_stats(
     form_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
+    f = session.get(SignupForm, form_id)
+    if not f or f.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Formulario no encontrado")
     rows = session.execute(text("""
         SELECT ab_variant, COUNT(*) as total
         FROM form_submissions
@@ -112,7 +123,11 @@ def list_submissions(
     form_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
+    f = session.get(SignupForm, form_id)
+    if not f or f.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Formulario no encontrado")
     subs = session.exec(
         select(FormSubmission)
         .where(FormSubmission.form_id == form_id)
@@ -140,17 +155,17 @@ def submit_preflight(form_id: int):
     return Response(status_code=204, headers=_cors_headers())
 
 
-def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: str) -> str | None:
+def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: str, shop: Shop) -> str | None:
     """Generate a unique Shopify coupon code for a form submission. Returns code or None on failure."""
     existing = session.execute(text(
-        "SELECT code FROM coupon_sends WHERE coupon_campaign_id = :cid AND contact_email = :email LIMIT 1"
-    ), {"cid": coupon_campaign_id, "email": email.lower()}).fetchone()
+        "SELECT code FROM coupon_sends WHERE coupon_campaign_id = :cid AND contact_email = :email AND shop_id = :shop_id LIMIT 1"
+    ), {"cid": coupon_campaign_id, "email": email.lower(), "shop_id": shop.id}).fetchone()
     if existing:
         return existing[0]
 
     campaign = session.execute(text(
-        "SELECT prefix, discount_type, discount_value, shopify_discount_id FROM coupon_campaigns WHERE id = :id"
-    ), {"id": coupon_campaign_id}).fetchone()
+        "SELECT prefix, discount_type, discount_value, shopify_discount_id FROM coupon_campaigns WHERE id = :id AND shop_id = :shop_id"
+    ), {"id": coupon_campaign_id, "shop_id": shop.id}).fetchone()
     if not campaign:
         return None
 
@@ -164,7 +179,7 @@ def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: s
         if not dup:
             break
 
-    if settings.SHOPIFY_ACCESS_TOKEN and shopify_id:
+    if shopify_id:
         try:
             mutation = """
             mutation discountRedeemCodeBulkAdd($discountId: ID!, $codes: [DiscountRedeemCodeInput!]!) {
@@ -174,19 +189,19 @@ def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: s
               }
             }"""
             httpx.post(
-                f"https://{settings.SHOPIFY_DOMAIN}/admin/api/2024-10/graphql.json",
+                shopify_graphql_url(shop),
                 json={"query": mutation, "variables": {"discountId": shopify_id, "codes": [{"code": code}]}},
-                headers={"X-Shopify-Access-Token": settings.SHOPIFY_ACCESS_TOKEN, "Content-Type": "application/json"},
+                headers=shopify_headers(shop),
                 timeout=8,
             )
         except Exception:
             pass
 
     session.execute(text("""
-        INSERT INTO coupon_sends (coupon_campaign_id, contact_email, code)
-        VALUES (:ccamp, :email, :code)
+        INSERT INTO coupon_sends (coupon_campaign_id, contact_email, code, shop_id)
+        VALUES (:ccamp, :email, :code, :shop_id)
         ON CONFLICT DO NOTHING
-    """), {"ccamp": coupon_campaign_id, "email": email.lower(), "code": code})
+    """), {"ccamp": coupon_campaign_id, "email": email.lower(), "code": code, "shop_id": shop.id})
     return code
 
 
@@ -204,13 +219,19 @@ def submit_form(
     if not f or f.status != "active":
         raise HTTPException(status_code=404, detail="Formulario no disponible")
 
+    # Public/anonymous endpoint (called from the storefront) — the merchant
+    # (Shop) is resolved via the form itself, not via an authenticated user.
+    shop = session.get(Shop, f.shop_id) if f.shop_id else None
+
     email = payload.email.lower().strip()
     if not email or "@" not in email:
         raise HTTPException(status_code=422, detail="Email inválido")
 
     origin = payload.source_url or f"Formulario #{form_id}"
 
-    contact = session.exec(select(Contact).where(Contact.email == email)).first()
+    contact = session.exec(
+        select(Contact).where(Contact.email == email, Contact.shop_id == f.shop_id)
+    ).first()
     if contact:
         if not contact.opted_in:
             contact.opted_in = True
@@ -232,13 +253,14 @@ def submit_form(
             origin_utm=origin,
             opted_in=True,
             opted_in_at=datetime.utcnow(),
+            shop_id=f.shop_id,
         )
         session.add(contact)
 
     # Dynamic coupon generation
     coupon_code: str | None = None
-    if f.coupon_campaign_id:
-        coupon_code = _generate_dynamic_coupon(session, f.coupon_campaign_id, email)
+    if f.coupon_campaign_id and shop:
+        coupon_code = _generate_dynamic_coupon(session, f.coupon_campaign_id, email, shop)
     elif f.coupon_code:
         coupon_code = f.coupon_code
 
@@ -251,6 +273,7 @@ def submit_form(
         extra_data=payload.extra_data or None,
         coupon_code=coupon_code,
         ab_variant=payload.ab_variant or None,
+        shop_id=f.shop_id,
     ))
     session.commit()
 
@@ -266,7 +289,7 @@ def submit_form(
         if not existing_enrollment:
             from app.models.automation import Automation
             auto = session.get(Automation, f.coupon_automation_id)
-            if auto and auto.status == "active":
+            if auto and auto.status == "active" and auto.shop_id == f.shop_id:
                 extra = {
                     "nombre": (payload.name or "").strip() or email,
                     "first_name": ((payload.name or "").strip() or email).split()[0],
@@ -286,12 +309,13 @@ def submit_form(
                     next_step=1,
                     status="active",
                     extra_vars_json=json.dumps(extra),
+                    shop_id=f.shop_id,
                 )
                 session.add(enrollment)
                 session.commit()
 
     # Trigger form_submitted automations for this specific form
-    _trigger_form_submitted_automations(session, form_id, email, payload, coupon_code, payload.extra_data or {})
+    _trigger_form_submitted_automations(session, form_id, email, payload, coupon_code, payload.extra_data or {}, f.shop_id)
 
     return {"ok": True, "coupon_code": coupon_code}
 
@@ -303,6 +327,7 @@ def _trigger_form_submitted_automations(
     payload,
     coupon_code: str | None,
     extra_data: dict,
+    shop_id: int | None,
 ) -> None:
     """Enroll contact in any active automations with trigger_type=form_submitted for this form."""
     from app.models.automation import Automation
@@ -313,6 +338,7 @@ def _trigger_form_submitted_automations(
         select(Automation).where(
             Automation.trigger_type == "form_submitted",
             Automation.status == "active",
+            Automation.shop_id == shop_id,
         )
     ).all()
 
@@ -349,6 +375,7 @@ def _trigger_form_submitted_automations(
             next_step=1,
             status="active",
             extra_vars_json=json.dumps(extra),
+            shop_id=shop_id,
         )
         session.add(enrollment)
     session.commit()
@@ -406,6 +433,7 @@ def tracking_pixel():
     api = settings.BACKEND_PUBLIC_URL
     js = f"""(function(){{
   var API='{api}/api/shopify/track';
+  var SHOP_DOMAIN=(window.Shopify&&window.Shopify.shop)||'';
   function getEmail(){{
     // Shopify expone el email del cliente logueado en window.ShopifyAnalytics
     try{{
@@ -415,7 +443,7 @@ def tracking_pixel():
   }}
   function send(evt,extra){{
     var email=getEmail();
-    var payload=Object.assign({{event:evt,email:email,url:location.href}},extra||{{}});
+    var payload=Object.assign({{event:evt,email:email,url:location.href,shop_domain:SHOP_DOMAIN}},extra||{{}});
     fetch(API,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload),keepalive:true}}).catch(function(){{}});
   }}
   // Viewed Product
@@ -938,7 +966,7 @@ def submit_gift_form(
     response: Response,
     session: Session = Depends(get_session),
 ):
-    """Endpoint público — recibe datos del popup de regalos en happylapiz.cl."""
+    """Endpoint público — recibe datos del popup de regalos embebido en la tienda."""
     for k, v in _cors_headers().items():
         response.headers[k] = v
 
@@ -946,10 +974,16 @@ def submit_gift_form(
     if not email or "@" not in email:
         raise HTTPException(status_code=422, detail="Email inválido")
 
-    contact = session.exec(select(Contact).where(Contact.email == email)).first()
+    shop = session.exec(select(Shop).where(Shop.shopify_domain == payload.shop_domain, Shop.status == "active")).first() if payload.shop_domain else None
+    shop_id = shop.id if shop else None
+
+    contact = session.exec(
+        select(Contact).where(Contact.email == email, Contact.shop_id == shop_id)
+    ).first()
     contact_id = contact.id if contact else None
 
     recipient = GiftRecipient(
+        shop_id=shop_id,
         email=email,
         relacion=payload.relacion,
         nombre_regalado=payload.nombre_regalado.strip(),
@@ -969,9 +1003,17 @@ def list_gift_recipients(
     limit: int = 100,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
+    # Note: rows created via the public /gift/submit endpoint currently have
+    # shop_id = NULL (see TODO there), so they won't appear here until that
+    # gap is resolved.
     return session.exec(
-        select(GiftRecipient).order_by(GiftRecipient.created_at.desc()).offset(skip).limit(limit)
+        select(GiftRecipient)
+        .where(GiftRecipient.shop_id == shop.id)
+        .order_by(GiftRecipient.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     ).all()
 
 
@@ -1047,7 +1089,7 @@ def gift_embed_js():
       fetch(API+'/api/forms/gift/submit',{{
         method:'POST',
         headers:{{'Content-Type':'application/json'}},
-        body:JSON.stringify({{email:email,relacion:relacion,nombre_regalado:nombre,fecha_nacimiento_regalado:fecha||null,source_url:location.href}})
+        body:JSON.stringify({{email:email,relacion:relacion,nombre_regalado:nombre,fecha_nacimiento_regalado:fecha||null,source_url:location.href,shop_domain:(window.Shopify&&window.Shopify.shop)||''}})
       }}).then(function(r){{return r.json();}}).then(function(){{
         document.getElementById('hl-gift-form').style.display='none';
         document.getElementById('hl-gift-success').style.display='block';

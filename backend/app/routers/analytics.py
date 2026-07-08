@@ -3,8 +3,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, func, text
 from app.database import get_session
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_shop
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.contact import Contact
 from app.models.campaign import Campaign, CampaignSend
 from app.models.segment import Segment
@@ -14,16 +15,17 @@ router = APIRouter()
 
 
 @router.get("/overview")
-def overview(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    total_contacts = session.exec(select(func.count(Contact.id))).one()
-    opted_in = session.exec(select(func.count(Contact.id)).where(Contact.opted_in == True)).one()  # noqa
-    total_campaigns = session.exec(select(func.count(Campaign.id))).one()
-    sent_campaigns = session.exec(select(func.count(Campaign.id)).where(Campaign.status == "sent")).one()
-    total_sends = session.exec(select(func.count(CampaignSend.id))).one()
-    delivered = session.exec(select(func.count(CampaignSend.id)).where(CampaignSend.status == "delivered")).one()
-    opened = session.exec(select(func.count(CampaignSend.id)).where(CampaignSend.opened_at.isnot(None))).one()
-    total_segments = session.exec(select(func.count(Segment.id))).one()
-    total_templates = session.exec(select(func.count(Template.id))).one()
+def overview(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
+    total_contacts = session.exec(select(func.count(Contact.id)).where(Contact.shop_id == shop.id)).one()
+    opted_in = session.exec(select(func.count(Contact.id)).where(Contact.opted_in == True, Contact.shop_id == shop.id)).one()  # noqa
+    total_campaigns = session.exec(select(func.count(Campaign.id)).where(Campaign.shop_id == shop.id)).one()
+    sent_campaigns = session.exec(select(func.count(Campaign.id)).where(Campaign.status == "sent", Campaign.shop_id == shop.id)).one()
+    campaign_ids_sq = select(Campaign.id).where(Campaign.shop_id == shop.id)
+    total_sends = session.exec(select(func.count(CampaignSend.id)).where(CampaignSend.campaign_id.in_(campaign_ids_sq))).one()
+    delivered = session.exec(select(func.count(CampaignSend.id)).where(CampaignSend.status == "delivered", CampaignSend.campaign_id.in_(campaign_ids_sq))).one()
+    opened = session.exec(select(func.count(CampaignSend.id)).where(CampaignSend.opened_at.isnot(None), CampaignSend.campaign_id.in_(campaign_ids_sq))).one()
+    total_segments = session.exec(select(func.count(Segment.id)).where(Segment.shop_id == shop.id)).one()
+    total_templates = session.exec(select(func.count(Template.id)).where(Template.shop_id == shop.id)).one()
 
     return {
         "contacts": {"total": total_contacts, "opted_in": opted_in},
@@ -40,9 +42,12 @@ def overview(session: Session = Depends(get_session), _: User = Depends(get_curr
 
 
 @router.get("/campaigns/recent")
-def recent_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def recent_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     campaigns = session.exec(
-        select(Campaign).where(Campaign.status == "sent").order_by(Campaign.sent_at.desc()).limit(5)
+        select(Campaign)
+        .where(Campaign.status == "sent", Campaign.shop_id == shop.id)
+        .order_by(Campaign.sent_at.desc())
+        .limit(5)
     ).all()
     result = []
     for c in campaigns:
@@ -96,6 +101,7 @@ def revenue_stats(
     date_to: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Revenue attribution: Shopify total vs email-attributed sales (campaigns + automations)."""
     now = datetime.now(timezone.utc)
@@ -112,8 +118,8 @@ def revenue_stats(
     row = session.execute(text("""
         SELECT COALESCE(SUM(total_price::numeric), 0), COUNT(*)
         FROM shopify_orders
-        WHERE created_at >= :from AND created_at < :to
-    """), {"from": dt_from, "to": dt_to}).fetchone()
+        WHERE created_at >= :from AND created_at < :to AND shop_id = :shop_id
+    """), {"from": dt_from, "to": dt_to, "shop_id": shop.id}).fetchone()
     shopify_total = float(row[0])
     shopify_orders_count = int(row[1])
 
@@ -121,8 +127,8 @@ def revenue_stats(
     prev_row = session.execute(text("""
         SELECT COALESCE(SUM(total_price::numeric), 0)
         FROM shopify_orders
-        WHERE created_at >= :from AND created_at < :to
-    """), {"from": prev_from, "to": dt_from}).fetchone()
+        WHERE created_at >= :from AND created_at < :to AND shop_id = :shop_id
+    """), {"from": prev_from, "to": dt_from, "shop_id": shop.id}).fetchone()
     shopify_prev = float(prev_row[0])
 
     # ── 2. Campaign attributed revenue (orders in window attributed to a campaign send) ─
@@ -138,14 +144,15 @@ def revenue_stats(
         JOIN campaigns c  ON c.id  = cs.campaign_id
         LEFT JOIN shopify_orders so
             ON LOWER(so.email) = LOWER(ct.email)
+            AND so.shop_id = :shop_id
             AND so.created_at >= :from AND so.created_at < :to
             AND cs.sent_at IS NOT NULL
             AND so.created_at >= cs.sent_at
             AND so.created_at <= cs.sent_at + INTERVAL '7 days'
-        WHERE cs.sent_at IS NOT NULL
+        WHERE cs.sent_at IS NOT NULL AND c.shop_id = :shop_id
         GROUP BY c.id, c.name
         ORDER BY revenue DESC
-    """), {"from": dt_from, "to": dt_to}).fetchall()
+    """), {"from": dt_from, "to": dt_to, "shop_id": shop.id}).fetchall()
 
     campaigns_list = [
         {
@@ -170,14 +177,15 @@ def revenue_stats(
         JOIN automations a ON a.id = ar.automation_id
         LEFT JOIN shopify_orders so
             ON LOWER(so.email) = LOWER(ar.contact_email)
+            AND so.shop_id = :shop_id
             AND so.created_at >= :from AND so.created_at < :to
             AND ar.executed_at IS NOT NULL
             AND so.created_at >= ar.executed_at
             AND so.created_at <= ar.executed_at + INTERVAL '7 days'
-        WHERE ar.status = 'sent' AND ar.executed_at IS NOT NULL
+        WHERE ar.status = 'sent' AND ar.executed_at IS NOT NULL AND a.shop_id = :shop_id
         GROUP BY a.id, a.name
         ORDER BY revenue DESC
-    """), {"from": dt_from, "to": dt_to}).fetchall()
+    """), {"from": dt_from, "to": dt_to, "shop_id": shop.id}).fetchall()
 
     automations_list = [
         {

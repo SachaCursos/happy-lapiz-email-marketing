@@ -81,9 +81,11 @@ def _build_clause(node: dict) -> Optional[Any]:
     return fn(col, value)
 
 
-def evaluate_segment(conditions: Optional[dict], session: Session) -> List[Contact]:
+def evaluate_segment(conditions: Optional[dict], session: Session, shop_id: Optional[int] = None) -> List[Contact]:
     """Retorna contactos que coinciden con las condiciones del segmento (opted_in=True)."""
     query = select(Contact).where(Contact.opted_in == True)  # noqa: E712
+    if shop_id is not None:
+        query = query.where(Contact.shop_id == shop_id)
     if conditions:
         clause = _build_clause(conditions)
         if clause is not None:
@@ -91,8 +93,10 @@ def evaluate_segment(conditions: Optional[dict], session: Session) -> List[Conta
     return list(session.exec(query).all())
 
 
-def count_segment(conditions: Optional[dict], session: Session) -> int:
+def count_segment(conditions: Optional[dict], session: Session, shop_id: Optional[int] = None) -> int:
     query = select(func.count(Contact.id)).where(Contact.opted_in == True)  # noqa: E712
+    if shop_id is not None:
+        query = query.where(Contact.shop_id == shop_id)
     if conditions:
         clause = _build_clause(conditions)
         if clause is not None:

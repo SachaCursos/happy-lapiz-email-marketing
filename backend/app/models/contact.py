@@ -1,15 +1,21 @@
 from typing import Optional, Any
 from datetime import datetime, date
-from sqlmodel import Field, SQLModel, Column
+from sqlmodel import Field, SQLModel, Column, UniqueConstraint
 from sqlalchemy import Text, JSON
 from pydantic import field_validator
 
 
 class Contact(SQLModel, table=True):
     __tablename__ = "contacts"
+    # Target end-state uniqueness (applied to the live DB by alembic revision
+    # 0004_tighten_shop_id_constraints, which also drops the old single-column
+    # unique constraint on email — until that migration runs in prod, the DB
+    # still enforces global-unique email, this just reflects where we're headed).
+    __table_args__ = (UniqueConstraint("shop_id", "email", name="contacts_shop_id_email_key"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    email: str = Field(unique=True, index=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
+    email: str = Field(index=True)
     name: Optional[str] = None
     phone: Optional[str] = None
     origin_utm: Optional[str] = None

@@ -9,11 +9,13 @@ from app.database import get_session, engine as db_engine
 
 logger = logging.getLogger(__name__)
 from app.core.config import settings
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_admin, get_current_shop
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.template import Template
 from app.models.campaign import Campaign, CampaignSend
 from app.models.segment import Segment
+from app.services.shopify_client import shopify_headers, shopify_rest_url, shopify_graphql_url, register_webhooks_for_shop
 
 router = APIRouter()
 
@@ -307,6 +309,7 @@ def fix_logo(
 _SHOPIFY_PRODUCTS_CREATE = """
     CREATE TABLE shopify_products (
         id SERIAL PRIMARY KEY,
+        shop_id INTEGER,
         shopify_id BIGINT UNIQUE NOT NULL,
         title VARCHAR NOT NULL,
         handle VARCHAR,
@@ -347,6 +350,7 @@ def _ensure_shopify_products_table() -> None:
             ))
         }
         needed = {
+            "shop_id":          "INTEGER",
             "shopify_id":       "BIGINT",
             "title":            "VARCHAR",
             "handle":           "VARCHAR",
@@ -380,18 +384,14 @@ def _ensure_shopify_products_table() -> None:
 def sync_shopify_products(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Sync all Shopify products to local shopify_products table (tags, type, image, price)."""
     import re as _re
-    from app.core.config import settings as _s
-    token = _s.SHOPIFY_ACCESS_TOKEN
-    domain = _s.SHOPIFY_DOMAIN
-    if not token:
-        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN not configured"}
 
-    headers = {"X-Shopify-Access-Token": token}
+    headers = shopify_headers(shop)
     all_products: list[dict] = []
-    url = f"https://{domain}/admin/api/2024-01/products.json"
+    url = shopify_rest_url(shop, "products.json")
     params: dict = {
         "limit": 250,
         "status": "active",
@@ -425,10 +425,11 @@ def sync_shopify_products(
     errors: list[str] = []
     sql = text("""
         INSERT INTO shopify_products
-            (shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at)
+            (shop_id, shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at)
         VALUES
-            (:sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now)
+            (:shop_id, :sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now)
         ON CONFLICT (shopify_id) DO UPDATE SET
+            shop_id      = EXCLUDED.shop_id,
             title        = EXCLUDED.title,
             handle       = EXCLUDED.handle,
             product_type = EXCLUDED.product_type,
@@ -445,6 +446,7 @@ def sync_shopify_products(
             price = float(variant.get("price") or 0)
             image_url = (p.get("images") or [{}])[0].get("src", "")
             session.execute(sql, {
+                "shop_id": shop.id,
                 "sid":    int(p["id"]),
                 "title":  p.get("title", ""),
                 "handle": p.get("handle", ""),
@@ -488,6 +490,7 @@ def list_synced_products(
     sort_dir: str = "asc",
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Devuelve los productos sincronizados desde Shopify."""
     try:
@@ -499,8 +502,8 @@ def list_synced_products(
     col = _SORT_COLUMNS.get(sort_by, "title")
     direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
 
-    where_clauses = ["1=1"]
-    params: dict = {}
+    where_clauses = ["shop_id = :shop_id"]
+    params: dict = {"shop_id": shop.id}
     if search:
         where_clauses.append("(title ILIKE :search OR tags ILIKE :search)")
         params["search"] = f"%{search}%"
@@ -525,7 +528,8 @@ def list_synced_products(
     ).fetchall()
 
     types_rows = session.execute(
-        text("SELECT DISTINCT product_type FROM shopify_products WHERE product_type IS NOT NULL AND product_type <> '' ORDER BY product_type")
+        text("SELECT DISTINCT product_type FROM shopify_products WHERE shop_id = :shop_id AND product_type IS NOT NULL AND product_type <> '' ORDER BY product_type"),
+        {"shop_id": shop.id},
     ).fetchall()
 
     products = [
@@ -548,68 +552,24 @@ def list_synced_products(
 
 
 @router.post("/register-shopify-webhooks")
-def register_shopify_webhooks(current_user: User = Depends(require_admin)):
-    """Registra los webhooks de Shopify en la tienda usando el token del backend."""
-    token = settings.SHOPIFY_ACCESS_TOKEN
-    if not token:
-        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN no configurado en Railway"}
-
-    domain = settings.SHOPIFY_DOMAIN
-    backend_url = f"{settings.BACKEND_PUBLIC_URL}/api/shopify/webhooks"
-    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
-
-    topics = [
-        # Shopify order lifecycle
-        "checkouts/create",
-        "checkouts/update",
-        "carts/create",
-        "carts/update",
-        "orders/create",
-        "orders/fulfilled",
-        "orders/partially_fulfilled",
-        "orders/cancelled",
-        "orders/updated",
-        "refunds/create",
-    ]
-
-    results = []
-    for topic in topics:
-        try:
-            r = httpx.post(
-                f"https://{domain}/admin/api/2024-10/webhooks.json",
-                headers=headers,
-                json={"webhook": {"topic": topic, "address": backend_url, "format": "json"}},
-                timeout=10,
-            )
-            if r.status_code in (200, 201):
-                wh = r.json().get("webhook", {})
-                results.append({"topic": topic, "ok": True, "id": wh.get("id")})
-            elif r.status_code == 422:
-                # Already registered
-                results.append({"topic": topic, "ok": True, "note": "ya existía"})
-            else:
-                results.append({"topic": topic, "ok": False, "error": r.text[:100]})
-        except Exception as e:
-            results.append({"topic": topic, "ok": False, "error": str(e)})
-
+def register_shopify_webhooks(current_user: User = Depends(require_admin), shop: Shop = Depends(get_current_shop)):
+    """Re-registra (o confirma) los webhooks de Shopify para la tienda del usuario actual.
+    Normalmente esto ya se hace automáticamente en el callback de instalación
+    (app/routers/shopify_oauth.py); este endpoint sirve para re-sincronizar
+    manualmente si hace falta."""
+    results = register_webhooks_for_shop(shop)
     all_ok = all(r["ok"] for r in results)
-    return {"ok": all_ok, "endpoint": backend_url, "webhooks": results}
+    return {"ok": all_ok, "endpoint": f"{settings.BACKEND_PUBLIC_URL}/api/shopify/webhooks", "webhooks": results}
 
 
 @router.post("/register-shopify-script-tag")
-def register_shopify_script_tag(current_user: User = Depends(require_admin)):
-    """Registra el script tag de tracking en la tienda Shopify."""
-    token = settings.SHOPIFY_ACCESS_TOKEN
-    if not token:
-        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN no configurado"}
-
-    domain = settings.SHOPIFY_DOMAIN
+def register_shopify_script_tag(current_user: User = Depends(require_admin), shop: Shop = Depends(get_current_shop)):
+    """Registra el script tag de tracking en la tienda Shopify del usuario actual."""
     script_url = f"{settings.BACKEND_PUBLIC_URL}/api/forms/track.js"
-    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+    headers = shopify_headers(shop)
 
     # Check if already registered
-    existing = httpx.get(f"https://{domain}/admin/api/2024-10/script_tags.json",
-                         headers=headers, timeout=10)
+    existing = httpx.get(shopify_rest_url(shop, "script_tags.json"), headers=headers, timeout=10)
     if existing.status_code == 200:
         tags = existing.json().get("script_tags", [])
         for tag in tags:
@@ -617,7 +577,7 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
                 return {"ok": True, "note": "ya existía", "id": tag["id"], "src": script_url}
 
     r = httpx.post(
-        f"https://{domain}/admin/api/2024-10/script_tags.json",
+        shopify_rest_url(shop, "script_tags.json"),
         headers=headers,
         json={"script_tag": {"event": "onload", "src": script_url}},
         timeout=10,
@@ -632,23 +592,19 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
 async def upload_image_to_shopify(
     file: UploadFile = File(...),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """
     Sube una imagen a Shopify Files y devuelve la URL cdn.shopify.com.
     Flujo: stagedUploadsCreate → PUT al S3 presignado → fileCreate.
     """
-    token  = settings.SHOPIFY_ACCESS_TOKEN
-    domain = settings.SHOPIFY_DOMAIN
-    if not token:
-        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
-
     content   = await file.read()
     mime_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
     filename  = file.filename or "image.jpg"
     file_size = len(content)
 
-    gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
-    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+    gql_url = shopify_graphql_url(shop)
+    headers = shopify_headers(shop)
 
     # 1. Request a staged upload target from Shopify
     stage_query = """
@@ -732,13 +688,9 @@ async def upload_image_to_shopify(
 def list_shopify_images(
     after: str = None,
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """List images from Shopify Files for the in-editor image picker."""
-    token  = settings.SHOPIFY_ACCESS_TOKEN
-    domain = settings.SHOPIFY_DOMAIN
-    if not token:
-        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
-
     gql = """
     query getImages($after: String) {
       files(first: 30, after: $after, sortKey: CREATED_AT, reverse: true, query: "media_type:IMAGE") {
@@ -752,8 +704,8 @@ def list_shopify_images(
     }"""
     variables = {"after": after} if after else {}
     resp = httpx.post(
-        f"https://{domain}/admin/api/2024-01/graphql.json",
-        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+        shopify_graphql_url(shop),
+        headers=shopify_headers(shop),
         json={"query": gql, "variables": variables},
         timeout=20,
     )

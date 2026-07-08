@@ -1,7 +1,8 @@
 import logging
+import random
 import re
 import time
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 import resend
 from jinja2 import Template as Jinja2Template
@@ -137,10 +138,12 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
     """), {"email": contact.email.lower(), "cid": campaign_id}).fetchone()
     if row:
         return row[0]
+    # Filtrar por shop_id de la campaña evita que una tienda reciba un cupón
+    # de descuento generado por otra tienda (coupon_campaigns es multi-tenant).
     row2 = session.exec(text("""
         SELECT cc.id, cc.prefix FROM coupon_campaigns cc
         JOIN campaigns c ON c.id = :cid
-        WHERE cc.status = 'active'
+        WHERE cc.status = 'active' AND cc.shop_id = c.shop_id
         ORDER BY cc.created_at DESC LIMIT 1
     """), {"cid": campaign_id}).fetchone()
     if not row2:
@@ -150,8 +153,8 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
     code = f"{prefix}-{''.join(random.choices(string.ascii_uppercase+string.digits, k=8))}"
     try:
         session.exec(text("""
-            INSERT INTO coupon_sends (coupon_campaign_id, contact_id, contact_email, code, campaign_id)
-            VALUES (:ccid, :cid, :email, :code, :campid)
+            INSERT INTO coupon_sends (coupon_campaign_id, contact_id, contact_email, code, campaign_id, shop_id)
+            SELECT :ccid, :cid, :email, :code, :campid, c.shop_id FROM campaigns c WHERE c.id = :campid
             ON CONFLICT DO NOTHING
         """), {"ccid": row2[0], "cid": contact.id, "email": contact.email.lower(),
                "code": code, "campid": campaign_id})
@@ -161,11 +164,32 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
     return code
 
 
-def _send_one(campaign: Campaign, template: Template, contact: Contact, session: Session) -> None:
+def _pick_campaign_variant(variants: list) -> tuple[dict, str]:
+    """Randomly pick an A/B variant by weight. Returns (variant_dict, label)."""
+    total = sum(float(v.get("weight", 1)) for v in variants)
+    rand = random.uniform(0, total)
+    cumulative = 0.0
+    for v in variants:
+        cumulative += float(v.get("weight", 1))
+        if rand <= cumulative:
+            return v, str(v["variant"])
+    last = variants[-1]
+    return last, str(last["variant"])
+
+
+def _send_one(
+    campaign: Campaign,
+    template: Template,
+    contact: Contact,
+    session: Session,
+    subject_override: Optional[str] = None,
+    variant_label: Optional[str] = None,
+) -> None:
     resend.api_key = settings.RESEND_API_KEY
     coupon = _resolve_coupon(template.html_content, contact, campaign.id, session)
     html = _inject_footer(render_html(template.html_content, contact, coupon_code=coupon), contact.email)
-    subject = Jinja2Template(campaign.subject).render(
+    raw_subject = subject_override or campaign.subject
+    subject = Jinja2Template(raw_subject).render(
         nombre=_fmt_nombre(contact.name, contact.email),
         first_name=_fmt_nombre(contact.name, contact.email),
         email=contact.email,
@@ -194,12 +218,13 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
             send.resend_id = response["id"]
             send.status = "sent"
             send.sent_at = datetime.utcnow()
+            send.variant_sent = variant_label
             session.add(send)
             session.commit()
     except Exception as exc:
         logger.error("Error enviando a %s: %s", contact.email, exc)
         if send:
-            send.status = "failed"  # error técnico de envío, no rebote real
+            send.status = "failed"
             session.add(send)
             session.commit()
 
@@ -210,9 +235,13 @@ def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segmen
         campaign = session.get(Campaign, campaign_id)
         if not campaign:
             return
-        template = session.get(Template, campaign.template_id)
-        if not template:
-            return
+
+        has_variants = bool(campaign.variants and len(campaign.variants) >= 2)
+
+        if not has_variants:
+            template = session.get(Template, campaign.template_id)
+            if not template:
+                return
 
         contacts = [session.get(Contact, cid) for cid in contact_ids]
         contacts = [c for c in contacts if c]
@@ -226,7 +255,7 @@ def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segmen
                 )
             ).first()
             if not exists:
-                session.add(CampaignSend(campaign_id=campaign_id, contact_id=contact.id))
+                session.add(CampaignSend(campaign_id=campaign_id, contact_id=contact.id, shop_id=campaign.shop_id))
             elif exists.status == "failed":
                 exists.status = "queued"
                 session.add(exists)
@@ -234,7 +263,14 @@ def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segmen
 
         # Enviar respetando rate limit de Resend (5 req/seg)
         for i, contact in enumerate(contacts):
-            _send_one(campaign, template, contact, session)
+            if has_variants:
+                v, label = _pick_campaign_variant(campaign.variants)
+                tpl = session.get(Template, int(v["template_id"]))
+                if not tpl:
+                    continue
+                _send_one(campaign, tpl, contact, session, subject_override=v["subject"], variant_label=label)
+            else:
+                _send_one(campaign, template, contact, session)
             if i < len(contacts) - 1:
                 time.sleep(RATE_DELAY)
 

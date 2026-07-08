@@ -43,6 +43,8 @@ export const authApi = {
     });
   },
   me: () => api.get("/auth/me"),
+  setPassword: (token: string, password: string) =>
+    api.post("/auth/set-password", { token, password }),
 };
 
 // Contacts
