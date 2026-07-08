@@ -100,13 +100,13 @@ const TEMPLATE_VARS: { group: string; vars: { key: string; desc: string; raw?: b
       { key: "dias_para_cumpleanos",           desc: "Días que faltan para el cumpleaños" },
       { key: "fecha_cumpleanos",               desc: "Fecha del próximo cumpleaños" },
       { key: "edad_regalon",                   desc: "Edad del regalón (custom_fields.edad_regalon)" },
-      { key: "productos_recomendados_edad_html", desc: "Grilla HTML de productos para la edad del regalón, sin los ya comprados" },
+      { key: "productos_recomendados_edad_html", desc: "Grilla HTML: edad del regalón + más vendidos, sin productos ya comprados" },
     ],
   },
   {
     group: "Cross-sell (con configuración)",
     vars: [
-      { key: "recommended_products_html", desc: "Grilla HTML de productos recomendados (requiere cross_sell_config en la automatización)" },
+      { key: "recommended_products_html", desc: "Grilla HTML con los mismos criterios (edad + más vendidos; sin edad → más vendidos). Requiere cross_sell_config." },
     ],
   },
 ];
@@ -1151,8 +1151,8 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
 
     case "product_grid": {
       const varLabel: Record<string, string> = {
-        "productos_recomendados_edad_html": "Recomendados por edad",
-        "recommended_products_html": "Recomendados por compra",
+        "productos_recomendados_edad_html": "Recomendados (edad + ventas)",
+        "recommended_products_html": "Recomendados (edad + ventas)",
         "productos_comprados_html": "Historial de compras",
       };
       const label = varLabel[p.variable as string] || String(p.variable);
@@ -1961,8 +1961,8 @@ function PropsPanel({
             onChange={(e) => set("variable", e.target.value)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="productos_recomendados_edad_html">Recomendados por edad del regalón</option>
-            <option value="recommended_products_html">Recomendados por última compra</option>
+            <option value="productos_recomendados_edad_html">Recomendados (edad + más vendidos)</option>
+            <option value="recommended_products_html">Recomendados (edad + más vendidos)</option>
             <option value="productos_comprados_html">Historial de compras</option>
           </select>
         </Field>

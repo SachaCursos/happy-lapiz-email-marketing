@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { automationsApi, templatesApi, api, shopifyApi, formsApi, segmentsApi, ShopifyProduct, ShopifyCollection } from "@/lib/api";
+import { automationsApi, templatesApi, api, shopifyApi, formsApi, segmentsApi, ShopifyProduct } from "@/lib/api";
 import { Template, AutomationTrigger, AutomationStep, Automation, Segment } from "@/lib/types";
 import { ArrowLeft, Clock, Info, Plus, Trash2, GitBranch, ChevronDown, ChevronUp, ShieldOff, FlaskConical, X, Tag, ShoppingCart, MapPin } from "lucide-react";
 
@@ -761,9 +761,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
 
   // Cross-sell config (for ordered_product trigger)
   const [crossSellEnabled, setCrossSellEnabled] = useState(false);
-  const [crossSellMode, setCrossSellMode] = useState<"collection" | "products">("collection");
-  const [crossSellCollectionId, setCrossSellCollectionId] = useState("");
-  const [crossSellProductIds, setCrossSellProductIds] = useState<string[]>([]);
   const [crossSellMaxProducts, setCrossSellMaxProducts] = useState(4);
 
   function buildItemsCountFilter(): Record<string, unknown> | undefined {
@@ -920,13 +917,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
     enabled: PRODUCT_FILTER_TRIGGERS.has(triggerType),
   });
 
-  const { data: shopifyCollections = [], isLoading: collectionsLoading } = useQuery<ShopifyCollection[]>({
-    queryKey: ["shopify-collections"],
-    queryFn: () => shopifyApi.collections().then((r) => r.data),
-    staleTime: 10 * 60_000,
-    enabled: crossSellEnabled && crossSellMode === "collection" && PRODUCT_FILTER_TRIGGERS.has(triggerType),
-  });
-
   const [couponCampaignId, setCouponCampaignId] = useState<number | null>(null);
 
   const selectedTrigger = TRIGGERS.find((t) => t.value === triggerType)!;
@@ -1015,8 +1005,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       // Attach cross-sell config if configured
       if (crossSellEnabled && PRODUCT_FILTER_TRIGGERS.has(triggerType)) {
         triggerConfig.cross_sell_config = {
-          collection_id: crossSellMode === "collection" ? (crossSellCollectionId || undefined) : undefined,
-          product_ids: crossSellMode === "products" ? crossSellProductIds : undefined,
           max_products: crossSellMaxProducts,
         };
       }
@@ -1418,53 +1406,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
 
               {crossSellEnabled && (
                 <div className="mt-3 space-y-3">
-                  {/* Mode selector */}
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                      <input
-                        type="radio" name="crosssell_mode" value="collection"
-                        checked={crossSellMode === "collection"}
-                        onChange={() => setCrossSellMode("collection")}
-                        className="accent-brand-600"
-                      />
-                      Por colección Shopify
-                    </label>
-                    <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                      <input
-                        type="radio" name="crosssell_mode" value="products"
-                        checked={crossSellMode === "products"}
-                        onChange={() => setCrossSellMode("products")}
-                        className="accent-brand-600"
-                      />
-                      Productos específicos
-                    </label>
-                  </div>
-
-                  {/* Collection picker */}
-                  {crossSellMode === "collection" && (
-                    <select
-                      value={crossSellCollectionId}
-                      onChange={(e) => setCrossSellCollectionId(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    >
-                      <option value="">{collectionsLoading ? "Cargando colecciones..." : "Seleccionar colección..."}</option>
-                      {shopifyCollections.map((c) => (
-                        <option key={c.id} value={c.id}>{c.title}</option>
-                      ))}
-                    </select>
-                  )}
-
-                  {/* Product picker */}
-                  {crossSellMode === "products" && (
-                    <ProductMultiSelect
-                      selected={crossSellProductIds}
-                      onChange={setCrossSellProductIds}
-                      products={shopifyProducts}
-                      loading={productsLoading}
-                    />
-                  )}
-
-                  {/* Max products */}
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-600">Mostrar máximo</span>
                     <input
@@ -1475,7 +1416,6 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
                     <span className="text-sm text-gray-600">productos</span>
                   </div>
 
-                  {/* Usage hint */}
                   <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 space-y-2">
                     <p className="text-xs font-semibold text-amber-800">Cómo usarlo en tu plantilla:</p>
                     <div>
@@ -1486,7 +1426,10 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
                       <p className="text-xs text-amber-700 mb-0.5">Asunto dinámico (ejemplo):</p>
                       <code className="text-xs bg-white border border-amber-200 rounded px-1.5 py-0.5 text-amber-900">{"¿Compraste {{ first_product }}? También te puede gustar..."}</code>
                     </div>
-                    <p className="text-xs text-amber-600">Los productos ya comprados se excluyen automáticamente.</p>
+                    <p className="text-xs text-amber-600">
+                      Filtra por edad del regalón si está disponible; si no, muestra los más vendidos del catálogo.
+                      Excluye productos ya comprados.
+                    </p>
                   </div>
                 </div>
               )}

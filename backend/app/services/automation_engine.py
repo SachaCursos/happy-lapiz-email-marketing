@@ -263,95 +263,53 @@ def _pick_variant(step: dict) -> tuple[dict, str | None]:
     return merged, str(last["variant"])
 
 
-def _fetch_cross_sell_products(
-    collection_id: str | None,
-    product_ids: list[str],
-    exclude_ids: set[str],
-    max_products: int = 4,
-) -> list[dict]:
-    """Fetch recommended products from Shopify for cross-sell; excludes purchased products."""
-    token = settings.SHOPIFY_ACCESS_TOKEN
-    domain = settings.SHOPIFY_DOMAIN
-    if not token:
-        return []
-    headers = {"X-Shopify-Access-Token": token}
-    raw: list[dict] = []
-    try:
-        with httpx.Client(timeout=8.0) as client:
-            if collection_id:
-                r = client.get(
-                    f"https://{domain}/admin/api/2024-01/collections/{collection_id}/products.json",
-                    params={"limit": max_products + len(exclude_ids) + 5, "fields": "id,title,handle,images,variants,status"},
-                    headers=headers,
-                )
-                if r.status_code == 200:
-                    raw = r.json().get("products", [])
-            elif product_ids:
-                r = client.get(
-                    f"https://{domain}/admin/api/2024-01/products.json",
-                    params={"ids": ",".join(product_ids), "fields": "id,title,handle,images,variants,status"},
-                    headers=headers,
-                )
-                if r.status_code == 200:
-                    raw = r.json().get("products", [])
-    except Exception as exc:
-        logger.warning("cross_sell: product fetch failed: %s", exc)
-        return []
-
-    result = []
-    for p in raw:
-        if p.get("status", "active") != "active":
-            continue
-        if str(p.get("id", "")) in exclude_ids:
-            continue
-        variant = (p.get("variants") or [{}])[0]
+def _resolve_regalon_age(cf: dict, extra_vars: dict | None) -> int | None:
+    """Age of the gift recipient from custom fields or date of birth."""
+    raw = (cf or {}).get("edad_regalon") or (extra_vars or {}).get("edad_regalon")
+    if raw is not None:
         try:
-            price_fmt = f"${int(float(variant.get('price', 0))):,}".replace(",", ".")
+            return int(raw)
+        except (ValueError, TypeError):
+            pass
+    for key in (
+        "fecha_nacimiento_regalado",
+        "cual_es_su_fecha_de_nacimiento",
+        "fecha_nacimiento",
+        "fecha_nacimiento_regalado2",
+    ):
+        dob_str = (extra_vars or {}).get(key) or (cf or {}).get(key)
+        if not dob_str:
+            continue
+        try:
+            from datetime import date as _date
+            dob = _date.fromisoformat(str(dob_str)[:10])
+            today = _date.today()
+            return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
         except Exception:
-            price_fmt = ""
-        result.append({
-            "title": p.get("title", ""),
-            "url": f"https://www.happylapiz.cl/products/{p.get('handle', '')}",
-            "image_url": (p.get("images") or [{}])[0].get("src", ""),
-            "price": price_fmt,
-        })
-        if len(result) >= max_products:
-            break
-    return result
+            continue
+    return None
 
 
-def _fetch_cross_sell_from_db(
+def _product_grid_btn_color(tpl: Template) -> str:
+    btn_color = "#f97316"
+    try:
+        blocks = json.loads(tpl.json_blocks) if isinstance(tpl.json_blocks, str) else (tpl.json_blocks or [])
+        for blk in (blocks if isinstance(blocks, list) else []):
+            props = blk.get("props", {})
+            if blk.get("type") == "product_grid" and props.get("btn_color"):
+                return props["btn_color"]
+    except Exception:
+        pass
+    return btn_color
+
+
+def _fetch_recommended_products(
     session: Session,
     customer_email: str,
-    purchased_product_ids: list[str],
+    edad_regalon: int | None = None,
     max_products: int = 4,
 ) -> list[dict]:
-    """DB-based cross-sell: match active products by shared tags/type, exclude customer's history."""
-    ids_int = [int(p) for p in purchased_product_ids if p.isdigit()]
-    if not ids_int:
-        return []
-
-    # Tags and product_type of the purchased products
-    tag_rows = session.execute(text("""
-        SELECT tags, product_type FROM shopify_products
-        WHERE shopify_id = ANY(:ids) AND status = 'active'
-    """), {"ids": ids_int}).fetchall()
-
-    if not tag_rows:
-        return []
-
-    all_tags: set[str] = set()
-    product_types: set[str] = set()
-    for row in tag_rows:
-        if row[0]:
-            for t in row[0].split(","):
-                s = t.strip().lower()
-                if s:
-                    all_tags.add(s)
-        if row[1]:
-            product_types.add(row[1].strip().lower())
-
-    # All product IDs ever purchased by this customer (from order webhook payloads)
+    """Catalog products with edad_recomendada, exclude purchase history, optional age filter, sort by sales."""
     history_rows = session.execute(text("""
         SELECT payload FROM shopify_events
         WHERE LOWER(email) = LOWER(:email)
@@ -359,63 +317,73 @@ def _fetch_cross_sell_from_db(
           AND payload IS NOT NULL
     """), {"email": customer_email}).fetchall()
 
-    ever_bought: set[str] = set(str(p) for p in purchased_product_ids)
+    ever_bought: set[int] = set()
     for row in history_rows:
         try:
-            payload_data = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-            for item in payload_data.get("line_items", []):
-                pid = str(item.get("product_id", ""))
+            payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            for item in payload.get("line_items", []):
+                pid = item.get("product_id")
                 if pid:
-                    ever_bought.add(pid)
+                    ever_bought.add(int(pid))
         except Exception:
             pass
 
-    excl_ints = [int(p) for p in ever_bought if p.isdigit()]
-
-    if not all_tags and not product_types:
-        return []
-
-    params: dict = {"max_n": max_products}
-    match_parts: list[str] = []
-    for i, tag in enumerate(sorted(all_tags)):
-        match_parts.append(f"LOWER(tags) LIKE :t{i}")
-        params[f"t{i}"] = f"%{tag}%"
-    for i, pt in enumerate(sorted(product_types)):
-        match_parts.append(f"LOWER(product_type) = :pt{i}")
-        params[f"pt{i}"] = pt
-
-    match_clause = " OR ".join(match_parts)
-    excl_clause = "AND shopify_id != ALL(:excl)" if excl_ints else ""
-    if excl_ints:
-        params["excl"] = excl_ints
+    excl_clause = "AND sp.shopify_id != ALL(:excl)" if ever_bought else ""
+    params: dict = {}
+    if ever_bought:
+        params["excl"] = list(ever_bought)
 
     try:
-        rows = session.execute(text(f"""
-            SELECT shopify_id, title, handle, image_url, price
-            FROM shopify_products
-            WHERE status = 'active'
+        all_rows = session.execute(text(f"""
+            WITH order_counts AS (
+                SELECT (item->>'product_id')::bigint AS product_id, COUNT(*) AS n
+                FROM shopify_events,
+                     jsonb_array_elements(payload->'line_items') AS item
+                WHERE topic = 'orders/create'
+                  AND jsonb_typeof(payload->'line_items') = 'array'
+                GROUP BY 1
+            )
+            SELECT
+                sp.shopify_id,
+                sp.title,
+                sp.handle,
+                COALESCE(sp.imagen_url, sp.image_url) AS img,
+                COALESCE(
+                    sp.price,
+                    sp.precio_min,
+                    (sp.raw->'variants'->0->>'price')::numeric
+                ) AS price,
+                sp.edad_recomendada,
+                COALESCE(oc.n, 0) AS sales
+            FROM shopify_products sp
+            LEFT JOIN order_counts oc ON oc.product_id = sp.shopify_id
+            WHERE sp.status = 'active'
+              AND sp.edad_recomendada IS NOT NULL
+              AND sp.edad_recomendada <> ''
               {excl_clause}
-              AND ({match_clause})
-            ORDER BY RANDOM()
-            LIMIT :max_n
+            ORDER BY sales DESC
         """), params).fetchall()
     except Exception as exc:
-        logger.warning("cross_sell_db: query failed: %s", exc)
+        logger.warning("recommended_products: query failed: %s", exc)
         return []
 
     result = []
-    for row in rows:
-        _, title, handle, image_url, price = row
-        try:
-            price_fmt = f"${int(float(price or 0)):,}".replace(",", ".")
-        except Exception:
-            price_fmt = ""
+    for r in all_rows:
+        if edad_regalon is not None and not _age_matches(r[5] or "", edad_regalon):
+            continue
+        price_val = float(r[4]) if r[4] else 0
         result.append({
-            "title": title or "",
-            "url": f"https://www.happylapiz.cl/products/{handle or ''}",
-            "image_url": image_url or "",
-            "price": price_fmt,
+            "shopify_id": r[0],
+            "title": r[1],
+            "handle": r[2],
+            "image_url": r[3],
+            "price": f"${price_val:,.0f}".replace(",", ".") if price_val else "",
+            "url": f"https://www.happylapiz.cl/products/{r[2] or ''}",
+            "sales": int(r[6]),
         })
+        if len(result) >= max_products:
+            break
+
     return result
 
 
@@ -567,96 +535,6 @@ def _age_matches(edad_rec: str, age: int) -> bool:
         return False
 
 
-def _fetch_age_recommended_products(
-    session: Session,
-    customer_email: str,
-    edad_regalon: int,
-    max_products: int = 4,
-    gender: str | None = None,
-) -> list[dict]:
-    """Returns active products matching age (and optionally gender), sorted by best sellers, excluding already bought."""
-    history_rows = session.execute(text("""
-        SELECT payload FROM shopify_events
-        WHERE LOWER(email) = LOWER(:email)
-          AND topic = 'orders/create'
-          AND payload IS NOT NULL
-    """), {"email": customer_email}).fetchall()
-
-    ever_bought: set[int] = set()
-    for row in history_rows:
-        try:
-            payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-            for item in payload.get("line_items", []):
-                pid = item.get("product_id")
-                if pid:
-                    ever_bought.add(int(pid))
-        except Exception:
-            pass
-
-    excl_clause = "AND sp.shopify_id != ALL(:excl)" if ever_bought else ""
-    params: dict = {}
-    if ever_bought:
-        params["excl"] = list(ever_bought)
-
-    try:
-        all_rows = session.execute(text(f"""
-            WITH order_counts AS (
-                SELECT (item->>'product_id')::bigint AS product_id, COUNT(*) AS n
-                FROM shopify_events,
-                     jsonb_array_elements(payload->'line_items') AS item
-                WHERE topic = 'orders/create'
-                  AND jsonb_typeof(payload->'line_items') = 'array'
-                GROUP BY 1
-            )
-            SELECT
-                sp.shopify_id,
-                sp.title,
-                sp.handle,
-                COALESCE(sp.imagen_url, sp.image_url) AS img,
-                COALESCE(
-                    sp.price,
-                    sp.precio_min,
-                    (sp.raw->'variants'->0->>'price')::numeric
-                ) AS price,
-                sp.edad_recomendada,
-                sp.gender,
-                COALESCE(oc.n, 0) AS sales
-            FROM shopify_products sp
-            LEFT JOIN order_counts oc ON oc.product_id = sp.shopify_id
-            WHERE sp.status = 'active'
-              AND sp.edad_recomendada IS NOT NULL
-              AND sp.edad_recomendada <> ''
-              {excl_clause}
-            ORDER BY sales DESC
-        """), params).fetchall()
-    except Exception as exc:
-        logger.warning("age_recommended: query failed: %s", exc)
-        return []
-
-    result = []
-    for r in all_rows:
-        if not _age_matches(r[5] or "", edad_regalon):
-            continue
-        prod_gender = r[6]  # 'M', 'F', or None
-        # Gender filter: skip male products for female recipients and vice versa
-        if gender and prod_gender and prod_gender != gender:
-            continue
-        price_val = float(r[4]) if r[4] else 0
-        result.append({
-            "shopify_id": r[0],
-            "title": r[1],
-            "handle": r[2],
-            "image_url": r[3],
-            "price": f"${price_val:,.0f}".replace(",", ".") if price_val else "",
-            "url": f"https://www.happylapiz.cl/products/{r[2] or ''}",
-            "sales": int(r[7]),
-        })
-        if len(result) >= max_products:
-            break
-
-    return result
-
-
 def _trunc_title(title: str, max_chars: int = 55) -> str:
     """Truncate product title to max_chars chars at a word boundary."""
     if len(title) <= max_chars:
@@ -770,42 +648,24 @@ def _send_email_step(
             if raw_url:
                 sep = "&" if "?" in raw_url else "?"
                 event_extra["checkout_url_with_coupon"] = f"{raw_url}{sep}discount={coupon_code}"
-        # Inject cross-sell product grid if configured
+        # Product recommendations (age + bestsellers; without age → bestsellers only)
         cross_sell_cfg = (auto.trigger_config or {}).get("cross_sell_config") if auto.trigger_config else None
+        max_p = int(cross_sell_cfg.get("max_products", 4)) if cross_sell_cfg else 4
+        edad_int = _resolve_regalon_age(cf, extra_vars)
+        rec = _fetch_recommended_products(session, contact.email, edad_regalon=edad_int, max_products=max_p)
+        btn_color = _product_grid_btn_color(tpl)
+        from app.services.dynamic_html_blocks import render_html_block
+
         if cross_sell_cfg:
-            purchased_ids = [str(p) for p in (vars_.get("purchased_product_ids") or [])]
-            max_p = int(cross_sell_cfg.get("max_products", 4))
-            mode = cross_sell_cfg.get("mode", "db")
-            has_explicit = bool(cross_sell_cfg.get("collection_id") or cross_sell_cfg.get("product_ids"))
-            if mode == "db" or not has_explicit:
-                # Use DB-based matching (tags + product_type + exclude purchase history)
-                rec = _fetch_cross_sell_from_db(
-                    session=session,
-                    customer_email=contact.email,
-                    purchased_product_ids=purchased_ids,
-                    max_products=max_p,
-                )
-            else:
-                rec = _fetch_cross_sell_products(
-                    collection_id=cross_sell_cfg.get("collection_id") or None,
-                    product_ids=[str(p) for p in (cross_sell_cfg.get("product_ids") or [])],
-                    exclude_ids=set(purchased_ids),
-                    max_products=max_p,
-                )
             vars_["recommended_products"] = rec
-            # Get btn_color from template json_blocks if available
-            _cs_btn = "#f97316"
-            try:
-                _blks = json.loads(tpl.json_blocks) if isinstance(tpl.json_blocks, str) else (tpl.json_blocks or [])
-                for _b in (_blks if isinstance(_blks, list) else []):
-                    if _b.get("type") == "product_grid" and _b.get("props", {}).get("btn_color"):
-                        _cs_btn = _b["props"]["btn_color"]; break
-            except Exception:
-                pass
-            from app.services.dynamic_html_blocks import render_html_block
             vars_["recommended_products_html"] = render_html_block(
-                session, "recommended_products_html", rec, _cs_btn
-            ) or _build_cross_sell_html(rec, _cs_btn)
+                session, "recommended_products_html", rec, btn_color
+            ) or _build_cross_sell_html(rec, btn_color)
+
+        vars_["productos_recomendados_edad"] = rec
+        vars_["productos_recomendados_edad_html"] = render_html_block(
+            session, "recommended_products_html", rec, btn_color
+        ) or _build_cross_sell_html(rec, btn_color)
 
         # Purchase history variables (always available, derived from shopify_events)
         orders_count_val = contact.orders_count or 0
@@ -816,43 +676,6 @@ def _send_email_step(
         elif orders_count_val > 1 and history_items:
             vars_["productos_comprados_html"] = _build_products_list_html(history_items)
             vars_["primer_producto_comprado"] = history_items[0].get("title", "")
-
-        # Age-based product recommendations (uses custom_fields.edad_regalon OR fecha_nacimiento from form)
-        edad_regalon_raw = cf.get("edad_regalon") or (extra_vars or {}).get("edad_regalon")
-        if edad_regalon_raw is None:
-            # Calculate age from date of birth if provided (form_submitted trigger)
-            dob_str = (extra_vars or {}).get("cual_es_su_fecha_de_nacimiento") or cf.get("cual_es_su_fecha_de_nacimiento")
-            if dob_str:
-                try:
-                    from datetime import date as _date
-                    dob = _date.fromisoformat(str(dob_str))
-                    today = _date.today()
-                    edad_regalon_raw = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-                except Exception:
-                    pass
-        if edad_regalon_raw is not None:
-            try:
-                edad_int = int(edad_regalon_raw)
-                # Get btn_color from template json_blocks if available
-                btn_color = "#f97316"
-                try:
-                    blocks = json.loads(tpl.json_blocks) if isinstance(tpl.json_blocks, str) else (tpl.json_blocks or [])
-                    for blk in (blocks if isinstance(blocks, list) else []):
-                        props = blk.get("props", {})
-                        if blk.get("type") == "product_grid" and props.get("btn_color"):
-                            btn_color = props["btn_color"]
-                            break
-                except Exception:
-                    pass
-                genero_regalado = (extra_vars or {}).get("genero_regalado") or contact.gender
-                age_rec = _fetch_age_recommended_products(session, contact.email, edad_int, gender=genero_regalado)
-                vars_["productos_recomendados_edad"] = age_rec
-                from app.services.dynamic_html_blocks import render_html_block
-                vars_["productos_recomendados_edad_html"] = render_html_block(
-                    session, "recommended_products_html", age_rec, btn_color
-                ) or _build_cross_sell_html(age_rec, btn_color)
-            except (ValueError, TypeError):
-                pass
 
         from app.services.regalado_vars import prepare_regalado_vars, preprocess_regalado_template
         prepare_regalado_vars(vars_)
