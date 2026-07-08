@@ -94,6 +94,26 @@ def _run_migrations():
             used BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
+        # shop_id for every raw-SQL table above, plus shopify_orders/shopify_events/
+        # shopify_checkouts/carritos_abandonados — those four aren't created anywhere
+        # in this repo (they're populated by the separate ETL pipeline), so this list
+        # can't assume they exist yet. ALTER TABLE IF EXISTS is a safe no-op until
+        # they show up; this block then self-heals them on the next app restart
+        # instead of depending on deploy ordering between the ETL and this app.
+        "ALTER TABLE IF EXISTS shopify_products ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_products_shop_id ON shopify_products (shop_id)",
+        "ALTER TABLE IF EXISTS coupon_campaigns ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_coupon_campaigns_shop_id ON coupon_campaigns (shop_id)",
+        "ALTER TABLE IF EXISTS coupon_sends ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_coupon_sends_shop_id ON coupon_sends (shop_id)",
+        "ALTER TABLE IF EXISTS shopify_orders ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_orders_shop_id ON shopify_orders (shop_id)",
+        "ALTER TABLE IF EXISTS shopify_events ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_events_shop_id ON shopify_events (shop_id)",
+        "ALTER TABLE IF EXISTS shopify_checkouts ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_checkouts_shop_id ON shopify_checkouts (shop_id)",
+        "ALTER TABLE IF EXISTS carritos_abandonados ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_carritos_abandonados_shop_id ON carritos_abandonados (shop_id)",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

@@ -76,6 +76,16 @@ def upgrade() -> None:
         shop_id = result.fetchone()[0]
 
     for table in BACKFILL_TABLES:
+        # Some of these (shopify_orders/shopify_events/shopify_checkouts/
+        # carritos_abandonados) are created by the separate ETL pipeline, not
+        # this app — skip if the table doesn't exist yet rather than crashing
+        # the whole migration run. Nothing to backfill on a table with no rows.
+        exists = bind.execute(
+            sa.text("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = :t"),
+            {"t": table},
+        ).scalar()
+        if not exists:
+            continue
         bind.execute(
             sa.text(
                 f"UPDATE {table} SET shop_id = :shop_id WHERE shop_id IS NULL"
