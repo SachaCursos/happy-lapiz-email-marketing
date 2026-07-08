@@ -19,6 +19,7 @@ import httpx
 import resend
 from jinja2 import Environment, ChainableUndefined
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -613,6 +614,24 @@ def _send_email_step(
         status="failed",
         variant_sent=variant,
     )
+    # Atomic claim: insert the run row up front so the unique index on
+    # (automation_id, trigger_key, step_number) rejects a second process
+    # trying to send this same step concurrently. Without this, the
+    # SELECT-based check in _process_enrollments has a check-then-act gap
+    # spanning the Resend API call below, wide enough for two engine
+    # instances to both pass the check and both send.
+    session.add(run)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        logger.warning(
+            "Automation %d step %d for %s already claimed by another run, skipping send",
+            auto.id, step_number, contact.email,
+        )
+        return
+    session.refresh(run)
+
     try:
         # Generate dynamic coupon if automation has one configured
         coupon_code: str | None = None

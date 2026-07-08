@@ -46,6 +46,14 @@ def _run_migrations():
         "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
+        # Keep only the earliest run per (automation, trigger_key, step) before adding
+        # the unique index below, in case the pre-fix race already produced duplicates.
+        """DELETE FROM automation_runs a USING automation_runs b
+           WHERE a.id > b.id
+             AND a.automation_id = b.automation_id
+             AND a.trigger_key = b.trigger_key
+             AND a.step_number = b.step_number""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_automation_runs_dedup ON automation_runs (automation_id, trigger_key, step_number)",
         """CREATE TABLE IF NOT EXISTS shopify_products (
             id SERIAL PRIMARY KEY,
             shopify_id BIGINT UNIQUE NOT NULL,
