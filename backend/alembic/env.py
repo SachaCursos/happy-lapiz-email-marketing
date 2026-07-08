@@ -39,6 +39,12 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     connectable = engine
+    # On a brand-new database (e.g. a fresh staging Postgres), the shop_id
+    # migrations below assume the base ORM tables already exist — which is
+    # normally true because the app creates them on startup, but Alembic
+    # runs before the app does. create_all is a no-op for tables that
+    # already exist (production), and fills in the rest here (fresh DBs).
+    SQLModel.metadata.create_all(connectable)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
