@@ -62,8 +62,8 @@ def upgrade() -> None:
         result = bind.execute(
             sa.text(
                 """
-                INSERT INTO shops (shopify_domain, access_token_encrypted, status, installed_at, created_at, updated_at)
-                VALUES (:domain, :token, 'active', :now, :now, :now)
+                INSERT INTO shops (shopify_domain, access_token_encrypted, status, initial_sync_status, installed_at, created_at, updated_at)
+                VALUES (:domain, :token, 'active', 'pending', :now, :now, :now)
                 RETURNING id
                 """
             ),

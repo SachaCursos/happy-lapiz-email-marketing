@@ -12,7 +12,7 @@ class Shop(SQLModel, table=True):
     shopify_shop_id: Optional[str] = None
     access_token_encrypted: str
     scopes: Optional[str] = None
-    status: str = Field(default="active")  # active | uninstalled
+    status: str = Field(default="active", sa_column_kwargs={"server_default": "active"})  # active | uninstalled
 
     installed_at: datetime = Field(default_factory=datetime.utcnow)
     uninstalled_at: Optional[datetime] = None
@@ -21,7 +21,11 @@ class Shop(SQLModel, table=True):
     plan_name: Optional[str] = None
     currency: Optional[str] = None
 
-    initial_sync_status: str = Field(default="pending")  # pending | running | complete | failed
+    # pending | running | complete | failed. server_default matters here, not just
+    # Python-side default=: raw SQL inserts (e.g. the 0003 migration's bootstrap
+    # row) don't go through the ORM, so without a real DB-level default they'd hit
+    # a NOT NULL violation on any column they don't list explicitly.
+    initial_sync_status: str = Field(default="pending", sa_column_kwargs={"server_default": "pending"})
     initial_sync_started_at: Optional[datetime] = None
     initial_sync_completed_at: Optional[datetime] = None
     initial_sync_error: Optional[str] = None
