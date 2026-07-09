@@ -1,13 +1,27 @@
-from typing import Optional
+import json
+from typing import Any, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 from sqlalchemy import text
+
 from app.database import get_session
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_editor
 from app.models.user import User
 
 router = APIRouter()
+
+
+def _parse_jsonb(val: Any) -> Any:
+    """JSONB columns may arrive as str or already-parsed list/dict from psycopg2."""
+    if val is None:
+        return None
+    if isinstance(val, (list, dict)):
+        return val
+    if isinstance(val, str):
+        return json.loads(val)
+    return val
 
 MIGRATIONS = [
     """CREATE TABLE IF NOT EXISTS surveys (
@@ -95,7 +109,6 @@ def get_survey_public(slug: str, session: Session = Depends(get_session)):
     if not survey or survey[4] != "active":
         raise HTTPException(status_code=404, detail="Encuesta no encontrada")
 
-    import json
     questions = session.execute(
         text("SELECT id, question, type, options, required, sort_order FROM survey_questions WHERE survey_id = :sid ORDER BY sort_order"),
         {"sid": survey[0]},
@@ -109,7 +122,7 @@ def get_survey_public(slug: str, session: Session = Depends(get_session)):
         "questions": [
             {
                 "id": q[0], "question": q[1], "type": q[2],
-                "options": json.loads(q[3]) if q[3] else None,
+                "options": _parse_jsonb(q[3]),
                 "required": q[4],
                 "sort_order": q[5],
             }
@@ -157,7 +170,7 @@ def submit_survey(slug: str, body: SurveySubmit, session: Session = Depends(get_
 def create_survey(
     body: SurveyCreate,
     session: Session = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_editor),
 ):
     run_survey_migrations(session)
     slug = body.slug.lower().strip().replace(" ", "-")
@@ -178,12 +191,11 @@ def create_survey(
     session.commit()
     survey_id = row[0]
 
-    import json
     for q in body.questions:
         session.execute(
             text("""
                 INSERT INTO survey_questions (survey_id, question, type, options, required, sort_order)
-                VALUES (:sid, :q, :t, :opts, :req, :ord)
+                VALUES (:sid, :q, :t, CAST(:opts AS jsonb), :req, :ord)
             """),
             {
                 "sid": survey_id,
@@ -244,7 +256,6 @@ def get_responses(
         {"sid": survey_id},
     ).fetchall()
 
-    import json
     response_ids = [r[0] for r in responses]
     answers_by_response: dict[int, list] = {r[0]: [] for r in responses}
 
@@ -266,7 +277,7 @@ def get_responses(
         "questions": [
             {
                 "id": q[0], "question": q[1], "type": q[2],
-                "options": json.loads(q[3]) if q[3] else None,
+                "options": _parse_jsonb(q[3]),
                 "sort_order": q[4],
             }
             for q in questions
@@ -290,7 +301,6 @@ def get_survey(
     _: User = Depends(get_current_user),
 ):
     run_survey_migrations(session)
-    import json
     survey = session.execute(
         text("SELECT id, name, slug, description, status FROM surveys WHERE id = :id"),
         {"id": survey_id},
@@ -307,7 +317,7 @@ def get_survey(
         "questions": [
             {
                 "id": q[0], "question": q[1], "type": q[2],
-                "options": json.loads(q[3]) if q[3] else None,
+                "options": _parse_jsonb(q[3]),
                 "required": q[4], "sort_order": q[5],
             }
             for q in questions
@@ -320,10 +330,9 @@ def update_survey(
     survey_id: int,
     body: SurveyCreate,
     session: Session = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_editor),
 ):
     run_survey_migrations(session)
-    import json
     survey = session.execute(
         text("SELECT id FROM surveys WHERE id = :id"), {"id": survey_id}
     ).fetchone()
@@ -347,7 +356,7 @@ def update_survey(
         session.execute(
             text("""
                 INSERT INTO survey_questions (survey_id, question, type, options, required, sort_order)
-                VALUES (:sid, :q, :t, :opts, :req, :ord)
+                VALUES (:sid, :q, :t, CAST(:opts AS jsonb), :req, :ord)
             """),
             {
                 "sid": survey_id, "q": q.question, "t": q.type,
@@ -363,7 +372,7 @@ def update_survey(
 def delete_survey(
     survey_id: int,
     session: Session = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_editor),
 ):
     run_survey_migrations(session)
     session.execute(text("DELETE FROM surveys WHERE id = :id"), {"id": survey_id})

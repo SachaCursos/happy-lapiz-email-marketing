@@ -143,9 +143,10 @@ export default function EditSurveyPage() {
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
 
-  const { data, isLoading } = useQuery<SurveyDetail>({
+  const { data, isLoading, isError } = useQuery<SurveyDetail>({
     queryKey: ["survey", surveyId],
     queryFn: () => api.get(`/surveys/${surveyId}`).then((r) => r.data),
+    enabled: Number.isFinite(surveyId) && surveyId > 0,
   });
 
   useEffect(() => {
@@ -211,10 +212,37 @@ export default function EditSurveyPage() {
     mutation.mutate();
   }
 
-  if (isLoading) {
+  if (!Number.isFinite(surveyId) || surveyId <= 0) {
+    return (
+      <div className="p-8 text-sm text-gray-500">
+        Encuesta no válida.{" "}
+        <button onClick={() => router.push("/encuestas")} className="text-brand-600 hover:underline">
+          Volver al listado
+        </button>
+      </div>
+    );
+  }
+
+  if (isLoading || (data && !loaded)) {
     return (
       <div className="p-8 flex items-center gap-2 text-gray-400 text-sm">
-        <Loader2 size={16} className="animate-spin" /> Cargando...
+        <Loader2 size={16} className="animate-spin" /> Cargando encuesta...
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="p-8 max-w-lg">
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-4 text-sm text-red-700">
+          No se pudo cargar la encuesta para editar.
+        </div>
+        <button
+          onClick={() => router.push("/encuestas")}
+          className="mt-4 text-sm text-brand-600 hover:underline"
+        >
+          ← Volver a encuestas
+        </button>
       </div>
     );
   }

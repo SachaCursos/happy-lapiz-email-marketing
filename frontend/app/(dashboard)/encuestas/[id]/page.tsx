@@ -122,9 +122,10 @@ export default function SurveyResponsesPage() {
   const qc = useQueryClient();
   const surveyId = Number(params.id);
 
-  const { data, isLoading } = useQuery<SurveyData>({
+  const { data, isLoading, isError } = useQuery<SurveyData>({
     queryKey: ["survey-responses", surveyId],
     queryFn: () => api.get(`/surveys/${surveyId}/responses`).then((r) => r.data),
+    enabled: Number.isFinite(surveyId) && surveyId > 0,
   });
 
   const deleteMutation = useMutation({
@@ -136,8 +137,17 @@ export default function SurveyResponsesPage() {
     return <div className="p-8 text-gray-400 text-sm">Cargando...</div>;
   }
 
-  if (!data) {
-    return <div className="p-8 text-gray-400 text-sm">Encuesta no encontrada.</div>;
+  if (isError || !data) {
+    return (
+      <div className="p-8">
+        <Link href="/encuestas" className="text-gray-400 hover:text-gray-700 inline-flex items-center gap-2 mb-4">
+          <ArrowLeft size={18} /> Volver
+        </Link>
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-4 text-sm text-red-700">
+          No se pudo cargar la encuesta.
+        </div>
+      </div>
+    );
   }
 
   const { survey, questions, responses } = data;

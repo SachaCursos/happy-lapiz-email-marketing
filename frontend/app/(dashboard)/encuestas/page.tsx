@@ -26,7 +26,7 @@ function surveyUrl(slug: string) {
 }
 
 export default function EncuestasPage() {
-  const { data: surveys = [], isLoading } = useQuery<Survey[]>({
+  const { data: surveys = [], isLoading, isError, refetch } = useQuery<Survey[]>({
     queryKey: ["surveys"],
     queryFn: () => api.get("/surveys").then((r) => r.data),
   });
@@ -51,6 +51,16 @@ export default function EncuestasPage() {
           {[1, 2, 3].map((i) => (
             <div key={i} className="bg-white border border-gray-200 rounded-xl p-5 animate-pulse h-32" />
           ))}
+        </div>
+      ) : isError ? (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center">
+          <p className="text-red-700 text-sm mb-3">No se pudieron cargar las encuestas.</p>
+          <button
+            onClick={() => refetch()}
+            className="text-sm text-red-600 font-medium hover:underline"
+          >
+            Reintentar
+          </button>
         </div>
       ) : surveys.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-16 text-center">
