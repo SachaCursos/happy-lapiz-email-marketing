@@ -165,6 +165,7 @@ def run_initial_sync(shop_id: int) -> None:
             shop.initial_sync_status = "complete"
             shop.initial_sync_completed_at = datetime.now(timezone.utc)
             shop.initial_sync_stats = stats
+            shop.initial_sync_error = None
             session.add(shop)
             session.commit()
             logger.info("Initial sync completo para shop_id=%s: %s", shop_id, stats)

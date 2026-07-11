@@ -40,6 +40,7 @@ import hashlib
 import hmac
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import httpx
@@ -129,12 +130,109 @@ def _log_event(cur, topic: str, shopify_id: str, email: str, payload: dict, now:
     """, (shop_id, topic, shopify_id, email or None, json.dumps(payload), trigger, now))
 
 
-def _resolve_shop_id(cur, shop_domain: str) -> int | None:
+def _resolve_shop_id(cur, shop_domain: str, require_active: bool = True) -> int | None:
     if not shop_domain:
         return None
-    cur.execute("SELECT id FROM shops WHERE shopify_domain = %s AND status = 'active'", (shop_domain,))
+    # Compliance topics (customers/redact, shop/redact) legitimately arrive for
+    # a shop that's already 'uninstalled' — shop/redact by design fires ~48h
+    # *after* app/uninstalled. Business topics still require 'active' so we
+    # don't process new orders/checkouts for a shop that's no longer installed.
+    if require_active:
+        cur.execute("SELECT id FROM shops WHERE shopify_domain = %s AND status = 'active'", (shop_domain,))
+    else:
+        cur.execute("SELECT id FROM shops WHERE shopify_domain = %s", (shop_domain,))
     row = cur.fetchone()
     return row[0] if row else None
+
+
+def _redact_customer(cur, shop_id: int, email: str) -> None:
+    """Erase/anonymize one customer's PII within one shop (Shopify customers/redact).
+
+    contacts is anonymized in place rather than deleted: campaign_sends and
+    automation_runs hold a NOT NULL/optional FK to contacts.id and are legitimate
+    business records (send/open/click history) worth keeping for reporting —
+    deleting the contacts row would either violate that FK or destroy those
+    records. Tables that store the raw email as free text with no FK pointing
+    at them are wiped or anonymized directly.
+
+    shopify_orders is intentionally left untouched: it's owned by the separate
+    ETL pipeline (happylapiz-etl), not this app, and would just get overwritten
+    on the next sync — redacting it needs an equivalent fix on that side.
+    """
+    if not shop_id or not email:
+        return
+    placeholder = f"redacted-{uuid.uuid4().hex[:12]}@redacted.invalid"
+
+    cur.execute("""
+        UPDATE contacts SET
+            email = %s, name = NULL, phone = NULL,
+            shipping_city = NULL, shipping_province = NULL,
+            all_shipping_cities = NULL, custom_fields = NULL,
+            klaviyo_properties = NULL, klaviyo_location = NULL,
+            location = NULL
+        WHERE shop_id = %s AND email = %s
+    """, (placeholder, shop_id, email))
+
+    cur.execute(
+        "DELETE FROM automation_enrollments WHERE shop_id = %s AND contact_email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "UPDATE automation_runs SET contact_email = %s WHERE shop_id = %s AND contact_email = %s",
+        (placeholder, shop_id, email),
+    )
+    cur.execute(
+        "DELETE FROM form_submissions WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "DELETE FROM gift_recipients WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "DELETE FROM shopify_events WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "UPDATE shopify_checkouts SET email = NULL WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute("""
+        UPDATE carritos_abandonados SET email = %s, first_name = NULL, last_name = NULL, phone = NULL
+        WHERE shop_id = %s AND email = %s
+    """, (placeholder, shop_id, email))
+    cur.execute(
+        "UPDATE coupon_sends SET contact_email = %s WHERE shop_id = %s AND contact_email = %s",
+        (placeholder, shop_id, email),
+    )
+
+
+def _redact_shop_data(cur, shop_id: int) -> None:
+    """Full tenant wipe for one shop (Shopify shop/redact, fired ~48h after
+    app/uninstalled). Ordered to respect FK constraints — children before the
+    parents they reference (campaign_sends before campaigns/contacts, everything
+    that references users.created_by before users, etc).
+    """
+    if not shop_id:
+        return
+    tables_in_fk_order = [
+        "campaign_sends", "automation_runs", "automation_enrollments",
+        "coupon_sends", "form_submissions",
+        "campaigns", "automations", "signup_forms",
+        "templates", "segments", "coupon_campaigns",
+        "contacts", "gift_recipients",
+        "shopify_events", "shopify_checkouts", "carritos_abandonados", "shopify_products",
+        "users",
+    ]
+    for table in tables_in_fk_order:
+        cur.execute(f"DELETE FROM {table} WHERE shop_id = %s", (shop_id,))
+    # Blank the access token too — status is already 'uninstalled' from the
+    # app/uninstalled handler, but this makes a stale/leaked credential unusable
+    # even if the shops row itself is kept around for audit purposes.
+    cur.execute(
+        "UPDATE shops SET access_token_encrypted = '', shop_owner_email = NULL WHERE id = %s",
+        (shop_id,),
+    )
 
 
 @router.post("/webhooks")
@@ -161,7 +259,8 @@ async def shopify_webhook(
     cur = conn.cursor()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    shop_id = _resolve_shop_id(cur, x_shopify_shop_domain)
+    compliance_topics = ("customers/data_request", "customers/redact", "shop/redact")
+    shop_id = _resolve_shop_id(cur, x_shopify_shop_domain, require_active=topic not in compliance_topics)
     if shop_id is None:
         logger.warning("Webhook de tienda desconocida o desinstalada: %s", x_shopify_shop_domain)
         cur.close()
@@ -386,11 +485,23 @@ async def shopify_webhook(
             (payload.get("customer") or {}).get("id") or payload.get("shop_id") or ""
         )
         trigger = "gdpr_" + topic.replace("/", "_")
-        _log_event(cur, topic, subject_id, email, payload, now, shop_id, trigger)
-        logger.info("Webhook de compliance recibido: %s (shop_id=%s)", topic, shop_id)
-        # TODO(futuro, previo a publicar en el App Store): implementar borrado/
-        # entrega real de datos de clientes. Por ahora se registra el pedido y
-        # se responde 200, que es lo que exige Shopify para no reintentar.
+
+        if topic == "customers/redact":
+            _redact_customer(cur, shop_id, email)
+            # Log the fact that a redact happened, not the PII we just erased.
+            _log_event(cur, topic, subject_id, None, {"redacted": True}, now, shop_id, trigger)
+            logger.info("customers/redact: PII borrada/anonimizada (shop_id=%s)", shop_id)
+        elif topic == "shop/redact":
+            _redact_shop_data(cur, shop_id)
+            _log_event(cur, topic, subject_id, None, {"redacted": True}, now, shop_id, trigger)
+            logger.info("shop/redact: datos de shop_id=%s eliminados", shop_id)
+        else:
+            # customers/data_request exige *entregar* los datos al comerciante,
+            # no borrarlos — eso todavía no está implementado. Por ahora queda
+            # registrado en shopify_events para trackear que Shopify lo pidió
+            # y cuándo, y se responde 200 para que no reintente.
+            _log_event(cur, topic, subject_id, email, payload, now, shop_id, trigger)
+            logger.info("customers/data_request recibido (shop_id=%s) — export manual pendiente", shop_id)
 
     cur.close()
     conn.close()

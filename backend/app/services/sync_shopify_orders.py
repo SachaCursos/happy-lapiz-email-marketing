@@ -15,10 +15,18 @@ logger = logging.getLogger(__name__)
 def sync_contacts_from_shopify_orders() -> dict:
     # Aggregate stats and latest-order details per buyer email.
     # Used by both the INSERT and the UPDATE below.
+    # shop_id IS NOT NULL on both CTEs: shopify_orders is populated by the separate
+    # ETL pipeline, which doesn't tag rows with shop_id yet. Guessing a shop_id here
+    # (e.g. defaulting to "the" shop) would either mis-assign orders once a second
+    # shop exists, or keep inserting shop_id-NULL contacts forever and block the
+    # eventual NOT NULL tightening (0004_tighten_shop_id_constraints). Skipping
+    # untagged orders is a no-op today (single shop, ETL not yet updated) and
+    # self-heals once the ETL starts writing shop_id.
     _STATS_CTE = """
         order_stats AS (
             SELECT
                 lower(email)                              AS email,
+                shop_id                                   AS shop_id,
                 COUNT(*)                                  AS orders_count,
                 SUM(total_price)                          AS total_spent,
                 SUM(total_price) / NULLIF(COUNT(*), 0)   AS ticket_medio,
@@ -28,11 +36,13 @@ def sync_contacts_from_shopify_orders() -> dict:
               AND email <> ''
               AND cancelled_at IS NULL
               AND financial_status NOT IN ('voided', 'refunded')
-            GROUP BY lower(email)
+              AND shop_id IS NOT NULL
+            GROUP BY lower(email), shop_id
         ),
         latest_order AS (
-            SELECT DISTINCT ON (lower(email))
+            SELECT DISTINCT ON (lower(email), shop_id)
                 lower(email)                                              AS email,
+                shop_id                                                   AS shop_id,
                 TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) AS name,
                 shipping_city,
                 shipping_province,
@@ -40,14 +50,15 @@ def sync_contacts_from_shopify_orders() -> dict:
             FROM shopify_orders
             WHERE email IS NOT NULL
               AND cancelled_at IS NULL
-            ORDER BY lower(email), created_at DESC
+              AND shop_id IS NOT NULL
+            ORDER BY lower(email), shop_id, created_at DESC
         )
     """
 
     insert_sql = text(f"""
         WITH {_STATS_CTE}
         INSERT INTO contacts (
-            email, name,
+            shop_id, email, name,
             orders_count, total_spent, ticket_medio, last_purchase,
             shipping_city, shipping_province,
             opted_in, accepts_marketing,
@@ -55,6 +66,7 @@ def sync_contacts_from_shopify_orders() -> dict:
             created_at, updated_at
         )
         SELECT
+            os.shop_id,
             os.email,
             lo.name,
             os.orders_count,
@@ -68,7 +80,7 @@ def sync_contacts_from_shopify_orders() -> dict:
             'shopify',
             NOW(), NOW()
         FROM order_stats os
-        JOIN latest_order lo ON lo.email = os.email
+        JOIN latest_order lo ON lo.email = os.email AND lo.shop_id = os.shop_id
         WHERE NOT EXISTS (
             SELECT 1 FROM contacts c WHERE lower(c.email) = os.email
         )
@@ -85,9 +97,10 @@ def sync_contacts_from_shopify_orders() -> dict:
             last_purchase     = os.last_purchase,
             shipping_city     = COALESCE(lo.shipping_city,    c.shipping_city),
             shipping_province = COALESCE(lo.shipping_province, c.shipping_province),
+            shop_id           = COALESCE(c.shop_id, os.shop_id),
             updated_at        = NOW()
         FROM order_stats os
-        JOIN latest_order lo ON lo.email = os.email
+        JOIN latest_order lo ON lo.email = os.email AND lo.shop_id = os.shop_id
         WHERE lower(c.email) = os.email
           AND (
               c.last_purchase   IS DISTINCT FROM os.last_purchase
