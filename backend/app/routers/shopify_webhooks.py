@@ -235,45 +235,12 @@ def _redact_shop_data(cur, shop_id: int) -> None:
     )
 
 
-@router.post("/webhooks")
-async def shopify_webhook(
-    request: Request,
-    x_shopify_topic: str = Header(default="", alias="x-shopify-topic"),
-    x_shopify_hmac_sha256: str = Header(default="", alias="x-shopify-hmac-sha256"),
-    x_shopify_shop_domain: str = Header(default="", alias="x-shopify-shop-domain"),
-):
-    body = await request.body()
-    if not _verify_shopify(body, x_shopify_hmac_sha256):
-        raise HTTPException(status_code=401, detail="HMAC inválido")
-    try:
-        payload = json.loads(body)
-    except Exception:
-        raise HTTPException(status_code=400, detail="JSON inválido")
-
-    topic = x_shopify_topic
-    logger.info("Shopify webhook: %s (shop=%s)", topic, x_shopify_shop_domain)
-
-    import psycopg2
-    conn = psycopg2.connect(settings.DATABASE_URL)
-    conn.autocommit = True
-    cur = conn.cursor()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-    compliance_topics = ("customers/data_request", "customers/redact", "shop/redact")
-    shop_id = _resolve_shop_id(cur, x_shopify_shop_domain, require_active=topic not in compliance_topics)
-    if shop_id is None:
-        logger.warning("Webhook de tienda desconocida o desinstalada: %s", x_shopify_shop_domain)
-        cur.close()
-        conn.close()
-        # Shopify exige 200 para no reintentar, aunque no procesemos el evento.
-        return {"ok": True, "topic": topic, "skipped": "unknown_shop"}
-
-    email = (
-        payload.get("email") or
-        payload.get("customer", {}).get("email") or
-        payload.get("contact_email") or ""
-    ).lower().strip()
-
+def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: datetime, shop_id: int) -> None:
+    """Runs the per-topic side effects for one webhook. Raises on failure (e.g. a
+    raw table like shopify_checkouts/shopify_events not existing yet in this
+    environment) — the caller is responsible for catching that and still
+    returning 200 to Shopify so it doesn't retry-storm the endpoint.
+    """
     # ── Cart events → Added to Cart ──────────────────────────────────────────
     if topic in ("carts/create", "carts/update"):
         cart_id = str(payload.get("id", payload.get("token", "")))
@@ -502,6 +469,58 @@ async def shopify_webhook(
             # y cuándo, y se responde 200 para que no reintente.
             _log_event(cur, topic, subject_id, email, payload, now, shop_id, trigger)
             logger.info("customers/data_request recibido (shop_id=%s) — export manual pendiente", shop_id)
+
+
+@router.post("/webhooks")
+async def shopify_webhook(
+    request: Request,
+    x_shopify_topic: str = Header(default="", alias="x-shopify-topic"),
+    x_shopify_hmac_sha256: str = Header(default="", alias="x-shopify-hmac-sha256"),
+    x_shopify_shop_domain: str = Header(default="", alias="x-shopify-shop-domain"),
+):
+    body = await request.body()
+    if not _verify_shopify(body, x_shopify_hmac_sha256):
+        raise HTTPException(status_code=401, detail="HMAC inválido")
+    try:
+        payload = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON inválido")
+
+    topic = x_shopify_topic
+    logger.info("Shopify webhook: %s (shop=%s)", topic, x_shopify_shop_domain)
+
+    import psycopg2
+    conn = psycopg2.connect(settings.DATABASE_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    compliance_topics = ("customers/data_request", "customers/redact", "shop/redact")
+    shop_id = _resolve_shop_id(cur, x_shopify_shop_domain, require_active=topic not in compliance_topics)
+    if shop_id is None:
+        logger.warning("Webhook de tienda desconocida o desinstalada: %s", x_shopify_shop_domain)
+        cur.close()
+        conn.close()
+        # Shopify exige 200 para no reintentar, aunque no procesemos el evento.
+        return {"ok": True, "topic": topic, "skipped": "unknown_shop"}
+
+    email = (
+        payload.get("email") or
+        payload.get("customer", {}).get("email") or
+        payload.get("contact_email") or ""
+    ).lower().strip()
+
+    try:
+        _dispatch_webhook_topic(cur, topic, payload, email, now, shop_id)
+    except Exception:
+        # No dejar que un error de procesamiento (ej. una tabla que todavía no
+        # existe en este ambiente) tumbe la respuesta con un 500 — Shopify
+        # reintenta webhooks fallidos agresivamente y puede llegar a desactivar
+        # la suscripción. Se loguea y se responde 200 igual.
+        logger.exception("Error procesando webhook %s (shop_id=%s)", topic, shop_id)
+        cur.close()
+        conn.close()
+        return {"ok": True, "topic": topic, "skipped": "processing_error"}
 
     cur.close()
     conn.close()
