@@ -11,6 +11,32 @@ from app.database import engine
 
 logger = logging.getLogger(__name__)
 
+# shopify_orders is owned by the separate ETL pipeline (happylapiz-etl), not this
+# app — on an environment where that pipeline hasn't run yet (e.g. a fresh staging
+# DB), the table can exist with only a subset of its normal columns. Check before
+# querying so a schema that isn't ready yet logs one short line instead of the
+# scheduler dumping a full traceback every 60s.
+_REQUIRED_COLUMNS = {
+    "email", "total_price", "financial_status", "cancelled_at", "created_at",
+    "first_name", "last_name", "raw", "shipping_city", "shipping_province", "shop_id",
+}
+
+
+def _shopify_orders_schema_ready(conn) -> bool:
+    existing = {
+        row[0] for row in conn.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'shopify_orders'"
+        ))
+    }
+    missing = _REQUIRED_COLUMNS - existing
+    if missing:
+        logger.warning(
+            "sync_contacts_from_shopify_orders: shopify_orders le faltan columnas %s — salteando hasta que el ETL las cree",
+            sorted(missing),
+        )
+        return False
+    return True
+
 
 def sync_contacts_from_shopify_orders() -> dict:
     # Aggregate stats and latest-order details per buyer email.
@@ -110,6 +136,8 @@ def sync_contacts_from_shopify_orders() -> dict:
     """)
 
     with engine.connect() as conn:
+        if not _shopify_orders_schema_ready(conn):
+            return {"created": 0, "updated": 0, "skipped": "shopify_orders schema not ready"}
         ins = conn.execute(insert_sql)
         upd = conn.execute(update_sql)
         conn.commit()
