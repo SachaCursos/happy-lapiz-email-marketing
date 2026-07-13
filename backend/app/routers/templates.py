@@ -193,6 +193,8 @@ def send_template_test(
         pass  # DB unavailable — fall through to placeholders
 
     unsub = unsub_url(email)
+    from app.services.email_sender import _fmt_first_name
+    first_name = _fmt_first_name(first_name)
     vars_ = {
         "nombre":        first_name,
         "first_name":    first_name,

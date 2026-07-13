@@ -26,11 +26,30 @@ def _campaign_seg_ids(campaign: Campaign) -> list[int]:
     return [campaign.segment_id] if campaign.segment_id else []
 
 
+def _fmt_first_name(value: str | None) -> str:
+    """First letter uppercase, rest lowercase — ignores source casing (JUAN → Juan)."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    first = raw.split()[0]
+    return first[:1].upper() + first[1:].lower()
+
+
 def _fmt_nombre(name: str | None, email: str = "") -> str:
-    """Return title-cased first name only. Falls back to email prefix or 'cliente'."""
+    """Return capitalized first name only. Falls back to email prefix or 'cliente'."""
     raw = (name or email.split("@")[0] or "cliente").strip()
-    first = raw.lower().title().split()[0]
-    return first
+    return _fmt_first_name(raw) or "cliente"
+
+
+def normalize_first_name_vars(vars_: dict) -> None:
+    """Ensure {{ first_name }} is always Capitalized regardless of upstream casing."""
+    fn = vars_.get("first_name")
+    if fn is not None and str(fn).strip():
+        vars_["first_name"] = _fmt_first_name(str(fn))
+        return
+    nombre = vars_.get("nombre")
+    if nombre is not None and str(nombre).strip():
+        vars_["first_name"] = _fmt_first_name(str(nombre))
 
 
 BATCH_SIZE = 50
@@ -319,7 +338,7 @@ def build_contact_template_vars(
     """Build Jinja context for campaigns — mirrors automation email vars."""
     cf = _parse_custom_fields(contact)
     nombre = _fmt_nombre(contact.name, contact.email)
-    first_name = nombre.split()[0] if contact.name else ""
+    first_name = nombre if contact.name else ""
 
     vars_ = {
         "nombre": nombre,
@@ -342,6 +361,7 @@ def build_contact_template_vars(
 
     from app.services.regalado_vars import prepare_regalado_vars
     prepare_regalado_vars(vars_)
+    normalize_first_name_vars(vars_)
     return vars_
 
 
@@ -358,7 +378,8 @@ def render_template_text(
     from app.services.regalado_vars import preprocess_regalado_template
 
     raw = preprocess_regalado_template(text) if preprocess_regalado else text
-    ctx = vars_ or build_contact_template_vars(contact)
+    ctx = dict(vars_) if vars_ is not None else build_contact_template_vars(contact)
+    normalize_first_name_vars(ctx)
     _env = Environment(undefined=ChainableUndefined)
     return _env.from_string(raw).render(**ctx)
 

@@ -27,7 +27,16 @@ from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
-from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_batch, _fmt_nombre, replace_unsub_tag, resolve_relative_timers, resume_pending_campaign_sends
+from app.services.email_sender import (
+    _inject_footer,
+    _unsub_headers,
+    send_campaign_batch,
+    _fmt_nombre,
+    normalize_first_name_vars,
+    replace_unsub_tag,
+    resolve_relative_timers,
+    resume_pending_campaign_sends,
+)
 from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment, evaluate_segment_ids
 
@@ -555,7 +564,7 @@ def _send_email_step(
                 logger.warning("Coupon generation failed for %s: %s", contact.email, exc)
 
         nombre = _fmt_nombre(contact.name, contact.email)
-        first_name = nombre.split()[0] if contact.name else ""
+        first_name = nombre if contact.name else ""
         cf = contact.custom_fields or {}
         if isinstance(cf, str):
             try:
@@ -578,6 +587,7 @@ def _send_email_step(
             **{k: v for k, v in cf.items() if isinstance(k, str)},
             **(extra_vars or {}),
         }
+        normalize_first_name_vars(vars_)
         # If there's a coupon code and a checkout URL, inject checkout_url_with_coupon
         # so templates can use {{ event.extra.checkout_url_with_coupon }} to get the
         # checkout URL with the discount pre-applied (Shopify supports ?discount=CODE).
@@ -667,6 +677,7 @@ def _send_email_step(
 
         _env = Environment(undefined=ChainableUndefined)
         from app.services.template_block_compiler import resolve_template_html
+        normalize_first_name_vars(vars_)
         raw_html = preprocess_regalado_template(replace_unsub_tag(resolve_template_html(tpl), contact.email))
         raw_html = resolve_relative_timers(raw_html)
         html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
