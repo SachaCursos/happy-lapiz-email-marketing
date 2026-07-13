@@ -1,31 +1,42 @@
 #!/usr/bin/env python3
 """
-Cleanup script: cancel birthday enrollments created incorrectly.
+Cleanup script: cancel birthday enrollments whose step timing no longer matches
+the regalado birthday (wrong "faltan X días" window).
 
-An enrollment is wrong when the ideal first-send date (bday - days_before)
-was already in the past at the time of enrollment — meaning the step-1 email
-would say "faltan 30 días" but the birthday was only days away.
+Covers:
+  - Active step 1 enrolled too late (first send already past at enrollment)
+  - Active step 2/3 left over after a bad step 1 was sent (birthday passed or
+    days-until far from the step's intended window)
 
 Run locally with Railway DB:
     DATABASE_URL="postgresql://..." python3 backend/cleanup_bad_birthday_enrollments.py
 
-Run on Railway:
-    railway run python3 backend/cleanup_bad_birthday_enrollments.py
+Apply:
+    python3 backend/cleanup_bad_birthday_enrollments.py --confirm
 """
+
+from __future__ import annotations
 
 import json
 import os
 import sys
 from datetime import date, datetime, timedelta
 
-# Allow running from repo root or from backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
+from sqlalchemy import text
 from sqlmodel import Session, create_engine, select
+
+from app.models.automation import Automation, AutomationEnrollment
+from app.services.birthday_enrollment import (
+    BIRTHDAY_STEP_TOLERANCE_DAYS,
+    birthday_step_still_valid,
+    intended_days_before_for_step,
+    parse_enrollment_birthday,
+)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
-    # Try loading from .env in the backend directory
     env_file = os.path.join(os.path.dirname(__file__), ".env")
     if os.path.exists(env_file):
         for line in open(env_file):
@@ -38,115 +49,79 @@ if not DATABASE_URL:
     print("ERROR: DATABASE_URL not set. Export it or put it in backend/.env")
     sys.exit(1)
 
-# SQLAlchemy needs postgresql:// not postgres://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 
-def main(dry_run: bool = True):
+def _eval_as_of(enrollment: AutomationEnrollment, today: date) -> date:
+    """Use the scheduled send day when still in the future; otherwise today."""
+    if enrollment.next_send_at:
+        scheduled = enrollment.next_send_at.date() if hasattr(enrollment.next_send_at, "date") else enrollment.next_send_at
+        return scheduled if scheduled > today else today
+    return today
+
+
+def main(dry_run: bool = True) -> None:
     engine = create_engine(DATABASE_URL, echo=False)
+    today = datetime.utcnow().date()
 
     with Session(engine) as session:
-        # Find all birthday automation IDs
-        rows = session.exec(
-            session.exec.__self__.execute(  # type: ignore
-                __import__("sqlalchemy").text(
-                    "SELECT id FROM automations WHERE trigger_type = 'birthday_reminder'"
-                )
-            )
-        ) if False else None
-
-        from sqlalchemy import text
-
-        auto_ids = [
-            r[0]
-            for r in session.execute(
-                text("SELECT id FROM automations WHERE trigger_type = 'birthday_reminder'")
-            ).fetchall()
-        ]
-
-        if not auto_ids:
+        autos = session.exec(
+            select(Automation).where(Automation.trigger_type == "birthday_reminder")
+        ).all()
+        if not autos:
             print("No birthday automations found.")
             return
 
-        print(f"Found {len(auto_ids)} birthday automation(s): {auto_ids}")
+        print(f"Today: {today}")
+        print(f"Found {len(autos)} birthday automation(s): {[a.id for a in autos]}")
+        print(f"Tolerance: ±{BIRTHDAY_STEP_TOLERANCE_DAYS} days\n")
 
-        # Get all active enrollments on step 1 (email not yet sent)
-        rows = session.execute(
-            text(
-                """
-                SELECT id, automation_id, contact_email, trigger_key,
-                       enrolled_at, next_step, status, extra_vars_json
-                FROM automation_enrollments
-                WHERE automation_id = ANY(:ids)
-                  AND status = 'active'
-                  AND next_step = 1
-                """
-            ),
-            {"ids": auto_ids},
-        ).fetchall()
+        bad: list[dict] = []
 
-        print(f"Active step-1 enrollments: {len(rows)}")
+        for auto in autos:
+            enrollments = session.exec(
+                select(AutomationEnrollment).where(
+                    AutomationEnrollment.automation_id == auto.id,
+                    AutomationEnrollment.status == "active",
+                )
+            ).all()
+            print(f"Auto {auto.id} «{auto.name}»: {len(enrollments)} active enrollment(s)")
 
-        bad = []
-        skipped = 0
-
-        for row in rows:
-            (
-                enr_id,
-                auto_id,
-                contact_email,
-                trigger_key,
-                enrolled_at,
-                next_step,
-                status,
-                extra_vars_json,
-            ) = row
-
-            # Parse days_before from trigger_key: birthday:{owner}:{field}:{year}:{days_before}
-            parts = trigger_key.split(":")
-            if len(parts) < 5 or parts[0] != "birthday":
-                skipped += 1
-                continue
-
-            try:
-                days_before = int(parts[-1])
-            except ValueError:
-                skipped += 1
-                continue
-
-            # Get birthday date from extra_vars_json
-            try:
-                extra_vars = json.loads(extra_vars_json or "{}")
-                bday_str = extra_vars.get("fecha_cumpleanos", "")
-                if not bday_str:
-                    skipped += 1
+            for enr in enrollments:
+                as_of = _eval_as_of(enr, today)
+                ok, reason = birthday_step_still_valid(
+                    auto, enr, as_of=as_of, steps=auto.steps or []
+                )
+                if ok:
                     continue
-                bday = date.fromisoformat(bday_str)
-            except Exception:
-                skipped += 1
-                continue
 
-            first_send = bday - timedelta(days=days_before)
-            enrolled_date = enrolled_at.date() if hasattr(enrolled_at, "date") else enrolled_at
-
-            if first_send < enrolled_date:
-                days_late = (enrolled_date - first_send).days
+                extra = {}
+                try:
+                    extra = json.loads(enr.extra_vars_json or "{}")
+                except Exception:
+                    pass
+                bday = parse_enrollment_birthday(extra)
+                intended = intended_days_before_for_step(auto, enr.next_step, auto.steps or [])
+                days_until = (bday - as_of).days if bday else None
                 bad.append(
                     {
-                        "id": enr_id,
-                        "email": contact_email,
-                        "bday": bday_str,
-                        "days_before": days_before,
-                        "first_send": first_send,
-                        "enrolled_at": enrolled_date,
-                        "days_late": days_late,
+                        "id": enr.id,
+                        "auto_id": auto.id,
+                        "auto_name": auto.name,
+                        "email": enr.contact_email,
+                        "step": enr.next_step,
+                        "bday": str(bday) if bday else None,
+                        "as_of": str(as_of),
+                        "days_until": days_until,
+                        "intended": intended,
+                        "next_send": str(enr.next_send_at),
+                        "reason": reason,
+                        "nombre_regalado": (extra.get("nombre_regalado") or "")[:40],
                     }
                 )
 
-        print(f"Skipped (bad trigger_key or missing birthday): {skipped}")
-        print(f"\nInvalid enrollments found: {len(bad)}")
-
+        print(f"\nInvalid enrollments: {len(bad)}")
         if not bad:
             print("Nothing to clean up. Done.")
             return
@@ -154,9 +129,10 @@ def main(dry_run: bool = True):
         print("\n--- INVALID ENROLLMENTS ---")
         for b in bad:
             print(
-                f"  id={b['id']} | {b['email']} | bday={b['bday']} | "
-                f"first_send={b['first_send']} | enrolled={b['enrolled_at']} "
-                f"({b['days_late']}d late)"
+                f"  id={b['id']} auto={b['auto_id']} step={b['step']} | {b['email']} | "
+                f"regalado={b['nombre_regalado']!r} | bday={b['bday']} | "
+                f"as_of={b['as_of']} days_until={b['days_until']} intended={b['intended']} | "
+                f"{b['reason']}"
             )
 
         if dry_run:
@@ -164,11 +140,6 @@ def main(dry_run: bool = True):
                 f"\n[DRY RUN] Would cancel {len(bad)} enrollment(s). "
                 "Re-run with --confirm to apply."
             )
-            return
-
-        answer = input(f"\nCancel these {len(bad)} enrollment(s)? [y/N] ").strip().lower()
-        if answer != "y":
-            print("Aborted.")
             return
 
         ids_to_cancel = [b["id"] for b in bad]
@@ -179,7 +150,7 @@ def main(dry_run: bool = True):
             {"ids": ids_to_cancel},
         )
         session.commit()
-        print(f"Done. Cancelled {len(ids_to_cancel)} enrollment(s).")
+        print(f"\nDone. Cancelled {len(ids_to_cancel)} enrollment(s): {ids_to_cancel}")
 
 
 if __name__ == "__main__":

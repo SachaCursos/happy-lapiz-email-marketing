@@ -750,6 +750,29 @@ def _process_enrollments(session: Session) -> None:
                 session.commit()
                 continue
 
+            # Birthday guard: cancel stale/wrong-window enrollments (e.g. bad step-1 legacy)
+            if auto.trigger_type == "birthday_reminder":
+                from app.services.birthday_enrollment import (
+                    birthday_step_still_valid,
+                    refresh_birthday_countdown,
+                )
+
+                ok, reason = birthday_step_still_valid(
+                    auto, enrollment, as_of=now.date(), steps=steps
+                )
+                if not ok:
+                    enrollment.status = "cancelled"
+                    logger.warning(
+                        "Enrollment %d birthday step %d cancelled (%s) — %s bday window invalid",
+                        enrollment.id,
+                        enrollment.next_step,
+                        reason,
+                        enrollment.contact_email,
+                    )
+                    session.add(enrollment)
+                    session.commit()
+                    continue
+
             # Guard against double-send (e.g. if engine ran twice concurrently)
             if _already_sent_step(session, auto.id, enrollment.trigger_key, enrollment.next_step):
                 logger.warning("Enrollment %d step %d already sent, advancing", enrollment.id, enrollment.next_step)
@@ -767,6 +790,9 @@ def _process_enrollments(session: Session) -> None:
                     )
 
                 extra_vars = json.loads(enrollment.extra_vars_json or "{}")
+                if auto.trigger_type == "birthday_reminder":
+                    extra_vars = refresh_birthday_countdown(extra_vars, as_of=now.date())
+                    enrollment.extra_vars_json = json.dumps(extra_vars)
                 effective_step, variant_label = _pick_variant(step)
                 sent_ok = _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
                 if not sent_ok:

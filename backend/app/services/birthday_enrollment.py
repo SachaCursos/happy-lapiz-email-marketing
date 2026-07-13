@@ -29,10 +29,101 @@ from app.services.regalado_vars import (
 
 logger = logging.getLogger(__name__)
 
+# How many days off the intended "X días antes" window is still acceptable.
+BIRTHDAY_STEP_TOLERANCE_DAYS = 5
+
 REGALADO_BIRTHDAY_SPECS: tuple[tuple[str, str, str], ...] = (
     ("fecha_nacimiento_regalado", "nombre_regalado", "relacion_regalado"),
     ("fecha_nacimiento_regalado2", "nombre_regalado2", "relacion_regalado2"),
 )
+
+
+def intended_days_before_for_step(
+    auto: Automation,
+    step_num: int,
+    steps: list | None = None,
+) -> int:
+    """Days-before-birthday this step's email is supposed to represent.
+
+    Step 1 → trigger_config.days_before (default 30).
+    Later steps subtract the delay of each subsequent step (e.g. +15d → 15, +8d → 7).
+    """
+    config = auto.trigger_config or {}
+    days_before = int(config.get("days_before", 30))
+    if step_num <= 1:
+        return days_before
+    step_list = steps if steps is not None else (auto.steps or [])
+    if isinstance(step_list, str):
+        step_list = json.loads(step_list)
+    delayed = 0.0
+    for i, step in enumerate(step_list):
+        if i == 0:
+            continue  # step-1 delay is wait-to-first-send, not birthday offset
+        if i + 1 > step_num:
+            break
+        delayed += float(step.get("delay_hours", 0) or 0) / 24.0
+    return max(0, int(round(days_before - delayed)))
+
+
+def parse_enrollment_birthday(extra_vars: dict | None) -> date | None:
+    if not extra_vars:
+        return None
+    raw = (extra_vars.get("fecha_cumpleanos") or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def birthday_step_still_valid(
+    auto: Automation,
+    enrollment: AutomationEnrollment,
+    *,
+    as_of: date | None = None,
+    steps: list | None = None,
+    tolerance_days: int = BIRTHDAY_STEP_TOLERANCE_DAYS,
+) -> tuple[bool, str]:
+    """Return (ok, reason). Rejects steps whose send timing no longer matches the birthday.
+
+    This catches enrollments that received a wrong step 1 and are queued for step 2/3
+    when the birthday is already past or far from the email's 'faltan X días' claim.
+    """
+    as_of = as_of or datetime.utcnow().date()
+    extra = {}
+    if enrollment.extra_vars_json:
+        try:
+            extra = json.loads(enrollment.extra_vars_json)
+        except Exception:
+            extra = {}
+    bday = parse_enrollment_birthday(extra)
+    if not bday:
+        return False, "missing_fecha_cumpleanos"
+
+    days_until = (bday - as_of).days
+    if days_until < 0:
+        return False, f"birthday_passed:{bday}:days={days_until}"
+
+    intended = intended_days_before_for_step(auto, enrollment.next_step, steps)
+    drift = abs(days_until - intended)
+    if drift > tolerance_days:
+        return False, (
+            f"timing_mismatch:step={enrollment.next_step}:intended={intended}:"
+            f"actual={days_until}:drift={drift}"
+        )
+    return True, "ok"
+
+
+def refresh_birthday_countdown(extra_vars: dict, *, as_of: date | None = None) -> dict:
+    """Update dias_para_cumpleanos so the email body matches the real send day."""
+    as_of = as_of or datetime.utcnow().date()
+    out = dict(extra_vars or {})
+    bday = parse_enrollment_birthday(out)
+    if bday:
+        out["dias_para_cumpleanos"] = max(0, (bday - as_of).days)
+        out["fecha_cumpleanos"] = str(bday)
+    return out
 
 
 def first_send_date(raw_date: str, days_before: int, today: date) -> tuple[date, date] | None:
