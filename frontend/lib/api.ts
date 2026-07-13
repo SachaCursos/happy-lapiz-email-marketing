@@ -98,7 +98,7 @@ export const campaignsApi = {
   sendTest: (id: number) => api.post(`/campaigns/${id}/send-test`),
   sendProgress: (id: number) => api.get(`/campaigns/${id}/send-progress`),
   stats: (id: number) => api.get(`/campaigns/${id}/stats`),
-  conversions: (id: number, days = 7) => api.get(`/campaigns/${id}/conversions?days=${days}`),
+  conversions: (id: number, days = 5) => api.get(`/campaigns/${id}/conversions?days=${days}`),
   sends: (id: number) => api.get(`/campaigns/${id}/sends`),
   audiencePreview: (data: { segment_id?: number; segment_ids?: number[]; exclude_segment_ids?: number[] }) =>
     api.post("/campaigns/audience-preview", data),

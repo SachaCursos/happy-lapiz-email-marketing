@@ -350,13 +350,13 @@ export default function DashboardPage() {
       {!loadingRevenue && revenue && (
         <div className="space-y-4 mb-8">
           <RevTable
-            title="Campañas — ingresos atribuidos (ventana 7 días)"
+            title="Campañas — ingresos atribuidos (Klaviyo: open/click, 5 días)"
             rows={(revenue.campaigns ?? []).filter((c: { revenue: number }) => c.revenue > 0)}
             totalRevenue={emailTotal}
             type="campaign"
           />
           <RevTable
-            title="Automatizaciones — ingresos atribuidos (ventana 7 días)"
+            title="Automatizaciones — ingresos atribuidos (Klaviyo: open/click, 5 días)"
             rows={(revenue.automations ?? []).filter((a: { revenue: number }) => a.revenue > 0)}
             totalRevenue={emailTotal}
             type="automation"

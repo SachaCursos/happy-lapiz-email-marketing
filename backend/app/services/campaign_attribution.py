@@ -1,4 +1,10 @@
-"""Revenue attribution for campaigns — order must follow each recipient's send."""
+"""Revenue attribution aligned with Klaviyo defaults.
+
+Klaviyo default (email): last-touch, 5-day lookback after open OR click.
+An order is attributed to a message if the contact opened or clicked that
+message and placed the order within `window_days` of that interaction.
+When multiple messages qualify, the most recent open/click wins.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,8 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlmodel import Session
 
-DEFAULT_ATTRIBUTION_DAYS = 7
+# Klaviyo default email open + click lookback
+DEFAULT_ATTRIBUTION_DAYS = 5
 
 
 def get_campaign_attribution(
@@ -19,10 +26,10 @@ def get_campaign_attribution(
     order_date_to: datetime | None = None,
 ) -> dict:
     """
-    Attribute Shopify orders to a campaign when:
-      - the contact received the campaign (campaign_sends.sent_at set), and
-      - the order was placed at or after that send, and
-      - the order is within `window_days` after that send.
+    Attribute Shopify orders to a campaign (Klaviyo-style):
+      - contact opened or clicked the email, and
+      - order was placed within `window_days` after that open/click, and
+      - this campaign was the last email touch among campaigns for that order.
     """
     params: dict = {"campaign_id": campaign_id, "window_days": window_days}
     date_filter = ""
@@ -35,25 +42,47 @@ def get_campaign_attribution(
 
     row = session.execute(
         text(f"""
+            WITH touches AS (
+                SELECT
+                    cs.campaign_id,
+                    so.id AS order_id,
+                    so.total_price::numeric AS total_price,
+                    LOWER(ct.email) AS email,
+                    GREATEST(
+                        CASE
+                            WHEN cs.clicked_at IS NOT NULL
+                             AND so.created_at >= cs.clicked_at
+                             AND so.created_at <= cs.clicked_at
+                                 + make_interval(days => :window_days)
+                            THEN cs.clicked_at
+                        END,
+                        CASE
+                            WHEN cs.opened_at IS NOT NULL
+                             AND so.created_at >= cs.opened_at
+                             AND so.created_at <= cs.opened_at
+                                 + make_interval(days => :window_days)
+                            THEN cs.opened_at
+                        END
+                    ) AS touch_at
+                FROM campaign_sends cs
+                JOIN contacts ct ON ct.id = cs.contact_id
+                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ct.email)
+                WHERE (cs.clicked_at IS NOT NULL OR cs.opened_at IS NOT NULL)
+                  {date_filter}
+            ),
+            attributed AS (
+                SELECT DISTINCT ON (order_id)
+                    campaign_id, order_id, total_price, email
+                FROM touches
+                WHERE touch_at IS NOT NULL
+                ORDER BY order_id, touch_at DESC NULLS LAST
+            )
             SELECT
                 COUNT(*)::int AS bookings,
                 COALESCE(SUM(total_price), 0)::float AS revenue,
                 COUNT(DISTINCT email)::int AS converted_contacts
-            FROM (
-                SELECT DISTINCT ON (so.id)
-                    so.id,
-                    so.total_price::numeric AS total_price,
-                    LOWER(ct.email) AS email
-                FROM campaign_sends cs
-                JOIN contacts ct ON ct.id = cs.contact_id
-                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ct.email)
-                WHERE cs.campaign_id = :campaign_id
-                  AND cs.sent_at IS NOT NULL
-                  AND so.created_at >= cs.sent_at
-                  AND so.created_at <= cs.sent_at + make_interval(days => :window_days)
-                  {date_filter}
-                ORDER BY so.id
-            ) attributed
+            FROM attributed
+            WHERE campaign_id = :campaign_id
         """),
         params,
     ).one()
@@ -72,23 +101,43 @@ def list_campaign_attribution_summary(
     order_date_to: datetime,
     window_days: int = DEFAULT_ATTRIBUTION_DAYS,
 ) -> list[dict]:
-    """Per-campaign attribution for dashboard (distinct orders per campaign)."""
+    """Per-campaign last-touch open/click attribution for dashboard."""
     rows = session.execute(
         text("""
-            WITH attributed AS (
-                SELECT DISTINCT ON (so.id, cs.campaign_id)
+            WITH touches AS (
+                SELECT
                     cs.campaign_id,
                     so.id AS order_id,
-                    so.total_price::numeric AS total_price
+                    so.total_price::numeric AS total_price,
+                    GREATEST(
+                        CASE
+                            WHEN cs.clicked_at IS NOT NULL
+                             AND so.created_at >= cs.clicked_at
+                             AND so.created_at <= cs.clicked_at
+                                 + make_interval(days => :window_days)
+                            THEN cs.clicked_at
+                        END,
+                        CASE
+                            WHEN cs.opened_at IS NOT NULL
+                             AND so.created_at >= cs.opened_at
+                             AND so.created_at <= cs.opened_at
+                                 + make_interval(days => :window_days)
+                            THEN cs.opened_at
+                        END
+                    ) AS touch_at
                 FROM campaign_sends cs
                 JOIN contacts ct ON ct.id = cs.contact_id
                 JOIN shopify_orders so ON LOWER(so.email) = LOWER(ct.email)
-                WHERE cs.sent_at IS NOT NULL
+                WHERE (cs.clicked_at IS NOT NULL OR cs.opened_at IS NOT NULL)
                   AND so.created_at >= :order_from
                   AND so.created_at < :order_to
-                  AND so.created_at >= cs.sent_at
-                  AND so.created_at <= cs.sent_at + make_interval(days => :window_days)
-                ORDER BY so.id, cs.campaign_id
+            ),
+            attributed AS (
+                SELECT DISTINCT ON (order_id)
+                    campaign_id, order_id, total_price
+                FROM touches
+                WHERE touch_at IS NOT NULL
+                ORDER BY order_id, touch_at DESC NULLS LAST
             ),
             agg AS (
                 SELECT
@@ -127,3 +176,145 @@ def list_campaign_attribution_summary(
         }
         for r in rows
     ]
+
+
+def list_automation_attribution_summary(
+    session: Session,
+    *,
+    order_date_from: datetime,
+    order_date_to: datetime,
+    window_days: int = DEFAULT_ATTRIBUTION_DAYS,
+) -> list[dict]:
+    """Per-automation last-touch open/click attribution for dashboard."""
+    rows = session.execute(
+        text("""
+            WITH touches AS (
+                SELECT
+                    ar.automation_id,
+                    so.id AS order_id,
+                    so.total_price::numeric AS total_price,
+                    LOWER(ar.contact_email) AS email,
+                    GREATEST(
+                        CASE
+                            WHEN ar.clicked_at IS NOT NULL
+                             AND so.created_at >= ar.clicked_at
+                             AND so.created_at <= ar.clicked_at
+                                 + make_interval(days => :window_days)
+                            THEN ar.clicked_at
+                        END,
+                        CASE
+                            WHEN ar.opened_at IS NOT NULL
+                             AND so.created_at >= ar.opened_at
+                             AND so.created_at <= ar.opened_at
+                                 + make_interval(days => :window_days)
+                            THEN ar.opened_at
+                        END
+                    ) AS touch_at
+                FROM automation_runs ar
+                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ar.contact_email)
+                WHERE ar.status = 'sent'
+                  AND (ar.clicked_at IS NOT NULL OR ar.opened_at IS NOT NULL)
+                  AND so.created_at >= :order_from
+                  AND so.created_at < :order_to
+            ),
+            attributed AS (
+                SELECT DISTINCT ON (order_id)
+                    automation_id, order_id, total_price, email
+                FROM touches
+                WHERE touch_at IS NOT NULL
+                ORDER BY order_id, touch_at DESC NULLS LAST
+            ),
+            agg AS (
+                SELECT
+                    automation_id,
+                    COUNT(*)::int AS orders,
+                    COALESCE(SUM(total_price), 0)::float AS revenue
+                FROM attributed
+                GROUP BY automation_id
+            ),
+            sends AS (
+                SELECT automation_id, COUNT(DISTINCT contact_email)::int AS sends
+                FROM automation_runs
+                WHERE status = 'sent' AND executed_at IS NOT NULL
+                GROUP BY automation_id
+            )
+            SELECT a.id, a.name, s.sends, agg.orders, agg.revenue
+            FROM agg
+            JOIN automations a ON a.id = agg.automation_id
+            JOIN sends s ON s.automation_id = a.id
+            ORDER BY agg.revenue DESC
+        """),
+        {
+            "order_from": order_date_from,
+            "order_to": order_date_to,
+            "window_days": window_days,
+        },
+    ).fetchall()
+
+    return [
+        {
+            "id": r[0],
+            "name": r[1],
+            "sends": int(r[2]),
+            "orders": int(r[3]),
+            "revenue": float(r[4]),
+        }
+        for r in rows
+    ]
+
+
+def get_automation_attribution(
+    session: Session,
+    automation_id: int,
+    *,
+    window_days: int = DEFAULT_ATTRIBUTION_DAYS,
+) -> dict:
+    """Klaviyo-style open/click last-touch attribution for one automation."""
+    row = session.execute(
+        text("""
+            WITH touches AS (
+                SELECT
+                    ar.automation_id,
+                    so.id AS order_id,
+                    so.total_price::numeric AS total_price,
+                    GREATEST(
+                        CASE
+                            WHEN ar.clicked_at IS NOT NULL
+                             AND so.created_at >= ar.clicked_at
+                             AND so.created_at <= ar.clicked_at
+                                 + make_interval(days => :window_days)
+                            THEN ar.clicked_at
+                        END,
+                        CASE
+                            WHEN ar.opened_at IS NOT NULL
+                             AND so.created_at >= ar.opened_at
+                             AND so.created_at <= ar.opened_at
+                                 + make_interval(days => :window_days)
+                            THEN ar.opened_at
+                        END
+                    ) AS touch_at
+                FROM automation_runs ar
+                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ar.contact_email)
+                WHERE ar.status = 'sent'
+                  AND (ar.clicked_at IS NOT NULL OR ar.opened_at IS NOT NULL)
+            ),
+            attributed AS (
+                SELECT DISTINCT ON (order_id)
+                    automation_id, order_id, total_price
+                FROM touches
+                WHERE touch_at IS NOT NULL
+                ORDER BY order_id, touch_at DESC NULLS LAST
+            )
+            SELECT
+                COUNT(*)::int AS orders,
+                COALESCE(SUM(total_price), 0)::float AS revenue
+            FROM attributed
+            WHERE automation_id = :aid
+        """),
+        {"aid": automation_id, "window_days": window_days},
+    ).one()
+
+    return {
+        "orders": int(row.orders or 0),
+        "revenue": float(row.revenue or 0),
+    }

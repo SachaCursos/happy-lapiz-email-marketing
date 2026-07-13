@@ -349,13 +349,13 @@ def campaign_stats(campaign_id: int, session: Session = Depends(get_session), _:
 @router.get("/{campaign_id}/conversions")
 def campaign_conversions(
     campaign_id: int,
-    days: int = Query(default=7, ge=1, le=90),
+    days: int = Query(default=5, ge=1, le=90),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
     """
-    Atribución de compras: pedidos en Shopify dentro de `days` días
-    posteriores al envío del correo a cada contacto (no antes).
+    Atribución estilo Klaviyo: pedidos dentro de `days` días posteriores
+    a un open o click del correo (last-touch).
     """
     from app.services.campaign_attribution import get_campaign_attribution
 

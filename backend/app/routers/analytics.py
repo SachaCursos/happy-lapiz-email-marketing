@@ -125,8 +125,11 @@ def revenue_stats(
     """), {"from": prev_from, "to": dt_from}).fetchone()
     shopify_prev = float(prev_row[0])
 
-    # ── 2. Campaign attributed revenue ───────────────────────────────────────
-    from app.services.campaign_attribution import list_campaign_attribution_summary
+    # ── 2. Campaign attributed revenue (Klaviyo-style: open/click, 5 days) ────
+    from app.services.campaign_attribution import (
+        list_automation_attribution_summary,
+        list_campaign_attribution_summary,
+    )
 
     campaigns_list = list_campaign_attribution_summary(
         session, order_date_from=dt_from, order_date_to=dt_to,
@@ -134,35 +137,10 @@ def revenue_stats(
     campaigns_total = sum(c["revenue"] for c in campaigns_list)
     campaigns_recipients = sum(c["recipients"] for c in campaigns_list)
 
-    # ── 3. Automation attributed revenue ──────────────────────────────────────
-    auto_rows = session.execute(text("""
-        SELECT
-            a.id,
-            a.name,
-            COUNT(DISTINCT ar.contact_email)          AS sends,
-            COUNT(DISTINCT so.id)                     AS orders,
-            COALESCE(SUM(so.total_price::numeric), 0)  AS revenue
-        FROM automation_runs ar
-        JOIN automations a ON a.id = ar.automation_id
-        LEFT JOIN shopify_orders so
-            ON LOWER(so.email) = LOWER(ar.contact_email)
-            AND so.created_at >= :from AND so.created_at < :to
-            AND ar.executed_at IS NOT NULL
-            AND so.created_at >= ar.executed_at
-            AND so.created_at <= ar.executed_at + INTERVAL '7 days'
-        WHERE ar.status = 'sent' AND ar.executed_at IS NOT NULL
-        GROUP BY a.id, a.name
-        ORDER BY revenue DESC
-    """), {"from": dt_from, "to": dt_to}).fetchall()
-
-    automations_list = [
-        {
-            "id": r[0], "name": r[1],
-            "sends": int(r[2]), "orders": int(r[3]),
-            "revenue": float(r[4]),
-        }
-        for r in auto_rows
-    ]
+    # ── 3. Automation attributed revenue (Klaviyo-style: open/click, 5 days) ──
+    automations_list = list_automation_attribution_summary(
+        session, order_date_from=dt_from, order_date_to=dt_to,
+    )
     automations_total = sum(a["revenue"] for a in automations_list)
     automations_recipients = sum(a["sends"] for a in automations_list)
 

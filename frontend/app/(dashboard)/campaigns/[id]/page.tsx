@@ -182,7 +182,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
 
   const { data: conversions } = useQuery<CampaignConversions>({
     queryKey: ["campaign-conversions", id],
-    queryFn: () => campaignsApi.conversions(id, 7).then((r) => r.data),
+    queryFn: () => campaignsApi.conversions(id, 5).then((r) => r.data),
     enabled: campaign?.status === "sent",
     staleTime: 15 * 60_000,
   });
@@ -343,11 +343,11 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               <div className="grid grid-cols-3 gap-6">
                 <div>
                   <p className="text-3xl font-bold text-green-600">${Math.round(conversions.revenue).toLocaleString("es-CL")}</p>
-                  <p className="text-xs text-gray-400 mt-1">Revenue atribuido</p>
+                  <p className="text-xs text-gray-400 mt-1">Revenue atribuido (open/click, 5 días)</p>
                 </div>
                 <div>
                   <p className="text-3xl font-bold text-gray-900">{conversions.bookings}</p>
-                  <p className="text-xs text-gray-400 mt-1">Pedidos generados</p>
+                  <p className="text-xs text-gray-400 mt-1">Pedidos atribuidos</p>
                 </div>
                 <div>
                   <p className="text-3xl font-bold text-gray-900">{conversions.converted_contacts}</p>

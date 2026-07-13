@@ -128,22 +128,11 @@ def automation_stats(
     open_rate  = round(opened / sent * 100, 1) if sent else 0.0
     click_rate = round(clicked / sent * 100, 1) if sent else 0.0
 
-    # Conversions: orders from the same email within 7 days of the automation send
-    conv = session.execute(text("""
-        SELECT
-            COUNT(DISTINCT so.id)                   AS orders,
-            COALESCE(SUM(so.total_price::numeric), 0) AS revenue
-        FROM automation_runs ar
-        JOIN shopify_orders so
-          ON LOWER(so.email) = LOWER(ar.contact_email)
-         AND so.created_at BETWEEN ar.executed_at
-                               AND ar.executed_at + INTERVAL '7 days'
-        WHERE ar.automation_id = :aid
-          AND ar.status = 'sent'
-          AND ar.executed_at IS NOT NULL
-    """), {"aid": auto_id}).fetchone()
+    # Conversions: Klaviyo-style open/click last-touch (5-day window)
+    from app.services.campaign_attribution import get_automation_attribution
 
-    orders, revenue = conv
+    conv = get_automation_attribution(session, auto_id, window_days=5)
+    orders, revenue = conv["orders"], conv["revenue"]
 
     variant_rows = session.execute(text("""
         SELECT
