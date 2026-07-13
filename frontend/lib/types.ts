@@ -268,6 +268,8 @@ export interface FormStats {
   stats_since: string | null;
   total_revenue: number;
   total_orders: number;
+  /** Klaviyo-style form attribution window (hours after submit). */
+  attribution_hours?: number;
 }
 
 export interface SignupForm {

@@ -1,4 +1,12 @@
-"""Form completion, delivery and revenue statistics."""
+"""Form completion, delivery and revenue statistics.
+
+Form revenue attribution follows Klaviyo's sign-up form model:
+  - order email matches a form submission
+  - order is placed after the submission
+  - order is within a short lookback window (default 2 hours)
+Form revenue is tracked separately from email message attribution
+(same purchase can appear in both, as in Klaviyo).
+"""
 
 from __future__ import annotations
 
@@ -9,6 +17,9 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.models.form import SignupForm
+
+# Klaviyo default lookback for form → order revenue
+DEFAULT_FORM_ATTRIBUTION_HOURS = 2
 
 
 def ensure_form_stats_epoch(session: Session) -> None:
@@ -49,10 +60,17 @@ def _person_key_from_email_col() -> str:
     """
 
 
-def get_form_stats(session: Session, form_id: int) -> dict:
+def get_form_stats(
+    session: Session,
+    form_id: int,
+    *,
+    attribution_hours: int = DEFAULT_FORM_ATTRIBUTION_HOURS,
+) -> dict:
     """
     Tasa = completados desde stats_since / personas que abrieron el popup (embed/page)
     registradas desde stats_since. Sin datos históricos mezclados.
+
+    Revenue: Klaviyo-style — orders within `attribution_hours` after submission.
     """
     form = session.get(SignupForm, form_id)
     if not form:
@@ -70,6 +88,7 @@ def get_form_stats(session: Session, form_id: int) -> dict:
             "stats_since": None,
             "total_revenue": 0.0,
             "total_orders": 0,
+            "attribution_hours": attribution_hours,
         }
 
     ensure_form_stats_epoch(session)
@@ -78,6 +97,7 @@ def get_form_stats(session: Session, form_id: int) -> dict:
     fid = int(form_id)
     since = form.stats_since
     person_key = _person_key_from_email_col()
+    hours = max(1, int(attribution_hours))
 
     row = session.execute(
         text(f"""
@@ -115,6 +135,8 @@ def get_form_stats(session: Session, form_id: int) -> dict:
                     JOIN shopify_orders so ON LOWER(so.email) = LOWER(fs.email)
                     WHERE fs.form_id = :fid
                       AND so.created_at >= fs.created_at
+                      AND so.created_at <= fs.created_at
+                          + make_interval(hours => :attribution_hours)
                     ORDER BY so.id
                 ) attributed
             )
@@ -129,7 +151,7 @@ def get_form_stats(session: Session, form_id: int) -> dict:
                 (SELECT orders FROM revenue) AS total_orders,
                 (SELECT revenue FROM revenue) AS total_revenue
         """),
-        {"fid": fid, "since": since},
+        {"fid": fid, "since": since, "attribution_hours": hours},
     ).one()
 
     completed_total = int(row.completed_total or 0)
@@ -157,4 +179,5 @@ def get_form_stats(session: Session, form_id: int) -> dict:
         "stats_since": since.isoformat() if since else None,
         "total_revenue": total_revenue,
         "total_orders": total_orders,
+        "attribution_hours": hours,
     }

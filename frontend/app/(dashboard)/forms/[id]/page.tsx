@@ -1442,7 +1442,7 @@ export default function FormDetailPage() {
           <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-right min-w-[120px]">
             <div className="flex items-center justify-end gap-1.5 text-xs text-gray-400 mb-1">
               <ShoppingBag size={12} className="text-amber-600" />
-              Ventas totales
+              Ventas (2h)
             </div>
             <p className="text-2xl font-bold text-gray-900">
               {stats ? `$${Math.round(stats.total_revenue).toLocaleString("es-CL")}` : "—"}
@@ -1450,6 +1450,8 @@ export default function FormDetailPage() {
             {stats && (
               <p className="text-[11px] text-gray-400 mt-0.5">
                 {stats.total_orders.toLocaleString("es-CL")} pedido{stats.total_orders === 1 ? "" : "s"}
+                {" · "}
+                {stats.attribution_hours ?? 2}h post-submit
               </p>
             )}
           </div>

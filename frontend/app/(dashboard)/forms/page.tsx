@@ -283,7 +283,7 @@ export default function FormsPage() {
                     )}
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-gray-400">Ventas</p>
+                    <p className="text-[10px] uppercase tracking-wider text-gray-400">Ventas (2h)</p>
                     <p className="text-sm font-semibold text-gray-900">{st ? `$${Math.round(st.total_revenue).toLocaleString("es-CL")}` : "—"}</p>
                     {st && st.total_orders > 0 && (
                       <p className="text-[10px] text-gray-400">{st.total_orders} ped.</p>
