@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ArrowLeft, Download, Star, Trash2, Users, Pencil } from "lucide-react";
 import Link from "next/link";
+import { surveyPublicUrl } from "@/lib/publicAppUrl";
 
 interface Question {
   id: number;
@@ -161,7 +162,7 @@ export default function SurveyResponsesPage() {
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{survey.name}</h1>
-            <p className="text-xs text-gray-400 font-mono mt-0.5">/encuesta/{survey.slug}</p>
+            <p className="text-xs text-gray-400 font-mono mt-0.5">{surveyPublicUrl(survey.slug)}</p>
           </div>
         </div>
         <div className="flex gap-2">

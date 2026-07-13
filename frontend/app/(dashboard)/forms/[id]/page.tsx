@@ -37,6 +37,8 @@ const DEFAULT_DESIGN: FormDesign = {
   privacy_text: "Respetamos tu privacidad. Puedes darte de baja cuando quieras.",
   add_regalado_button_text: "+ Agregar otro regalado",
   add_regalado_added_text: "✓ Agregado — completa el siguiente",
+  bubble_emoji: "🎁",
+  bubble_text: "15% OFF",
 };
 
 const HAPPY_LAPIZ_DESIGN: FormDesign = {
@@ -389,6 +391,50 @@ function DesignEditor({
             placeholder="✓ Agregado — completa el siguiente"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+        <p className="text-sm font-semibold text-gray-700">Widget al cerrar el popup</p>
+        <p className="text-xs text-gray-500 -mt-2">
+          Botón flotante que queda en la esquina cuando el visitante cierra el formulario, para reabrirlo.
+        </p>
+        <div className="flex gap-3">
+          <div className="w-20">
+            <label className="text-sm text-gray-600 block mb-1">Emoji</label>
+            <input
+              type="text"
+              value={design.bubble_emoji ?? ""}
+              onChange={(e) => set("bubble_emoji", e.target.value)}
+              placeholder="🎁"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="text-sm text-gray-600 block mb-1">Texto del widget</label>
+            <input
+              type="text"
+              value={design.bubble_text ?? ""}
+              onChange={(e) => set("bubble_text", e.target.value)}
+              placeholder="15% OFF"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+        </div>
+        <div className="pt-1">
+          <p className="text-xs text-gray-500 mb-2">Vista previa</p>
+          <div
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold shadow-md"
+            style={{
+              background: `linear-gradient(135deg, ${design.btn_bg}, ${design.btn_bg2})`,
+              color: design.btn_text,
+              borderRadius: 50,
+              fontFamily: design.font,
+            }}
+          >
+            <span>{design.bubble_emoji || "🎁"}</span>
+            <span>{design.bubble_text || "15% OFF"}</span>
+          </div>
         </div>
       </div>
 

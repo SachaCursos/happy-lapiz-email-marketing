@@ -218,6 +218,9 @@ export interface FormDesign {
   privacy_text?: string;
   add_regalado_button_text?: string;
   add_regalado_added_text?: string;
+  /** Widget flotante al cerrar el popup (reabrir) */
+  bubble_emoji?: string;
+  bubble_text?: string;
 }
 
 export interface FormStep {

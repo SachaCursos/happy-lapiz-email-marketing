@@ -866,6 +866,8 @@ def _build_embed_js(cfg: dict) -> str:
     txt_privacy        = json.dumps(d.get("privacy_text", "Respetamos tu privacidad. Puedes darte de baja cuando quieras."), ensure_ascii=False)
     txt_add_regalado   = json.dumps(d.get("add_regalado_button_text", "+ Agregar otro regalado"), ensure_ascii=False)
     txt_add_regalado_ok = json.dumps(d.get("add_regalado_added_text", "✓ Agregado — completa el siguiente"), ensure_ascii=False)
+    txt_bubble_emoji   = json.dumps(d.get("bubble_emoji", "🎁"), ensure_ascii=False)
+    txt_bubble_text    = json.dumps(d.get("bubble_text", "15% OFF"), ensure_ascii=False)
 
     return textwrap.dedent(f"""
     (function() {{
@@ -916,8 +918,46 @@ def _build_embed_js(cfg: dict) -> str:
 
       // Never show again if already submitted
       if (_ls.getItem(STORE_KEY) === 'submitted') return;
-      // Don't show again in this browser session if already dismissed (popup only)
-      if (!C.standalone && _ss.getItem(STORE_KEY + '_d')) return;
+
+      function showBubble() {{
+        if (C.standalone || document.getElementById('hb-bubble')) return;
+        var design = C.design || {{}};
+        var bubbleEmoji = design.bubble_emoji || {txt_bubble_emoji};
+        var bubbleText  = design.bubble_text  || {txt_bubble_text};
+        var bubble = document.createElement('button');
+        bubble.id = 'hb-bubble';
+        bubble.type = 'button';
+        bubble.setAttribute('aria-label', bubbleText);
+        bubble.innerHTML = bubbleEmoji + ' <span>' + bubbleText + '</span>';
+        bubble.addEventListener('click', function() {{
+          if (bubble.parentNode) bubble.parentNode.removeChild(bubble);
+          _ss.removeItem(STORE_KEY + '_d');
+          showPopup();
+        }});
+        document.body.appendChild(bubble);
+      }}
+
+      // Dismissed this session — keep the reopen widget instead of hiding everything
+      if (!C.standalone && _ss.getItem(STORE_KEY + '_d')) {{
+        // Styles for #hb-bubble are injected inside showPopup; ensure CSS exists if we only show bubble
+        if (!document.getElementById('hb-popup-style')) {{
+          var _bs = document.createElement('style');
+          _bs.id = 'hb-popup-style';
+          var _bBtn = (C.design && C.design.btn_bg) || '{btn_bg}';
+          var _bBtn2 = (C.design && C.design.btn_bg2) || '{btn_bg2}';
+          var _bTxt = (C.design && C.design.btn_text) || '{btn_text}';
+          var _bFont = (C.design && C.design.font) || '{font}';
+          _bs.textContent =
+            '#hb-bubble{{position:fixed;bottom:20px;left:20px;z-index:2147483646;background:linear-gradient(135deg,'+_bBtn+','+_bBtn2+');color:'+_bTxt+';border:none;border-radius:50px;padding:10px 16px;cursor:pointer;font-size:13px;font-weight:700;font-family:'+_bFont+',system-ui,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,0.25);display:flex;align-items:center;gap:6px;animation:hbFadeIn 0.3s ease;}}' +
+            '#hb-bubble:hover{{opacity:0.88;transform:scale(1.04);}}' +
+            '@keyframes hbFadeIn{{from{{opacity:0;transform:translateY(8px)}}to{{opacity:1;transform:none}}}}';
+          document.head.appendChild(_bs);
+        }}
+        function _mountBubble() {{ showBubble(); }}
+        if (document.body) _mountBubble();
+        else document.addEventListener('DOMContentLoaded', _mountBubble);
+        return;
+      }}
 
       // ── A/B variant selection ─────────────────────────────────────────────
       var _abVariant = null;
@@ -1102,7 +1142,7 @@ def _build_embed_js(cfg: dict) -> str:
             (s.fields||[]).forEach(function(k){{ fieldsHtml += renderField(k); }});
           }}
           var isFinal = (idx === lastSubmitIdx);
-          var btnText = s.button_text || (isFinal && !isCouponStep ? C.button_text : isCouponStep ? 'Usar mi 20% OFF' : 'Continuar →');
+          var btnText = s.button_text || (isFinal && !isCouponStep ? C.button_text : isCouponStep ? 'Usar mi 15% OFF' : 'Continuar →');
 
           if (isCouponStep) {{
             // Coupon step: shown after submit, not a real form step
@@ -1573,18 +1613,7 @@ def _build_embed_js(cfg: dict) -> str:
         var el = document.getElementById('hb-popup-overlay');
         if (el) el.parentNode.removeChild(el);
         _ss.setItem(STORE_KEY + '_d', '1');
-        // Show minimized bubble so users can reopen the form
-        if (!document.getElementById('hb-bubble')) {{
-          var bubble = document.createElement('button');
-          bubble.id = 'hb-bubble';
-          bubble.innerHTML = '🎁 <span>20% OFF</span>';
-          bubble.addEventListener('click', function() {{
-            bubble.parentNode.removeChild(bubble);
-            _ss.removeItem(STORE_KEY + '_d');
-            showPopup();
-          }});
-          document.body.appendChild(bubble);
-        }}
+        showBubble();
       }}
 
       // Triggers: standalone shows immediately; popup uses delay / scroll / exit intent

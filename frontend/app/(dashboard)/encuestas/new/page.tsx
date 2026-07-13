@@ -230,7 +230,7 @@ export default function NewSurveyPage() {
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Slug (URL)</label>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400 shrink-0">/encuesta/</span>
+              <span className="text-xs text-gray-400 shrink-0">/encuestas/</span>
               <input
                 value={slug}
                 onChange={(e) => { setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "")); setSlugEdited(true); }}

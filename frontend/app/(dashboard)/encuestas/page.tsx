@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ClipboardList, Plus, Users, ExternalLink, Pencil } from "lucide-react";
+import { surveyPublicUrl } from "@/lib/publicAppUrl";
 
 interface Survey {
   id: number;
@@ -16,13 +17,8 @@ interface Survey {
   response_count: number;
 }
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "";
-const PUBLIC_BASE = BACKEND
-  ? BACKEND.replace("/api", "").replace(/:8\d{3}$/, "")  // strip port in prod
-  : "";
-
 function surveyUrl(slug: string) {
-  return `${PUBLIC_BASE}/encuesta/${slug}`;
+  return surveyPublicUrl(slug);
 }
 
 export default function EncuestasPage() {
@@ -116,7 +112,7 @@ export default function EncuestasPage() {
                 </a>
               </div>
 
-              <p className="text-xs text-gray-400 mt-3 font-mono truncate">/encuesta/{s.slug}</p>
+              <p className="text-xs text-gray-400 mt-3 font-mono truncate">/encuestas/{s.slug}</p>
             </div>
           ))}
         </div>
