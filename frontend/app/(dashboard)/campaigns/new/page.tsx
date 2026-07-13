@@ -44,9 +44,10 @@ export default function NewCampaignPage() {
       scheduled_at: form.scheduled_at ? new Date(form.scheduled_at).toISOString() : undefined,
       status: form.scheduled_at ? "scheduled" : "draft",
     }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["campaigns"] });
-      router.push("/campaigns");
+      const id = res.data?.id;
+      router.push(id ? `/campaigns/${id}` : "/campaigns");
     },
   });
 
@@ -282,7 +283,10 @@ export default function NewCampaignPage() {
       </div>
 
       {mutation.isError && (
-        <p className="text-red-600 text-sm mt-3">Error al crear la campaña. Intenta de nuevo.</p>
+        <p className="text-red-600 text-sm mt-3">
+          {(mutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+            || "Error al crear la campaña. Intenta de nuevo."}
+        </p>
       )}
 
       <div className="flex justify-between mt-6">

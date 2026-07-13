@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { campaignsApi, segmentsApi, api } from "@/lib/api";
 import { Campaign, CampaignConversions, CampaignStats, Segment } from "@/lib/types";
 import {
   Plus, Send, Trash2, FlaskConical, MoreHorizontal, Mail,
   Search, CheckCircle, Pencil, ChevronDown, Eye, ShoppingCart,
-  TrendingUp, Users, Copy,
+  TrendingUp, Users, Copy, ArrowDown, ArrowUp, ArrowUpDown,
 } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
@@ -109,6 +109,49 @@ const STATUS_OPTS = [
   { value: "draft", label: "Borradores" }, { value: "scheduled", label: "Programadas" },
   { value: "sending", label: "Enviando" }, { value: "paused", label: "Pausadas" }, { value: "cancelled", label: "Canceladas" },
 ];
+
+const OWN_PAGE_SIZE = 15;
+
+type OwnSortKey = "name" | "status" | "sent_at" | "open_rate" | "click_rate" | "revenue";
+
+function SortHeader({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  align = "left",
+  icon,
+}: {
+  label: string;
+  sortKey: OwnSortKey;
+  activeKey: OwnSortKey;
+  dir: "asc" | "desc";
+  onSort: (key: OwnSortKey) => void;
+  align?: "left" | "right";
+  icon?: ReactNode;
+}) {
+  const active = activeKey === sortKey;
+  return (
+    <th className={`px-5 py-3 ${align === "right" ? "text-right" : "text-left"} text-xs font-semibold uppercase tracking-wider`}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 group select-none ${
+          active ? "text-brand-700" : "text-gray-500 hover:text-gray-800"
+        }`}
+      >
+        {icon}
+        {label}
+        {active ? (
+          dir === "desc" ? <ArrowDown size={12} className="text-brand-600" /> : <ArrowUp size={12} className="text-brand-600" />
+        ) : (
+          <ArrowUpDown size={12} className="opacity-0 group-hover:opacity-50" />
+        )}
+      </button>
+    </th>
+  );
+}
 
 // ─── Klaviyo history table ────────────────────────────────────────────────────
 interface KlaviyoCampaign {
@@ -248,6 +291,9 @@ export default function CampaignsPage() {
   const [statusOpen, setStatusOpen] = useState(false);
   const statusRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<OwnSortKey>("sent_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     function h(e: MouseEvent) { if (statusRef.current && !statusRef.current.contains(e.target as Node)) setStatusOpen(false); }
@@ -315,6 +361,59 @@ export default function CampaignsPage() {
     return matchSearch && matchStatus;
   });
 
+  function sortValue(c: Campaign): string | number {
+    const stats = statsMap[c.id];
+    const conv = convMap[c.id];
+    switch (sortKey) {
+      case "name":
+        return c.name.toLowerCase();
+      case "status":
+        return c.status;
+      case "sent_at": {
+        const ts = c.sent_at || c.scheduled_at || c.created_at;
+        return ts ? new Date(ts).getTime() : 0;
+      }
+      case "open_rate":
+        return stats?.open_rate ?? -1;
+      case "click_rate":
+        return stats?.click_rate ?? -1;
+      case "revenue":
+        return conv?.revenue ?? -1;
+      default:
+        return 0;
+    }
+  }
+
+  const sorted = [...filtered].sort((a, b) => {
+    const av = sortValue(a);
+    const bv = sortValue(b);
+    let cmp = 0;
+    if (typeof av === "string" && typeof bv === "string") cmp = av.localeCompare(bv);
+    else cmp = (av as number) - (bv as number);
+    // When sorting by send date, keep never-sent drafts after sent campaigns in desc mode
+    if (sortKey === "sent_at" && sortDir === "desc") {
+      const aSent = a.status === "sent" || !!a.sent_at ? 1 : 0;
+      const bSent = b.status === "sent" || !!b.sent_at ? 1 : 0;
+      if (aSent !== bSent) return bSent - aSent;
+    }
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / OWN_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const paginated = sorted.slice(safePage * OWN_PAGE_SIZE, (safePage + 1) * OWN_PAGE_SIZE);
+
+  function toggleSort(key: OwnSortKey) {
+    if (sortKey === key) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else {
+      setSortKey(key);
+      setSortDir(key === "name" || key === "status" ? "asc" : "desc");
+    }
+    setPage(0);
+  }
+
+  useEffect(() => { setPage(0); }, [search, statusFilter]);
+
   return (
     <div className="p-8">
       {/* Header */}
@@ -381,7 +480,12 @@ export default function CampaignsPage() {
               </div>
             )}
           </div>
-          <span className="text-xs text-gray-400 ml-auto">{filtered.length} campaña{filtered.length !== 1 ? "s" : ""}</span>
+          <span className="text-xs text-gray-400 ml-auto">
+            {sorted.length} campaña{sorted.length !== 1 ? "s" : ""}
+            {sorted.length > OWN_PAGE_SIZE
+              ? ` · pág. ${safePage + 1}/${totalPages}`
+              : ""}
+          </span>
         </div>
       )}
 
@@ -392,25 +496,31 @@ export default function CampaignsPage() {
 
       {/* Own campaigns table */}
       {tab === "own" && (
+        <div className="space-y-3">
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Campaña</th>
+                <SortHeader label="Campaña" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Tipo</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Estado</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Fecha envío</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Tasa apertura</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Tasa clics</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1">
-                  <ShoppingCart size={12} /> Placed Order
-                </th>
+                <SortHeader label="Estado" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortHeader label="Fecha envío" sortKey="sent_at" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortHeader label="Tasa apertura" sortKey="open_rate" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortHeader label="Tasa clics" sortKey="click_rate" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortHeader
+                  label="Placed Order"
+                  sortKey="revenue"
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                  icon={<ShoppingCart size={12} />}
+                />
                 <th className="px-5 py-3" />
               </tr>
             </thead>
             <tbody>
               {isLoading ? [...Array(5)].map((_, i) => <SkeletonRow key={i} />) :
-                filtered.length === 0 ? (
+                sorted.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-5 py-16 text-center">
                       <Send size={36} className="mx-auto text-gray-300 mb-3" />
@@ -423,7 +533,7 @@ export default function CampaignsPage() {
                       )}
                     </td>
                   </tr>
-                ) : filtered.map((c) => {
+                ) : paginated.map((c) => {
                   const seg = c.segment_id != null ? segMap[c.segment_id] : undefined;
                   const stats = statsMap[c.id];
                   const conv = convMap[c.id];
@@ -453,7 +563,7 @@ export default function CampaignsPage() {
                         {hasSent && conv ? (
                           conv.revenue > 0
                             ? <RevenueCell value={conv.revenue} orders={conv.bookings} />
-                            : <span className="text-gray-300 text-xs">—</span>
+                            : <span className="text-gray-300 text-xs">$0</span>
                         ) : hasSent ? <span className="text-gray-200 text-xs animate-pulse">···</span>
                           : <span className="text-gray-300 text-sm">—</span>}
                       </td>
@@ -499,6 +609,46 @@ export default function CampaignsPage() {
                 })}
             </tbody>
           </table>
+        </div>
+        {sorted.length > OWN_PAGE_SIZE && (
+          <div className="flex items-center justify-between px-1">
+            <p className="text-xs text-gray-500">
+              Mostrando {safePage * OWN_PAGE_SIZE + 1}–{Math.min((safePage + 1) * OWN_PAGE_SIZE, sorted.length)} de {sorted.length}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={safePage === 0}
+                className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                ← Anterior
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i).map((i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setPage(i)}
+                  className={`min-w-[2rem] px-2 py-1.5 rounded-lg text-xs font-medium ${
+                    i === safePage
+                      ? "bg-brand-600 text-white"
+                      : "border border-gray-200 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={safePage >= totalPages - 1}
+                className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                Siguiente →
+              </button>
+            </div>
+          </div>
+        )}
         </div>
       )}
     </div>

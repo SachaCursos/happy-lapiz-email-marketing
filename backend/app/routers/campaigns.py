@@ -49,10 +49,10 @@ router = APIRouter()
 
 @router.get("", response_model=List[CampaignRead])
 def list_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+    # Newest activity first; UI does secondary sorting by column.
     return session.exec(
         select(Campaign).order_by(
             nulls_last(desc(Campaign.sent_at)),
-            nulls_last(desc(Campaign.scheduled_at)),
             desc(Campaign.created_at),
         )
     ).all()
