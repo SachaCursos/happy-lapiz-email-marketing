@@ -276,7 +276,7 @@ export default function DashboardPage() {
                   icon={Users}
                   label="Por recipient"
                   value={clp(revenue?.per_recipient ?? 0)}
-                  sub={`${(revenue?.total_recipients ?? 0).toLocaleString()} destinatarios`}
+                  sub={`${(revenue?.total_recipients ?? 0).toLocaleString()} destinatarios enviados`}
                 />
                 <div className="w-px bg-gray-100 self-stretch hidden sm:block" />
                 <RevItem

@@ -135,14 +135,30 @@ def revenue_stats(
         session, order_date_from=dt_from, order_date_to=dt_to,
     )
     campaigns_total = sum(c["revenue"] for c in campaigns_list)
-    campaigns_recipients = sum(c["recipients"] for c in campaigns_list)
 
     # ── 3. Automation attributed revenue (Klaviyo-style: open/click, 5 days) ──
     automations_list = list_automation_attribution_summary(
         session, order_date_from=dt_from, order_date_to=dt_to,
     )
     automations_total = sum(a["revenue"] for a in automations_list)
-    automations_recipients = sum(a["sends"] for a in automations_list)
+
+    # Recipients = everyone emailed in the period (not only msgs with attributed $)
+    campaign_recipients_row = session.execute(text("""
+        SELECT COUNT(DISTINCT contact_id)
+        FROM campaign_sends
+        WHERE sent_at IS NOT NULL
+          AND sent_at >= :from AND sent_at < :to
+    """), {"from": dt_from, "to": dt_to}).fetchone()
+    campaigns_recipients = int(campaign_recipients_row[0] or 0)
+
+    automation_recipients_row = session.execute(text("""
+        SELECT COUNT(DISTINCT LOWER(contact_email))
+        FROM automation_runs
+        WHERE status = 'sent'
+          AND executed_at IS NOT NULL
+          AND executed_at >= :from AND executed_at < :to
+    """), {"from": dt_from, "to": dt_to}).fetchone()
+    automations_recipients = int(automation_recipients_row[0] or 0)
 
     # ── 4. Klaviyo campaigns (historical data) ─────────────────────────────────
     klav_rows = session.execute(text("""
