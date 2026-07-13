@@ -192,13 +192,16 @@ def _build_extra_vars(
     }
     if isinstance(data.get("regalados"), list):
         extra_vars["regalados"] = data["regalados"]
-    prepare_regalado_vars(extra_vars)
-    # Override display fields for this specific regalado (prepare_regalado_vars defaults to #1).
+    # Force this regalado's fields before prepare (multi-regalado enrollments).
     if child_name:
         extra_vars["nombre_regalado"] = child_name
+        extra_vars["destinatario_nombre"] = child_name
     if relation:
         extra_vars["relacion"] = relation
         extra_vars["relacion_regalado"] = relation
+        extra_vars["para_quien"] = relation
+    # Sanitize name; invalid/empty → falls back to "tu hijo" / relation.
+    prepare_regalado_vars(extra_vars)
     return extra_vars
 
 

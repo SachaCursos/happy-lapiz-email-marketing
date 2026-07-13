@@ -48,10 +48,21 @@ _NAME_PAIR_RE = re.compile(
 )
 
 
+_INVALID_NAME_TOKENS = frozenset({
+    "tu", "mi", "su", "el", "la", "los", "las", "un", "una", "unos", "unas",
+    "de", "del", "al", "y", "o", "a", "en", "para", "por",
+})
+
+
 def is_valid_person_name(name: str) -> bool:
-    """Return False for obvious gibberish like 'asasjsa'."""
+    """Return False for empty, too-short, vowelless, or obvious gibberish names."""
     raw = (name or "").strip()
     if not raw or len(raw) < 2 or len(raw) > 40:
+        return False
+
+    # Relation phrases accidentally stored as nombre (e.g. re-running prepare)
+    low_full = raw.lower()
+    if low_full.startswith(("tu ", "mi ", "para ", "su ")):
         return False
 
     letters = "".join(
@@ -62,7 +73,10 @@ def is_valid_person_name(name: str) -> bool:
         return False
 
     low = letters.lower()
-    if len(low) >= 3 and not re.search(r"[aeiouáéíóúü]", low):
+    if low in _INVALID_NAME_TOKENS:
+        return False
+    # Require a vowel — catches "Mt", "Xyz", initials without a real name
+    if not re.search(r"[aeiouáéíóúü]", low):
         return False
     if re.search(r"(.)\1{3,}", low):
         return False
