@@ -27,7 +27,9 @@ const FIELDS = [
   { value: "campaign_bounce_count", label: "Rebotes en campañas",      type: "number" },
   { value: "no_open_in_last_n_emails", label: "Sin apertura en últimos N correos", type: "last_n_no_open" },
   { value: "purchased_product",        label: "Producto comprado",                type: "product_shopify" },
-  { value: "received_campaign",        label: "Recibió campaña",                  type: "campaign_sent" },
+  { value: "received_campaign",        label: "Recibió campaña",                  type: "campaign_engagement" },
+  { value: "opened_campaign",          label: "Abrió campaña",                    type: "campaign_engagement" },
+  { value: "clicked_campaign",         label: "Clickeó campaña",                  type: "campaign_engagement" },
 ];
 
 const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
@@ -267,30 +269,63 @@ function ShopifyProductPicker({
   );
 }
 
-interface CampaignSentValue { campaign_id: number; campaign_name: string; received: boolean; }
+type CampaignEngagementKind = "received" | "opened" | "clicked";
 
-function parseCampaignSentValue(value: unknown): CampaignSentValue {
+interface CampaignEngagementValue {
+  campaign_id: number;
+  campaign_name: string;
+  received?: boolean;
+  opened?: boolean;
+  clicked?: boolean;
+}
+
+const ENGAGEMENT_LABELS: Record<CampaignEngagementKind, { yes: string; no: string; key: CampaignEngagementKind }> = {
+  received: { key: "received", yes: "Sí, la recibió", no: "No, no la recibió" },
+  opened:   { key: "opened",   yes: "Sí, la abrió",   no: "No (la recibió, pero no abrió)" },
+  clicked:  { key: "clicked",  yes: "Sí, clickeó",    no: "No (la recibió, pero no clickeó)" },
+};
+
+function engagementKindForField(field: string): CampaignEngagementKind {
+  if (field === "opened_campaign") return "opened";
+  if (field === "clicked_campaign") return "clicked";
+  return "received";
+}
+
+function defaultCampaignEngagementValue(kind: CampaignEngagementKind): CampaignEngagementValue {
+  return {
+    campaign_id: 0,
+    campaign_name: "",
+    [kind]: true,
+  };
+}
+
+function parseCampaignEngagementValue(value: unknown, kind: CampaignEngagementKind): CampaignEngagementValue {
   if (value && typeof value === "object" && "campaign_id" in value) {
-    const v = value as { campaign_id?: unknown; campaign_name?: unknown; received?: unknown };
+    const v = value as Record<string, unknown>;
+    const flag = v[kind];
     return {
       campaign_id: Number(v.campaign_id) || 0,
       campaign_name: String(v.campaign_name || ""),
-      received: v.received !== false,
+      [kind]: flag !== false,
     };
   }
-  return { campaign_id: 0, campaign_name: "", received: true };
+  return defaultCampaignEngagementValue(kind);
 }
 
-function CampaignSentPicker({
+function CampaignEngagementPicker({
+  kind,
   value,
   onChange,
 }: {
-  value: CampaignSentValue;
-  onChange: (v: CampaignSentValue) => void;
+  kind: CampaignEngagementKind;
+  value: CampaignEngagementValue;
+  onChange: (v: CampaignEngagementValue) => void;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const labels = ENGAGEMENT_LABELS[kind];
+  const flag = value[kind] !== false;
 
   const { data: campaigns = [], isLoading } = useQuery<Campaign[]>({
     queryKey: ["campaigns-segment-picker"],
@@ -364,12 +399,12 @@ function CampaignSentPicker({
       </div>
 
       <select
-        value={value.received ? "true" : "false"}
-        onChange={(e) => onChange({ ...value, received: e.target.value === "true" })}
+        value={flag ? "true" : "false"}
+        onChange={(e) => onChange({ ...value, [kind]: e.target.value === "true" })}
         className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
       >
-        <option value="true">Sí, la recibió</option>
-        <option value="false">No, no la recibió</option>
+        <option value="true">{labels.yes}</option>
+        <option value="false">{labels.no}</option>
       </select>
     </div>
   );
@@ -506,6 +541,7 @@ export default function NewSegmentPage() {
                 const ops = OPS_BY_TYPE[fieldType] ?? OPS_BY_TYPE.string;
                 const formSubmissionValue = parseFormSubmissionValue(rule.value, defaultFormId);
                 const productValue = parseProductValue(rule.value);
+                const engagementKind = engagementKindForField(rule.field);
                 return (
                   <div key={i} className="flex items-center gap-2 flex-wrap">
                     <select
@@ -520,8 +556,10 @@ export default function NewSegmentPage() {
                               ? 5
                             : nextField === "purchased_product"
                               ? { product_id: "", product_title: "" }
-                            : nextField === "received_campaign"
-                              ? { campaign_id: 0, campaign_name: "", received: true }
+                            : nextField === "received_campaign" ||
+                                nextField === "opened_campaign" ||
+                                nextField === "clicked_campaign"
+                              ? defaultCampaignEngagementValue(engagementKindForField(nextField))
                             : nextType === "boolean"
                               ? true
                               : "";
@@ -537,7 +575,7 @@ export default function NewSegmentPage() {
                         <option key={f.value} value={f.value}>{f.label}</option>
                       ))}
                     </select>
-                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && fieldType !== "product_shopify" && fieldType !== "campaign_sent" && (
+                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && fieldType !== "product_shopify" && fieldType !== "campaign_engagement" && (
                       <select
                         value={rule.op}
                         onChange={(e) => updateRule(i, { op: e.target.value })}
@@ -607,9 +645,10 @@ export default function NewSegmentPage() {
                         value={productValue}
                         onChange={(v) => updateRule(i, { op: "eq", value: v })}
                       />
-                    ) : fieldType === "campaign_sent" ? (
-                      <CampaignSentPicker
-                        value={parseCampaignSentValue(rule.value)}
+                    ) : fieldType === "campaign_engagement" ? (
+                      <CampaignEngagementPicker
+                        kind={engagementKind}
+                        value={parseCampaignEngagementValue(rule.value, engagementKind)}
                         onChange={(v) => updateRule(i, { op: "eq", value: v })}
                       />
                     ) : fieldType === "boolean" ? (

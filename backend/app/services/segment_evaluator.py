@@ -90,6 +90,62 @@ def _build_clause(node: dict) -> Optional[Any]:
             return text(f"contacts.id IN ({subq})").bindparams(campaign_id=campaign_id)
         return text(f"contacts.id NOT IN ({subq})").bindparams(campaign_id=campaign_id)
 
+    # Condición especial: abrió (o no) una campaña específica
+    if field == "opened_campaign":
+        if not isinstance(value, dict):
+            return None
+        campaign_id = int(value.get("campaign_id", 0) or 0)
+        if not campaign_id:
+            return None
+        opened = bool(value.get("opened", True))
+        if opened:
+            return text("""
+                contacts.id IN (
+                    SELECT DISTINCT cs.contact_id
+                    FROM campaign_sends cs
+                    WHERE cs.campaign_id = :campaign_id
+                      AND cs.opened_at IS NOT NULL
+                )
+            """).bindparams(campaign_id=campaign_id)
+        # No abrió = la recibió (intento de envío) pero opened_at es null
+        return text("""
+            contacts.id IN (
+                SELECT DISTINCT cs.contact_id
+                FROM campaign_sends cs
+                WHERE cs.campaign_id = :campaign_id
+                  AND cs.status IN ('sent', 'delivered', 'opened', 'clicked', 'bounced', 'complained')
+                  AND cs.opened_at IS NULL
+            )
+        """).bindparams(campaign_id=campaign_id)
+
+    # Condición especial: clickeó (o no) una campaña específica
+    if field == "clicked_campaign":
+        if not isinstance(value, dict):
+            return None
+        campaign_id = int(value.get("campaign_id", 0) or 0)
+        if not campaign_id:
+            return None
+        clicked = bool(value.get("clicked", True))
+        if clicked:
+            return text("""
+                contacts.id IN (
+                    SELECT DISTINCT cs.contact_id
+                    FROM campaign_sends cs
+                    WHERE cs.campaign_id = :campaign_id
+                      AND cs.clicked_at IS NOT NULL
+                )
+            """).bindparams(campaign_id=campaign_id)
+        # No clickeó = la recibió pero clicked_at es null
+        return text("""
+            contacts.id IN (
+                SELECT DISTINCT cs.contact_id
+                FROM campaign_sends cs
+                WHERE cs.campaign_id = :campaign_id
+                  AND cs.status IN ('sent', 'delivered', 'opened', 'clicked', 'bounced', 'complained')
+                  AND cs.clicked_at IS NULL
+            )
+        """).bindparams(campaign_id=campaign_id)
+
     # Condición especial: Nº de rebotes en campañas (campaign_sends con status bounced)
     if field == "campaign_bounce_count":
         try:
