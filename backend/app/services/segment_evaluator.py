@@ -237,6 +237,39 @@ def _build_clause(node: dict) -> Optional[Any]:
             )
         """).bindparams(n=n)
 
+    # Condición especial: abrió al menos un correo en los últimos N días
+    # (campañas + automatizaciones + evergreen)
+    if field == "opened_email_in_last_n_days":
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            return None
+        if days <= 0:
+            return None
+        return text("""
+            contacts.id IN (
+                SELECT cs.contact_id
+                FROM campaign_sends cs
+                WHERE cs.contact_id IS NOT NULL
+                  AND cs.opened_at >= NOW() - make_interval(days => :days)
+                UNION
+                SELECT COALESCE(
+                    ar.contact_id,
+                    (SELECT c2.id
+                     FROM contacts c2
+                     WHERE LOWER(c2.email) = LOWER(ar.contact_email)
+                     LIMIT 1)
+                )
+                FROM automation_runs ar
+                WHERE ar.opened_at >= NOW() - make_interval(days => :days)
+                UNION
+                SELECT es.contact_id
+                FROM evergreen_sends es
+                WHERE es.contact_id IS NOT NULL
+                  AND es.opened_at >= NOW() - make_interval(days => :days)
+            )
+        """).bindparams(days=days)
+
     # Condición especial: tiene o no tiene regalado registrado
     if field == "has_gift_recipient":
         is_true = str(value).lower() in ("true", "1")

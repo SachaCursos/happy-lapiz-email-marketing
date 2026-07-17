@@ -26,6 +26,7 @@ const FIELDS = [
   { value: "has_form_submission",  label: "Rellenó formulario",        type: "form_submission" },
   { value: "campaign_bounce_count", label: "Rebotes en campañas",      type: "number" },
   { value: "no_open_in_last_n_emails", label: "Sin apertura en últimos N correos", type: "last_n_no_open" },
+  { value: "opened_email_in_last_n_days", label: "Abrió algún correo en últimos N días", type: "last_n_days_open" },
   { value: "purchased_product",        label: "Producto comprado",                type: "product_shopify" },
   { value: "received_campaign",        label: "Recibió campaña",                  type: "campaign_engagement" },
   { value: "opened_campaign",          label: "Abrió campaña",                    type: "campaign_engagement" },
@@ -554,6 +555,8 @@ export default function NewSegmentPage() {
                             ? defaultFormSubmissionValue(defaultFormId)
                             : nextField === "no_open_in_last_n_emails"
                               ? 5
+                            : nextField === "opened_email_in_last_n_days"
+                              ? 90
                             : nextField === "purchased_product"
                               ? { product_id: "", product_title: "" }
                             : nextField === "received_campaign" ||
@@ -575,7 +578,7 @@ export default function NewSegmentPage() {
                         <option key={f.value} value={f.value}>{f.label}</option>
                       ))}
                     </select>
-                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && fieldType !== "product_shopify" && fieldType !== "campaign_engagement" && (
+                    {fieldType !== "form_submission" && fieldType !== "last_n_no_open" && fieldType !== "last_n_days_open" && fieldType !== "product_shopify" && fieldType !== "campaign_engagement" && (
                       <select
                         value={rule.op}
                         onChange={(e) => updateRule(i, { op: e.target.value })}
@@ -639,6 +642,20 @@ export default function NewSegmentPage() {
                           className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-20 focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                         <span className="text-sm text-gray-500">correos sin abrir</span>
+                      </div>
+                    ) : fieldType === "last_n_days_open" ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">al menos una apertura en los últimos</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={Number(rule.value) || 90}
+                          onChange={(e) =>
+                            updateRule(i, { op: "eq", value: Number(e.target.value) || 90 })
+                          }
+                          className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-24 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <span className="text-sm text-gray-500">días</span>
                       </div>
                     ) : fieldType === "product_shopify" ? (
                       <ShopifyProductPicker
