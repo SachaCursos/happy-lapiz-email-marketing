@@ -25,6 +25,7 @@ FAMILY_ROLES = frozenset({
     "madrina", "padrino",
     "hermana", "hermano",
     "otro",
+    "no_identificado",
 })
 
 # Prefer closer family when a contact has multiple relationships over time.
@@ -35,6 +36,7 @@ _ROLE_PRIORITY = {
     "madrina": 4, "padrino": 4,
     "hermana": 5, "hermano": 5,
     "otro": 9,
+    "no_identificado": 10,
 }
 
 

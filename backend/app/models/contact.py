@@ -46,7 +46,7 @@ class Contact(SQLModel, table=True):
     accepts_marketing: Optional[bool] = None
     expected_next_order: Optional[date] = None
     gender: Optional[str] = Field(default=None)  # 'M' | 'F' | None
-    # Inferred from form: madre|padre|abuela|abuelo|tia|tio|madrina|padrino|hermana|hermano|otro
+    # Inferred from form: madre|padre|abuela|abuelo|tia|tio|madrina|padrino|hermana|hermano|otro|no_identificado
     family_role: Optional[str] = Field(default=None, index=True)
     birthday: Optional[date] = None
     notes: Optional[str] = None

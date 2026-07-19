@@ -384,14 +384,42 @@ def render_template_text(
     return _env.from_string(raw).render(**ctx)
 
 
-def inject_preheader(html: str, preview_text: str) -> str:
-    """Insert hidden preheader after <body> for inbox preview snippets."""
+def sanitize_preview_text(preview_text: str) -> str:
+    """Clean preview/preheader text so inbox snippets don't show raw URLs."""
     text = (preview_text or "").strip()
     if not text:
+        return ""
+    # Drop absolute URLs (http/https and www.)
+    text = re.sub(r"https?://\S+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bwww\.\S+", " ", text, flags=re.IGNORECASE)
+    # Collapse leftover junk from stripped links
+    text = re.sub(r"\s+", " ", text).strip(" -–—|·•")
+    # Escape HTML so injected preheader can't break markup
+    text = (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+    return text.strip()
+
+
+def inject_preheader(html: str, preview_text: str) -> str:
+    """Insert hidden preheader after <body> for inbox preview snippets.
+
+    Also appends invisible spacer characters so Gmail/Apple Mail don't pull
+    the next body content (often a raw https:// link) into the preview line.
+    """
+    text = sanitize_preview_text(preview_text)
+    if not text:
         return html
+    # ~90 zero-width fillers keep body URLs out of the inbox snippet
+    spacer = ("&nbsp;&zwnj;" * 40) + "&nbsp;"
     preheader = (
-        '<span style="display:none;max-height:0;overflow:hidden;'
-        f'font-size:1px;line-height:1px;color:#fff;opacity:0">{text}</span>'
+        '<div style="display:none;font-size:1px;color:#ffffff;line-height:1px;'
+        'max-height:0px;max-width:0px;opacity:0;overflow:hidden;mso-hide:all;">'
+        f"{text}{spacer}"
+        "</div>"
     )
     lower = html.lower()
     if "<body" in lower:
@@ -948,6 +976,15 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
             ),
             contact.email,
         )
+        preview_raw = campaign.preview_text or template.preview_text or ""
+        if preview_raw:
+            preview_rendered = render_template_text(
+                preview_raw,
+                contact,
+                vars_=vars_,
+                preprocess_regalado=regalado,
+            )
+            html = inject_preheader(html, preview_rendered)
         subject = render_template_text(
             campaign.subject,
             contact,

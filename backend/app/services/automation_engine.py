@@ -402,6 +402,9 @@ _FEMALE_NAMES = {
     'victoria','valeria','ignacia','josefina','montserrat','bernardita','violeta',
     'amanda','lisbeth','marisol','miriam','milagros','giuliana','fernanda','lucia',
     'luca',  # exception: luca can be male (handled by first-name list)
+    # confirmed via family_role review
+    'coni','guiselle','heidi','ingrid','jocelyn','joselyn','margaret','marly',
+    'natividad','romy',
 }
 _MALE_NAMES = {
     'carlos','juan','pedro','jose','luis','miguel','francisco','antonio','manuel',
@@ -417,6 +420,8 @@ _MALE_NAMES = {
     'mauricio','nicolas','omar','oscar','oswaldo','rafael','ramon','reinaldo','renato',
     'ricardo','rolando','ruben','samuel','santiago','saul','simon','stefan','tiago',
     'valentin','walter','wilmer','xavier','yerlan','luka',
+    # confirmed via family_role review
+    'jesus','williams','juvenal','wladimir','andy',
 }
 
 def _detect_name_gender(full_name: str) -> str | None:
@@ -711,14 +716,12 @@ def _send_email_step(
         preview_text = _env.from_string(
             preprocess_regalado_template(str(step.get("preview_text", "")))
         ).render(**vars_)
+        if not (preview_text or "").strip():
+            # Fall back to template preview so inbox never scrapes body URLs
+            preview_text = getattr(tpl, "preview_text", None) or ""
         if preview_text:
-            preheader = (
-                f'<span style="display:none;max-height:0;overflow:hidden;'
-                f'font-size:1px;line-height:1px;color:#fff;opacity:0">{preview_text}</span>'
-            )
-            # Insert right after <body ...> tag so email clients pick it up as preheader
-            import re as _re
-            html = _re.sub(r"(<body[^>]*>)", r"\1" + preheader, html, count=1) if "<body" in html.lower() else preheader + html
+            from app.services.email_sender import inject_preheader
+            html = inject_preheader(html, preview_text)
 
         resend.api_key = settings.RESEND_API_KEY
         result = resend.Emails.send({

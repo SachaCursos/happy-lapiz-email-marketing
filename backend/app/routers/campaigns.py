@@ -23,6 +23,7 @@ from app.services.email_sender import (
     _inject_footer,
     _unsub_headers,
     build_contact_template_vars,
+    inject_preheader,
     render_html,
     render_template_text,
     uses_regalado_vars,
@@ -295,10 +296,20 @@ def send_test_email(
             vars_=vars_,
             preprocess_regalado=regalado,
         )
+        preview_raw = c.preview_text or tpl.preview_text or ""
+        if preview_raw:
+            preview_rendered = render_template_text(
+                preview_raw,
+                contact,
+                vars_=vars_,
+                preprocess_regalado=regalado,
+            )
+            html = inject_preheader(html, preview_rendered)
     else:
         nombre = current_user.name or current_user.email.split("@")[0]
         html = _inject_footer(JTemplate(tpl_html).render(nombre=nombre), current_user.email)
         subject = c.subject
+        html = inject_preheader(html, c.preview_text or tpl.preview_text or "")
 
     resend.api_key = settings.RESEND_API_KEY
     try:

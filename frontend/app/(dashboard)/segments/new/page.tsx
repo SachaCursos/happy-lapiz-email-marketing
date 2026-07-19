@@ -21,6 +21,7 @@ const FAMILY_ROLE_OPTIONS = [
   { value: "hermana", label: "Hermana" },
   { value: "hermano", label: "Hermano" },
   { value: "otro", label: "Otro" },
+  { value: "no_identificado", label: "No identificado" },
 ];
 
 const FIELDS = [

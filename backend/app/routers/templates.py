@@ -150,7 +150,12 @@ def send_template_test(
     from jinja2 import Environment, ChainableUndefined
     from app.core.config import settings
     from app.core.unsub_token import unsub_url
-    from app.services.email_sender import _inject_footer, _unsub_headers, replace_unsub_tag
+    from app.services.email_sender import (
+        _inject_footer,
+        _unsub_headers,
+        inject_preheader,
+        replace_unsub_tag,
+    )
 
     from app.services.template_block_compiler import resolve_template_html
 
@@ -221,6 +226,7 @@ def send_template_test(
     raw_html = replace_unsub_tag(tpl_html, email)
     _env = Environment(undefined=ChainableUndefined)
     html = _inject_footer(_env.from_string(raw_html).render(**vars_), email)
+    html = inject_preheader(html, tpl.preview_text or "")
 
     subject_tpl = body.subject or f"[PRUEBA] {tpl.subject_default or tpl.name}"
     subject = _env.from_string(subject_tpl).render(**vars_)
