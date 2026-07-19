@@ -23,6 +23,8 @@ migrations = [
     "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes TEXT",
     "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS custom_fields JSONB",
     "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS location VARCHAR",
+    "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS family_role VARCHAR",
+    "CREATE INDEX IF NOT EXISTS idx_contacts_family_role ON contacts(family_role)",
     # signup_forms — custom fields + html override + coupon
     "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS custom_form_fields JSONB",
     "ALTER TABLE signup_forms ADD COLUMN IF NOT EXISTS html_override TEXT",

@@ -351,6 +351,10 @@ def submit_form(
     origin = payload.source_url or f"Formulario #{form_id}"
 
     from app.services.automation_engine import _detect_name_gender
+    from app.services.family_role import (
+        apply_family_role_to_contact,
+        extract_relaciones_from_submission,
+    )
     contact = session.exec(select(Contact).where(Contact.email == email)).first()
     contact_gender = _detect_name_gender(payload.name or "")
     if contact:
@@ -392,6 +396,17 @@ def submit_form(
     regalados = _parse_regalados(_ed)
     from app.services.regalado_vars import sanitize_regalados_list
     regalados = sanitize_regalados_list(regalados)
+    # Infer family role (madre/padre/abuela/…) from gift relationships
+    relaciones = extract_relaciones_from_submission(
+        regalados=regalados,
+        extra_data=_ed,
+    )
+    if relaciones:
+        apply_family_role_to_contact(
+            contact,
+            relaciones=relaciones,
+            name=payload.name,
+        )
     if regalados:
         _ed = {**_ed, "regalados": [
             {

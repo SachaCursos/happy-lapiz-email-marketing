@@ -22,9 +22,16 @@ FIELD_MAP = {
     # Klaviyo
     "accepts_marketing":Contact.accepts_marketing,
     "last_event_date":  Contact.last_event_date,
+    # Perfil / formulario regalados
+    "gender":           Contact.gender,
+    "family_role":      Contact.family_role,
 }
 
-STRING_FIELDS = {"email", "origin_utm", "name", "location", "shipping_city", "shipping_province"}
+STRING_FIELDS = {
+    "email", "origin_utm", "name", "location",
+    "shipping_city", "shipping_province",
+    "gender", "family_role",
+}
 
 OPS = {
     "eq":       lambda col, v: col == v,

@@ -237,6 +237,9 @@ def _run_migrations():
             config JSONB NOT NULL DEFAULT '{}',
             updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
+        # contacts.family_role — madre|padre|abuela|abuelo|tia|tio|…
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS family_role VARCHAR",
+        "CREATE INDEX IF NOT EXISTS idx_contacts_family_role ON contacts(family_role)",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

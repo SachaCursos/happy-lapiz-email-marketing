@@ -660,6 +660,30 @@ _SORT_COLUMNS = {
     "inventory_total": "inventory_total",
 }
 
+@router.post("/backfill-family-roles")
+def backfill_family_roles_endpoint(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin),
+):
+    """Infer contacts.family_role from form_submissions (madre/padre/abuela/…)."""
+    from app.services.family_role import backfill_family_roles
+
+    # Ensure column exists (safe if already applied on boot)
+    try:
+        session.execute(text(
+            "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS family_role VARCHAR"
+        ))
+        session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_contacts_family_role ON contacts(family_role)"
+        ))
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    result = backfill_family_roles(session)
+    return {"ok": True, **result}
+
+
 @router.post("/backfill-shopify-orders")
 async def backfill_shopify_orders(
     session: Session = Depends(get_session),

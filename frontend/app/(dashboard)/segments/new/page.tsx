@@ -9,8 +9,23 @@ import { ArrowLeft, Plus, Trash2, Search, X, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+const FAMILY_ROLE_OPTIONS = [
+  { value: "madre", label: "Madre" },
+  { value: "padre", label: "Padre" },
+  { value: "abuela", label: "Abuela" },
+  { value: "abuelo", label: "Abuelo" },
+  { value: "tia", label: "Tía" },
+  { value: "tio", label: "Tío" },
+  { value: "madrina", label: "Madrina" },
+  { value: "padrino", label: "Padrino" },
+  { value: "hermana", label: "Hermana" },
+  { value: "hermano", label: "Hermano" },
+  { value: "otro", label: "Otro" },
+];
+
 const FIELDS = [
   { value: "email",                label: "Email",                  type: "string" },
+  { value: "family_role",          label: "Rol familiar",           type: "enum", options: FAMILY_ROLE_OPTIONS },
   { value: "orders_count",         label: "Nº pedidos",             type: "number" },
   { value: "total_spent",          label: "Total gastado ($)",       type: "number" },
   { value: "ticket_medio",         label: "Ticket medio ($)",       type: "number" },
@@ -45,6 +60,10 @@ const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
     { value: "eq",       label: "es" },
     { value: "contains", label: "contiene" },
     { value: "starts",   label: "empieza por" },
+  ],
+  enum: [
+    { value: "eq",  label: "es" },
+    { value: "neq", label: "no es" },
   ],
   boolean: [{ value: "eq", label: "es" }],
   date:    [
@@ -445,6 +464,13 @@ export default function NewSegmentPage() {
     return FIELDS.find((f) => f.value === field)?.type ?? "string";
   }
 
+  function getFieldOptions(field: string): { value: string; label: string }[] {
+    const def = FIELDS.find((f) => f.value === field) as
+      | { value: string; label: string; type: string; options?: { value: string; label: string }[] }
+      | undefined;
+    return def?.options ?? [];
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     let conditions: SegmentConditions;
@@ -550,6 +576,11 @@ export default function NewSegmentPage() {
                       onChange={(e) => {
                         const nextField = e.target.value;
                         const nextType = getFieldType(nextField);
+                        const enumOpts = (
+                          FIELDS.find((f) => f.value === nextField) as
+                            | { options?: { value: string }[] }
+                            | undefined
+                        )?.options;
                         const nextValue =
                           nextField === "has_form_submission"
                             ? defaultFormSubmissionValue(defaultFormId)
@@ -563,6 +594,8 @@ export default function NewSegmentPage() {
                                 nextField === "opened_campaign" ||
                                 nextField === "clicked_campaign"
                               ? defaultCampaignEngagementValue(engagementKindForField(nextField))
+                            : nextType === "enum"
+                              ? (enumOpts?.[0]?.value ?? "")
                             : nextType === "boolean"
                               ? true
                               : "";
@@ -676,6 +709,16 @@ export default function NewSegmentPage() {
                       >
                         <option value="true">Sí</option>
                         <option value="false">No</option>
+                      </select>
+                    ) : fieldType === "enum" ? (
+                      <select
+                        value={String(rule.value ?? "")}
+                        onChange={(e) => updateRule(i, { value: e.target.value })}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white min-w-[140px]"
+                      >
+                        {getFieldOptions(rule.field).map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     ) : (
                       <input

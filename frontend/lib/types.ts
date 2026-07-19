@@ -38,6 +38,9 @@ export interface Contact {
   accepts_marketing: boolean | null;
   smile_points: number | null;
   expected_next_order: string | null;
+  gender: string | null;
+  /** madre|padre|abuela|abuelo|tia|tio|madrina|padrino|hermana|hermano|otro */
+  family_role: string | null;
 }
 
 export interface ContactBooking {

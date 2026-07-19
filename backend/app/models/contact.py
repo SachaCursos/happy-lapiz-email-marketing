@@ -46,6 +46,8 @@ class Contact(SQLModel, table=True):
     accepts_marketing: Optional[bool] = None
     expected_next_order: Optional[date] = None
     gender: Optional[str] = Field(default=None)  # 'M' | 'F' | None
+    # Inferred from form: madre|padre|abuela|abuelo|tia|tio|madrina|padrino|hermana|hermano|otro
+    family_role: Optional[str] = Field(default=None, index=True)
     birthday: Optional[date] = None
     notes: Optional[str] = None
 
@@ -107,6 +109,10 @@ class ContactRead(SQLModel):
     ultima_visita_web: Optional[datetime] = None
     accepts_marketing: Optional[bool] = None
     expected_next_order: Optional[date] = None
+    gender: Optional[str] = None
+    family_role: Optional[str] = None
+    birthday: Optional[date] = None
+    notes: Optional[str] = None
 
     @field_validator("orders_count", mode="before")
     @classmethod
