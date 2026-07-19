@@ -130,13 +130,15 @@ def create_contact(
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
 ):
-    existing = session.exec(select(Contact).where(Contact.email == payload.email)).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email ya existe")
-    from app.services.email_typo_fix import normalize_email
+    from app.services.email_typo_fix import is_valid_email, normalize_email
 
     data = payload.model_dump()
     data["email"] = normalize_email(data["email"])
+    if not is_valid_email(data["email"]):
+        raise HTTPException(status_code=422, detail="Email inválido")
+    existing = session.exec(select(Contact).where(Contact.email == data["email"])).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email ya existe")
     contact = Contact(**data, opted_in_at=datetime.utcnow() if payload.opted_in else None)
     session.add(contact)
     session.commit()

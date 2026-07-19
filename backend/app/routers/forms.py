@@ -339,11 +339,14 @@ def submit_form(
     if not f or f.status != "active":
         raise HTTPException(status_code=404, detail="Formulario no disponible")
 
-    from app.services.email_typo_fix import normalize_email
+    from app.services.email_typo_fix import is_valid_email, normalize_email
 
     email = normalize_email(payload.email)
-    if not email or "@" not in email:
-        raise HTTPException(status_code=422, detail="Email inválido")
+    if not is_valid_email(email):
+        raise HTTPException(
+            status_code=422,
+            detail="Email inválido. Revisa que esté completo (ej: tu@gmail.com)",
+        )
 
     origin = payload.source_url or f"Formulario #{form_id}"
 
@@ -1319,12 +1322,20 @@ def _build_embed_js(cfg: dict) -> str:
 
         var REGALADO_KEYS = ['para_quien','destinatario_nombre','cual_es_su_fecha_de_nacimiento','destinatario_cumpleanos','destinatario_edad'];
 
+        function isValidEmail(v) {{
+          return /^[a-z0-9](?:[a-z0-9._%+\\-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9\\-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9\\-]*[a-z0-9])?)+$/i.test(String(v || '').trim());
+        }}
+
         function validateStepEl(stepEl) {{
           if (!stepEl) return true;
           var invalid = false;
           stepEl.querySelectorAll('input[required],select[required],textarea[required]').forEach(function(el) {{
             if (!el.value.trim()) {{ el.style.borderColor = '#dc2626'; invalid = true; }}
             else el.style.borderColor = '';
+          }});
+          stepEl.querySelectorAll('input[type="email"]').forEach(function(el) {{
+            var v = el.value.trim();
+            if (v && !isValidEmail(v)) {{ el.style.borderColor = '#dc2626'; invalid = true; }}
           }});
           stepEl.querySelectorAll('.hb-date-wrap[data-required]').forEach(function(wrap) {{
             var hidden = wrap.querySelector('input[type="hidden"]');
@@ -1671,11 +1682,14 @@ def submit_gift_form(
     for k, v in _cors_headers().items():
         response.headers[k] = v
 
-    from app.services.email_typo_fix import normalize_email
+    from app.services.email_typo_fix import is_valid_email, normalize_email
 
     email = normalize_email(payload.email)
-    if not email or "@" not in email:
-        raise HTTPException(status_code=422, detail="Email inválido")
+    if not is_valid_email(email):
+        raise HTTPException(
+            status_code=422,
+            detail="Email inválido. Revisa que esté completo (ej: tu@gmail.com)",
+        )
 
     contact = session.exec(select(Contact).where(Contact.email == email)).first()
     contact_id = contact.id if contact else None
@@ -1776,19 +1790,26 @@ def gift_embed_js():
       var relacion=document.getElementById('hl-relacion').value;
       var nombre=document.getElementById('hl-nombre').value.trim();
       var fecha=document.getElementById('hl-fecha').value;
-      if(!email||!relacion||!nombre){{alert('Por favor completa email, relación y nombre.');return;}}
+      var emailOk=/^[a-z0-9](?:[a-z0-9._%+\\-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9\\-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9\\-]*[a-z0-9])?)+$/i.test(email);
+      if(!email||!emailOk){{alert('Revisa que tu email esté completo (ej: tu@gmail.com)');return;}}
+      if(!relacion||!nombre){{alert('Por favor completa email, relación y nombre.');return;}}
       var btn=document.getElementById('hl-gift-btn');
       btn.disabled=true;btn.textContent='Guardando...';
       fetch(API+'/api/forms/gift/submit',{{
         method:'POST',
         headers:{{'Content-Type':'application/json'}},
         body:JSON.stringify({{email:email,relacion:relacion,nombre_regalado:nombre,fecha_nacimiento_regalado:fecha||null,source_url:location.href}})
-      }}).then(function(r){{return r.json();}}).then(function(){{
+      }}).then(function(r){{
+        return r.json().then(function(data){{
+          if(!r.ok) throw new Error((data&&data.detail)?String(data.detail):'error');
+          return data;
+        }});
+      }}).then(function(){{
         document.getElementById('hl-gift-form').style.display='none';
         document.getElementById('hl-gift-success').style.display='block';
         sessionStorage.setItem(STORE_KEY,'done');
         setTimeout(closePopup,4000);
-      }}).catch(function(){{btn.disabled=false;btn.textContent='Error — intenta de nuevo';}});
+      }}).catch(function(err){{btn.disabled=false;btn.textContent=err&&err.message?String(err.message).slice(0,60):'Error — intenta de nuevo';}});
     }};
   }}
 

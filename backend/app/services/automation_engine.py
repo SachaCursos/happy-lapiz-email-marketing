@@ -536,12 +536,38 @@ def _send_email_step(
     step_number: int,
     extra_vars: dict | None = None,
     variant: str | None = None,
-) -> None:
-    """Send the email for a specific step and record the run."""
+) -> str:
+    """Send the email for a specific step and record the run.
+
+    Returns: "sent" | "retry" | "permanent"
+    """
+    from app.services.email_typo_fix import is_permanent_send_error, is_valid_email
+
     tpl = session.get(Template, int(step["template_id"]))
     if not tpl:
         logger.warning("Automation %d step %d: template %d not found", auto.id, step_number, step["template_id"])
-        return
+        return "permanent"
+
+    if not is_valid_email(contact.email or ""):
+        run = AutomationRun(
+            automation_id=auto.id,
+            contact_id=contact.id,
+            contact_email=contact.email,
+            trigger_key=trigger_key,
+            step_number=step_number,
+            triggered_at=datetime.utcnow(),
+            executed_at=datetime.utcnow(),
+            status="failed",
+            variant_sent=variant,
+            error=f"Invalid email address: {contact.email!r}",
+        )
+        session.add(run)
+        session.commit()
+        logger.error(
+            "Automation %d step %d permanent fail for invalid email %r",
+            auto.id, step_number, contact.email,
+        )
+        return "permanent"
 
     run = AutomationRun(
         automation_id=auto.id,
@@ -711,14 +737,20 @@ def _send_email_step(
         logger.info("Automation %d step %d variant=%s sent to %s", auto.id, step_number, variant or "-", contact.email)
         session.add(run)
         session.commit()
-        return True
+        return "sent"
     except Exception as exc:
         run.error = str(exc)[:500]
         run.executed_at = datetime.utcnow()
-        logger.error("Automation %d step %d failed for %s: %s", auto.id, step_number, contact.email, exc)
         session.add(run)
         session.commit()
-        return False
+        if is_permanent_send_error(exc):
+            logger.error(
+                "Automation %d step %d permanent fail for %s: %s",
+                auto.id, step_number, contact.email, exc,
+            )
+            return "permanent"
+        logger.error("Automation %d step %d failed for %s: %s", auto.id, step_number, contact.email, exc)
+        return "retry"
 
 
 # ── Enrollment processing ──────────────────────────────────────────────────────
@@ -805,8 +837,24 @@ def _process_enrollments(session: Session) -> None:
                     extra_vars = refresh_birthday_countdown(extra_vars, as_of=now.date())
                     enrollment.extra_vars_json = json.dumps(extra_vars)
                 effective_step, variant_label = _pick_variant(step)
-                sent_ok = _send_email_step(session, auto, contact, enrollment.trigger_key, effective_step, enrollment.next_step, extra_vars, variant_label)
-                if not sent_ok:
+                send_result = _send_email_step(
+                    session, auto, contact, enrollment.trigger_key,
+                    effective_step, enrollment.next_step, extra_vars, variant_label,
+                )
+                if send_result == "permanent":
+                    enrollment.status = "cancelled"
+                    session.add(enrollment)
+                    session.commit()
+                    logger.warning(
+                        "Enrollment %d cancelled — permanent send failure for %s",
+                        enrollment.id, enrollment.contact_email,
+                    )
+                    continue
+                if send_result != "sent":
+                    # Transient failure: backoff 5 min so we don't hammer Resend every tick.
+                    enrollment.next_send_at = now + timedelta(minutes=5)
+                    session.add(enrollment)
+                    session.commit()
                     continue
 
             # Advance to next step

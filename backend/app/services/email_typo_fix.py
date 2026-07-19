@@ -98,6 +98,43 @@ def normalize_email(email: str) -> str:
     return fix.email if fix else raw
 
 
+# Local part + domain with a real TLD (rejects "user@gmail." / "user@gmail").
+_EMAIL_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9._%+\-]*[a-z0-9])?@"
+    r"[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?)+$",
+    re.I,
+)
+
+
+def is_valid_email(email: str) -> bool:
+    """True if email looks deliverable (has local@domain.tld)."""
+    if not email or not isinstance(email, str):
+        return False
+    normalized = email.strip()
+    if len(normalized) > 254 or " " in normalized or normalized.count("@") != 1:
+        return False
+    return bool(_EMAIL_RE.match(normalized))
+
+
+# Resend / ESP messages that mean the address will never succeed — do not retry.
+_PERMANENT_SEND_ERROR_MARKERS = (
+    "invalid `to` field",
+    "invalid to field",
+    "email address needs to follow",
+    "does not contain a valid address",
+    "invalid email address",
+    "invalid recipient",
+    "validation_error",
+)
+
+
+def is_permanent_send_error(error: str | Exception) -> bool:
+    """True when retrying the same recipient cannot succeed."""
+    msg = str(error).lower()
+    return any(marker in msg for marker in _PERMANENT_SEND_ERROR_MARKERS)
+
+
 def _merge_contacts(session: Session, keep: Contact, drop: Contact) -> None:
     """Merge drop into keep, re-point FKs, then delete drop."""
     if keep.id == drop.id:
