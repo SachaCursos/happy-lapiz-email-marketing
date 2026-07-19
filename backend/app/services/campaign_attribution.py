@@ -268,10 +268,24 @@ def get_automation_attribution(
     automation_id: int,
     *,
     window_days: int = DEFAULT_ATTRIBUTION_DAYS,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> dict:
     """Klaviyo-style open/click last-touch attribution for one automation."""
+    params: dict = {"aid": automation_id, "window_days": window_days}
+    run_filter = ""
+    order_filter = ""
+    if date_from is not None:
+        run_filter += " AND ar.triggered_at >= :date_from"
+        order_filter += " AND so.created_at >= :date_from"
+        params["date_from"] = date_from
+    if date_to is not None:
+        run_filter += " AND ar.triggered_at < :date_to"
+        order_filter += " AND so.created_at < :date_to"
+        params["date_to"] = date_to
+
     row = session.execute(
-        text("""
+        text(f"""
             WITH touches AS (
                 SELECT
                     ar.automation_id,
@@ -297,6 +311,8 @@ def get_automation_attribution(
                 JOIN shopify_orders so ON LOWER(so.email) = LOWER(ar.contact_email)
                 WHERE ar.status = 'sent'
                   AND (ar.clicked_at IS NOT NULL OR ar.opened_at IS NOT NULL)
+                  {run_filter}
+                  {order_filter}
             ),
             attributed AS (
                 SELECT DISTINCT ON (order_id)
@@ -311,7 +327,7 @@ def get_automation_attribution(
             FROM attributed
             WHERE automation_id = :aid
         """),
-        {"aid": automation_id, "window_days": window_days},
+        params,
     ).one()
 
     return {

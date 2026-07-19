@@ -104,14 +104,35 @@ def list_runs(
     ).all()
 
 
+def _day_bounds(date_from: str | None, date_to: str | None) -> tuple[datetime | None, datetime | None]:
+    """Parse YYYY-MM-DD into [start, end) UTC datetimes."""
+    start = end = None
+    if date_from:
+        start = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if date_to:
+        end = datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+    return start, end
+
+
 @router.get("/{auto_id}/stats")
 def automation_stats(
     auto_id: int,
+    date_from: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
+    date_to: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    from sqlalchemy import text
-    result = session.execute(text("""
+    start, end = _day_bounds(date_from, date_to)
+    params: dict = {"aid": auto_id}
+    date_sql = ""
+    if start is not None:
+        date_sql += " AND triggered_at >= :date_from"
+        params["date_from"] = start
+    if end is not None:
+        date_sql += " AND triggered_at < :date_to"
+        params["date_to"] = end
+
+    result = session.execute(text(f"""
         SELECT
             COUNT(*)                                            AS total,
             COUNT(CASE WHEN status = 'sent' THEN 1 END)        AS sent,
@@ -121,20 +142,22 @@ def automation_stats(
             MAX(triggered_at)                                   AS last_run
         FROM automation_runs
         WHERE automation_id = :aid
-    """), {"aid": auto_id}).fetchone()
+        {date_sql}
+    """), params).fetchone()
 
     total, sent, failed, opened, clicked, last_run = result
     sent = sent or 0
     open_rate  = round(opened / sent * 100, 1) if sent else 0.0
     click_rate = round(clicked / sent * 100, 1) if sent else 0.0
 
-    # Conversions: Klaviyo-style open/click last-touch (5-day window)
     from app.services.campaign_attribution import get_automation_attribution
 
-    conv = get_automation_attribution(session, auto_id, window_days=5)
+    conv = get_automation_attribution(
+        session, auto_id, window_days=5, date_from=start, date_to=end,
+    )
     orders, revenue = conv["orders"], conv["revenue"]
 
-    variant_rows = session.execute(text("""
+    variant_rows = session.execute(text(f"""
         SELECT
             variant_sent,
             COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
@@ -142,9 +165,10 @@ def automation_stats(
             COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
         FROM automation_runs
         WHERE automation_id = :aid AND variant_sent IS NOT NULL
+        {date_sql}
         GROUP BY variant_sent
         ORDER BY variant_sent
-    """), {"aid": auto_id}).fetchall()
+    """), params).fetchall()
 
     variants_stats = [
         {
@@ -170,17 +194,34 @@ def automation_stats(
         "revenue":    float(revenue or 0),
         "last_run":   last_run,
         "variants":   variants_stats,
+        "date_from":  date_from,
+        "date_to":    date_to,
     }
 
 
 @router.get("/{auto_id}/step-stats")
 def automation_step_stats(
     auto_id: int,
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
     """Per-step metrics breakdown, with A/B variant stats per step."""
-    step_rows = session.execute(text("""
+    start, end = _day_bounds(date_from, date_to)
+    params: dict = {"aid": auto_id}
+    date_sql = ""
+    if start is not None:
+        date_sql += " AND ar.triggered_at >= :date_from"
+        params["date_from"] = start
+    if end is not None:
+        date_sql += " AND ar.triggered_at < :date_to"
+        params["date_to"] = end
+
+    # For step_rows without ar alias
+    date_sql_plain = date_sql.replace("ar.", "")
+
+    step_rows = session.execute(text(f"""
         SELECT
             step_number,
             COUNT(*) FILTER (WHERE status = 'sent')           AS sent,
@@ -188,11 +229,12 @@ def automation_step_stats(
             COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)    AS clicked
         FROM automation_runs
         WHERE automation_id = :aid
+        {date_sql_plain}
         GROUP BY step_number
         ORDER BY step_number
-    """), {"aid": auto_id}).fetchall()
+    """), params).fetchall()
 
-    variant_rows = session.execute(text("""
+    variant_rows = session.execute(text(f"""
         SELECT
             ar.step_number,
             ar.variant_sent,
@@ -203,12 +245,13 @@ def automation_step_stats(
         FROM automation_runs ar
         LEFT JOIN contacts c ON c.id = ar.contact_id
         LEFT JOIN shopify_orders so ON so.email = c.email
-            AND so.created_at > ar.sent_at
-            AND so.created_at < ar.sent_at + INTERVAL '7 days'
+            AND so.created_at > ar.executed_at
+            AND so.created_at < ar.executed_at + INTERVAL '7 days'
         WHERE ar.automation_id = :aid AND ar.variant_sent IS NOT NULL
+        {date_sql}
         GROUP BY ar.step_number, ar.variant_sent
         ORDER BY ar.step_number, ar.variant_sent
-    """), {"aid": auto_id}).fetchall()
+    """), params).fetchall()
 
     # Group variant rows by step
     from collections import defaultdict

@@ -9,6 +9,7 @@ import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, 
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
 import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
+import DateRangeFilter, { useStatsDateRange } from "@/components/DateRangeFilter";
 
 // Convert a UTC datetime string from the backend (may lack Z) to a local
 // time string suitable for a datetime-local input.
@@ -75,6 +76,8 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const [sendError, setSendError] = useState("");
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<"overview" | "analytics" | "recipients">("overview");
+  const dateRange = useStatsDateRange("all");
+  const statsParams = { date_from: dateRange.dateFrom, date_to: dateRange.dateTo };
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<{
     name: string; subject: string; preview_text: string;
@@ -175,14 +178,14 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   });
 
   const { data: stats } = useQuery<CampaignStats>({
-    queryKey: ["campaign-stats", id],
-    queryFn: () => campaignsApi.stats(id).then((r) => r.data),
+    queryKey: ["campaign-stats", id, dateRange.dateFrom, dateRange.dateTo],
+    queryFn: () => campaignsApi.stats(id, statsParams).then((r) => r.data),
     enabled: sends.length > 0 || campaign?.status === "sent" || campaign?.status === "sending" || campaign?.status === "paused",
   });
 
   const { data: conversions } = useQuery<CampaignConversions>({
-    queryKey: ["campaign-conversions", id],
-    queryFn: () => campaignsApi.conversions(id, 5).then((r) => r.data),
+    queryKey: ["campaign-conversions", id, dateRange.dateFrom, dateRange.dateTo],
+    queryFn: () => campaignsApi.conversions(id, 5, statsParams).then((r) => r.data),
     enabled: campaign?.status === "sent",
     staleTime: 15 * 60_000,
   });
@@ -252,6 +255,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
           <p className="text-gray-500 text-sm mt-1">{campaign.subject}</p>
         </div>
         <div className="flex items-center gap-2">
+          <DateRangeFilter {...dateRange} />
           {campaign.status !== "sent" && campaign.status !== "sending" && campaign.status !== "paused" && (
             <button
               onClick={() => {

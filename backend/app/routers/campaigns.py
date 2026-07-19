@@ -316,19 +316,50 @@ def send_test_email(
 
 
 @router.get("/{campaign_id}/stats", response_model=CampaignStats)
-def campaign_stats(campaign_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def campaign_stats(
+    campaign_id: int,
+    date_from: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
+    date_to: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+):
     c = session.get(Campaign, campaign_id)
     if not c:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
-    sends = session.exec(select(CampaignSend).where(CampaignSend.campaign_id == campaign_id)).all()
-    total = len(sends)
-    sent      = sum(1 for s in sends if s.status not in ("queued", "failed"))
-    delivered = sum(1 for s in sends if s.delivered_at is not None or s.status in ("delivered", "opened", "clicked"))
-    opened    = sum(1 for s in sends if s.opened_at is not None)
-    clicked   = sum(1 for s in sends if s.clicked_at is not None)
-    bounced   = sum(1 for s in sends if s.bounced_at is not None or s.status == "bounced")
-    complained = sum(1 for s in sends if s.status == "complained")
+    params: dict = {"cid": campaign_id}
+    date_sql = ""
+    if date_from:
+        params["date_from"] = datetime.strptime(date_from, "%Y-%m-%d")
+        date_sql += " AND sent_at >= :date_from"
+    if date_to:
+        params["date_to"] = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+        date_sql += " AND sent_at < :date_to"
+
+    row = session.execute(text(f"""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE status NOT IN ('queued', 'failed')) AS sent,
+            COUNT(*) FILTER (
+                WHERE delivered_at IS NOT NULL
+                   OR status IN ('delivered', 'opened', 'clicked')
+            ) AS delivered,
+            COUNT(*) FILTER (WHERE opened_at IS NOT NULL) AS opened,
+            COUNT(*) FILTER (WHERE clicked_at IS NOT NULL) AS clicked,
+            COUNT(*) FILTER (WHERE bounced_at IS NOT NULL OR status = 'bounced') AS bounced,
+            COUNT(*) FILTER (WHERE status = 'complained') AS complained
+        FROM campaign_sends
+        WHERE campaign_id = :cid
+        {date_sql}
+    """), params).fetchone()
+
+    total = int(row[0] or 0)
+    sent = int(row[1] or 0)
+    delivered = int(row[2] or 0)
+    opened = int(row[3] or 0)
+    clicked = int(row[4] or 0)
+    bounced = int(row[5] or 0)
+    complained = int(row[6] or 0)
 
     base = delivered or sent or 1
     return CampaignStats(
@@ -350,6 +381,8 @@ def campaign_stats(campaign_id: int, session: Session = Depends(get_session), _:
 def campaign_conversions(
     campaign_id: int,
     days: int = Query(default=5, ge=1, le=90),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
@@ -377,7 +410,13 @@ def campaign_conversions(
     if not has_sends:
         return empty
 
-    stats = get_campaign_attribution(session, campaign_id, window_days=days)
+    order_from = datetime.strptime(date_from, "%Y-%m-%d") if date_from else None
+    order_to = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)) if date_to else None
+
+    stats = get_campaign_attribution(
+        session, campaign_id, window_days=days,
+        order_date_from=order_from, order_date_to=order_to,
+    )
     return {
         "campaign_id": campaign_id,
         "window_days": days,

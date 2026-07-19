@@ -22,8 +22,8 @@ INTERVAL_RESUME_SENDS_ACTIVE = 30
 INTERVAL_RESUME_SENDS_IDLE = 5 * 60
 INTERVAL_EVERGREEN = 60 * 60
 INTERVAL_EVERGREEN_FOLLOWUPS = 5 * 60
-INTERVAL_SHOPIFY_SYNC = 10 * 60
-INTERVAL_ABANDONED_CHECKOUTS = 15 * 60
+INTERVAL_SHOPIFY_SYNC = 5 * 60
+INTERVAL_ABANDONED_CHECKOUTS = 5 * 60
 
 _scheduler_lock = threading.Lock()
 _last_run: dict[str, float] = {}
@@ -64,11 +64,22 @@ def _tick() -> None:
         run_fast_automation_triggers,
         run_slow_automation_triggers,
         run_scheduled_campaigns,
+        _run_automation_triggers_filtered,
     )
     from app.services.email_sender import resume_pending_campaign_sends
     from app.services.evergreen_engine import process_evergreen_followups, run_evergreen_campaigns
     from app.services.sync_shopify_orders import sync_contacts_from_shopify_orders
     from app.services.sync_abandoned_checkouts import sync_abandoned_checkouts
+
+    def _shopify_sync_and_enroll() -> None:
+        sync_contacts_from_shopify_orders()
+        _run_automation_triggers_filtered(
+            only=frozenset({"placed_order", "ordered_product", "fulfilled_order", "cancelled_order"})
+        )
+
+    def _abandoned_sync_and_enroll() -> None:
+        sync_abandoned_checkouts()
+        _run_automation_triggers_filtered(only=frozenset({"abandoned_cart"}))
 
     sending_active = _has_sending_campaigns()
 
@@ -98,10 +109,10 @@ def _tick() -> None:
         _run_guarded(process_evergreen_followups, 120, "evergreen_followups")
 
     if _due("shopify_sync", INTERVAL_SHOPIFY_SYNC):
-        _run_guarded(sync_contacts_from_shopify_orders, 90, "shopify_sync")
+        _run_guarded(_shopify_sync_and_enroll, 180, "shopify_sync")
 
     if _due("abandoned_checkouts", INTERVAL_ABANDONED_CHECKOUTS):
-        _run_guarded(sync_abandoned_checkouts, 120, "abandoned_checkouts")
+        _run_guarded(_abandoned_sync_and_enroll, 180, "abandoned_checkouts")
 
 
 def start_scheduler() -> None:

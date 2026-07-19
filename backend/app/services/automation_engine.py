@@ -1507,7 +1507,12 @@ def run_scheduled_campaigns() -> None:
 
 
 # Triggers polled every minute (time-sensitive transactional flows).
-FAST_TRIGGER_TYPES = frozenset({"placed_order", "form_submitted"})
+FAST_TRIGGER_TYPES = frozenset({
+    "placed_order",
+    "ordered_product",
+    "abandoned_cart",
+    "form_submitted",
+})
 
 
 def _run_automation_triggers_filtered(

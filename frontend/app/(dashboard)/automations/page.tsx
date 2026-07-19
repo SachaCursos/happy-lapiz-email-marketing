@@ -10,6 +10,7 @@ import { Plus, Zap, Play, Pause, Trash2, ChevronDown, ChevronUp, Pencil, Save, X
 
 interface CouponCampaign { id: number; name: string; discount_type: string; discount_value: number; prefix: string; }
 import Link from "next/link";
+import DateRangeFilter, { useStatsDateRange } from "@/components/DateRangeFilter";
 
 const TRIGGER_LABELS: Record<string, { label: string; description: string; color: string }> = {
   // Shopify
@@ -225,13 +226,26 @@ function EditPanel({
   );
 }
 
-function AutomationRow({ auto, templates, couponCampaigns }: { auto: Automation; templates: Template[]; couponCampaigns: CouponCampaign[] }) {
+function AutomationRow({
+  auto,
+  templates,
+  couponCampaigns,
+  dateFrom,
+  dateTo,
+}: {
+  auto: Automation;
+  templates: Template[];
+  couponCampaigns: CouponCampaign[];
+  dateFrom?: string;
+  dateTo?: string;
+}) {
   const qc = useQueryClient();
   const [showRuns, setShowRuns] = useState(false);
 
   const { data: stats } = useQuery<AutomationStats>({
-    queryKey: ["automation-stats", auto.id],
-    queryFn: () => automationsApi.stats(auto.id).then((r) => r.data),
+    queryKey: ["automation-stats", auto.id, dateFrom, dateTo],
+    queryFn: () =>
+      automationsApi.stats(auto.id, { date_from: dateFrom, date_to: dateTo }).then((r) => r.data),
     staleTime: 60_000,
   });
 
@@ -458,6 +472,7 @@ type FilterTab = "active" | "paused" | "all";
 
 export default function AutomationsPage() {
   const [filter, setFilter] = useState<FilterTab>("active");
+  const dateRange = useStatsDateRange("30d");
 
   const { data: automations = [], isLoading } = useQuery<Automation[]>({
     queryKey: ["automations"],
@@ -493,13 +508,16 @@ export default function AutomationsPage() {
             {activeCount} activa{activeCount !== 1 ? "s" : ""} · {pausedCount} pausada{pausedCount !== 1 ? "s" : ""}
           </p>
         </div>
-        <Link
-          href="/automations/new"
-          className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors"
-        >
-          <Plus size={15} />
-          Nueva automatización
-        </Link>
+        <div className="flex items-center gap-3">
+          <DateRangeFilter {...dateRange} />
+          <Link
+            href="/automations/new"
+            className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors"
+          >
+            <Plus size={15} />
+            Nueva automatización
+          </Link>
+        </div>
       </div>
 
       {/* Filter tabs */}
@@ -557,7 +575,14 @@ export default function AutomationsPage() {
       ) : (
         <div className="space-y-3">
           {visible.map((a) => (
-            <AutomationRow key={a.id} auto={a} templates={templates} couponCampaigns={couponCampaigns} />
+            <AutomationRow
+              key={a.id}
+              auto={a}
+              templates={templates}
+              couponCampaigns={couponCampaigns}
+              dateFrom={dateRange.dateFrom}
+              dateTo={dateRange.dateTo}
+            />
           ))}
         </div>
       )}

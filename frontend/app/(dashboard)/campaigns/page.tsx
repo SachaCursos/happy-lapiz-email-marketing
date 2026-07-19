@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
+import DateRangeFilter, { useStatsDateRange } from "@/components/DateRangeFilter";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
@@ -287,6 +288,8 @@ export default function CampaignsPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"own" | "klaviyo">("own");
   const [search, setSearch] = useState("");
+  const dateRange = useStatsDateRange("30d");
+  const statsParams = { date_from: dateRange.dateFrom, date_to: dateRange.dateTo };
   const [statusFilter, setStatusFilter] = useState("");
   const [statusOpen, setStatusOpen] = useState(false);
   const statusRef = useRef<HTMLDivElement>(null);
@@ -320,8 +323,8 @@ export default function CampaignsPage() {
   const sentCampaigns = campaigns.filter((c) => c.status === "sent" || c.status === "draft");
   const statsQueries = useQueries({
     queries: sentCampaigns.map((c) => ({
-      queryKey: ["campaign-stats", c.id],
-      queryFn: () => campaignsApi.stats(c.id).then((r) => r.data as CampaignStats),
+      queryKey: ["campaign-stats", c.id, dateRange.dateFrom, dateRange.dateTo],
+      queryFn: () => campaignsApi.stats(c.id, statsParams).then((r) => r.data as CampaignStats),
       staleTime: 10 * 60_000,
     })),
   });
@@ -330,8 +333,8 @@ export default function CampaignsPage() {
 
   const convQueries = useQueries({
     queries: sentCampaigns.map((c) => ({
-      queryKey: ["campaign-conversions", c.id],
-      queryFn: () => campaignsApi.conversions(c.id).then((r) => r.data as CampaignConversions),
+      queryKey: ["campaign-conversions", c.id, dateRange.dateFrom, dateRange.dateTo],
+      queryFn: () => campaignsApi.conversions(c.id, 5, statsParams).then((r) => r.data as CampaignConversions),
       staleTime: 15 * 60_000,
     })),
   });
@@ -421,9 +424,12 @@ export default function CampaignsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Campañas</h1>
         </div>
-        <Link href="/campaigns/new" className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors">
-          <Plus size={15} /> Crear campaña
-        </Link>
+        <div className="flex items-center gap-3">
+          <DateRangeFilter {...dateRange} />
+          <Link href="/campaigns/new" className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors">
+            <Plus size={15} /> Crear campaña
+          </Link>
+        </div>
       </div>
 
       {/* Tabs */}

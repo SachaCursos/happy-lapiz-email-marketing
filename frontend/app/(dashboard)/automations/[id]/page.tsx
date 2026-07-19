@@ -14,6 +14,7 @@ import {
   ArrowLeft, Zap, Play, Pause, FlaskConical, Clock, Trophy,
   Send, Mail, MousePointerClick, ShoppingBag, ChevronRight, GitBranch,
 } from "lucide-react";
+import DateRangeFilter, { useStatsDateRange } from "@/components/DateRangeFilter";
 
 const TRIGGER_LABELS: Record<string, { label: string; color: string }> = {
   abandoned_cart:           { label: "Carrito abandonado",     color: "bg-green-100 text-green-700" },
@@ -199,6 +200,7 @@ export default function AutomationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const autoId = Number(id);
   const qc = useQueryClient();
+  const dateRange = useStatsDateRange("30d");
 
   const { data: auto, isLoading: autoLoading } = useQuery<Automation>({
     queryKey: ["automation", autoId],
@@ -206,16 +208,18 @@ export default function AutomationDetailPage() {
     staleTime: 30_000,
   });
 
+  const statsParams = { date_from: dateRange.dateFrom, date_to: dateRange.dateTo };
+
   const { data: stats } = useQuery<AutomationStats>({
-    queryKey: ["automation-stats", autoId],
-    queryFn: () => automationsApi.stats(autoId).then((r) => r.data),
+    queryKey: ["automation-stats", autoId, dateRange.dateFrom, dateRange.dateTo],
+    queryFn: () => automationsApi.stats(autoId, statsParams).then((r) => r.data),
     staleTime: 60_000,
     enabled: !!auto,
   });
 
   const { data: stepStats = [] } = useQuery<AutomationStepStat[]>({
-    queryKey: ["automation-step-stats", autoId],
-    queryFn: () => automationsApi.stepStats(autoId).then((r) => r.data),
+    queryKey: ["automation-step-stats", autoId, dateRange.dateFrom, dateRange.dateTo],
+    queryFn: () => automationsApi.stepStats(autoId, statsParams).then((r) => r.data),
     staleTime: 60_000,
     enabled: !!auto,
   });
@@ -314,6 +318,7 @@ export default function AutomationDetailPage() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <DateRangeFilter {...dateRange} />
           <button
             onClick={() => toggleMutation.mutate()}
             disabled={toggleMutation.isPending}

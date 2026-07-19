@@ -97,8 +97,10 @@ export const campaignsApi = {
   pause: (id: number) => api.post(`/campaigns/${id}/pause`),
   sendTest: (id: number) => api.post(`/campaigns/${id}/send-test`),
   sendProgress: (id: number) => api.get(`/campaigns/${id}/send-progress`),
-  stats: (id: number) => api.get(`/campaigns/${id}/stats`),
-  conversions: (id: number, days = 5) => api.get(`/campaigns/${id}/conversions?days=${days}`),
+  stats: (id: number, params?: { date_from?: string; date_to?: string }) =>
+    api.get(`/campaigns/${id}/stats`, { params }),
+  conversions: (id: number, days = 5, params?: { date_from?: string; date_to?: string }) =>
+    api.get(`/campaigns/${id}/conversions`, { params: { days, ...params } }),
   sends: (id: number) => api.get(`/campaigns/${id}/sends`),
   audiencePreview: (data: { segment_id?: number; segment_ids?: number[]; exclude_segment_ids?: number[] }) =>
     api.post("/campaigns/audience-preview", data),
@@ -189,8 +191,10 @@ export const automationsApi = {
   delete: (id: number) => api.delete(`/automations/${id}`),
   toggle: (id: number) => api.post(`/automations/${id}/toggle`),
   runs: (id: number) => api.get(`/automations/${id}/runs`),
-  stats: (id: number) => api.get(`/automations/${id}/stats`),
-  stepStats: (id: number) => api.get(`/automations/${id}/step-stats`),
+  stats: (id: number, params?: { date_from?: string; date_to?: string }) =>
+    api.get(`/automations/${id}/stats`, { params }),
+  stepStats: (id: number, params?: { date_from?: string; date_to?: string }) =>
+    api.get(`/automations/${id}/step-stats`, { params }),
   pending: (id: number) => api.get(`/automations/${id}/pending`),
 };
 
@@ -210,6 +214,10 @@ export const adminApi = {
   syncProducts: () => api.post("/admin/sync-products"),
   seedTemplates: () => api.post("/admin/seed-templates"),
   backfillOrders: () => api.post("/admin/backfill-shopify-orders"),
+  shopifyStatus: () => api.get("/admin/shopify-status"),
+  registerWebhooks: () => api.post("/admin/register-shopify-webhooks"),
+  syncAbandonedCheckouts: (lookback_hours = 72) =>
+    api.post(`/admin/sync-abandoned-checkouts?lookback_hours=${lookback_hours}`),
   getProducts: (params?: { search?: string; product_type?: string; page?: number; sort_by?: string; sort_dir?: string }) =>
     api.get<{ total: number; page: number; per_page: number; products: SyncedProduct[]; product_types: string[] }>(
       "/admin/products",
