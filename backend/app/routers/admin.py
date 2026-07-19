@@ -864,6 +864,75 @@ def register_shopify_webhooks(current_user: User = Depends(require_admin)):
     return {"ok": all_ok, "endpoint": backend_url, "webhooks": results}
 
 
+@router.get("/shopify-status")
+def shopify_status(current_user: User = Depends(require_admin)):
+    """Diagnóstico: token Shopify, webhooks registrados, carritos recientes."""
+    token = settings.SHOPIFY_ACCESS_TOKEN
+    domain = settings.SHOPIFY_DOMAIN
+    if not token:
+        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN no configurado"}
+
+    headers = {"X-Shopify-Access-Token": token}
+    shop_ok = False
+    shop_name = None
+    token_error = None
+    try:
+        r = httpx.get(f"https://{domain}/admin/api/2024-10/shop.json", headers=headers, timeout=15)
+        if r.status_code == 200:
+            shop_ok = True
+            shop_name = (r.json().get("shop") or {}).get("name")
+        else:
+            token_error = r.text[:200]
+    except Exception as exc:
+        token_error = str(exc)[:200]
+
+    webhooks = []
+    try:
+        r = httpx.get(f"https://{domain}/admin/api/2024-10/webhooks.json", headers=headers, timeout=15)
+        webhooks = [
+            {"topic": w.get("topic"), "address": w.get("address"), "id": w.get("id")}
+            for w in (r.json().get("webhooks") or [])
+        ]
+    except Exception:
+        pass
+
+    from sqlalchemy import text as _text
+    with Session(db_engine) as session:
+        carts_24h = session.execute(_text("""
+            SELECT COUNT(*) FROM carritos_abandonados
+            WHERE created_at >= NOW() - INTERVAL '24 hours'
+        """)).scalar() or 0
+        eligible = session.execute(_text("""
+            SELECT COUNT(*) FROM carritos_abandonados
+            WHERE recovered = FALSE AND abandoned_email_sent = FALSE
+              AND email IS NOT NULL AND email <> ''
+              AND created_at >= NOW() - INTERVAL '72 hours'
+        """)).scalar() or 0
+
+    return {
+        "ok": shop_ok,
+        "shop": shop_name,
+        "domain": domain,
+        "token_ok": shop_ok,
+        "token_error": token_error,
+        "webhooks_count": len(webhooks),
+        "webhooks": webhooks,
+        "carts_last_24h": int(carts_24h),
+        "eligible_carts_72h": int(eligible),
+        "backend_webhook_url": f"{settings.BACKEND_PUBLIC_URL}/api/shopify/webhooks",
+    }
+
+
+@router.post("/sync-abandoned-checkouts")
+def sync_abandoned_checkouts_endpoint(
+    lookback_hours: float = 72,
+    current_user: User = Depends(require_admin),
+):
+    """Fuerza sync de abandoned checkouts desde Shopify → carritos_abandonados."""
+    from app.services.sync_abandoned_checkouts import sync_abandoned_checkouts
+    return sync_abandoned_checkouts(lookback_hours=lookback_hours)
+
+
 @router.post("/register-shopify-script-tag")
 def register_shopify_script_tag(current_user: User = Depends(require_admin)):
     """Registra el script tag de tracking en la tienda Shopify."""
