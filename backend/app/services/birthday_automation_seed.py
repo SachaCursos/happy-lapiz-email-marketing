@@ -49,7 +49,7 @@ def _random_code(prefix: str = "REGALO", length: int = 6) -> str:
 
 
 def _create_shopify_tracking_discount(name: str, seed_code: str) -> str | None:
-    """Create a 0% Shopify discount group for code tracking (no price reduction)."""
+    """Create a $1 CLP Shopify discount group — marker that order should include a gift."""
     if not settings.SHOPIFY_ACCESS_TOKEN:
         return None
     domain = getattr(settings, "SHOPIFY_DOMAIN", None) or "happy-lapiz.myshopify.com"
@@ -68,8 +68,17 @@ def _create_shopify_tracking_discount(name: str, seed_code: str) -> str | None:
             "startsAt": datetime.now(timezone.utc).isoformat(),
             "endsAt": "2099-12-31T23:59:59Z",
             "customerSelection": {"all": True},
-            "customerGets": {"value": {"percentage": 0}, "items": {"all": True}},
+            # $1 fixed — flags the order for a gift without a real promo
+            "customerGets": {
+                "value": {"discountAmount": {"amount": "1.0", "appliesOnEachItem": False}},
+                "items": {"all": True},
+            },
             "appliesOncePerCustomer": False,
+            "combinesWith": {
+                "orderDiscounts": True,
+                "productDiscounts": True,
+                "shippingDiscounts": True,
+            },
         }
     }
     try:
@@ -96,11 +105,34 @@ def _create_shopify_tracking_discount(name: str, seed_code: str) -> str | None:
 
 def ensure_regalo_coupon_campaign(session: Session, admin_id: int | None) -> int:
     row = session.execute(
-        text("SELECT id FROM coupon_campaigns WHERE name = :name"),
+        text("""
+            SELECT id, shopify_discount_id FROM coupon_campaigns WHERE name = :name
+        """),
         {"name": COUPON_CAMPAIGN_NAME},
     ).fetchone()
     if row:
-        return int(row[0])
+        campaign_id = int(row[0])
+        # Repair: campaign existed without a Shopify parent discount
+        if not row[1]:
+            seed_code = _random_code("REGALO", 6)
+            shopify_id = _create_shopify_tracking_discount(COUPON_CAMPAIGN_NAME, seed_code)
+            if shopify_id:
+                session.execute(
+                    text("""
+                        UPDATE coupon_campaigns
+                        SET shopify_discount_id = :sid,
+                            discount_type = 'fixed',
+                            discount_value = 1,
+                            combines_with_order_discounts = TRUE,
+                            combines_with_product_discounts = TRUE,
+                            combines_with_shipping_discounts = TRUE
+                        WHERE id = :id
+                    """),
+                    {"sid": shopify_id, "id": campaign_id},
+                )
+                session.commit()
+                logger.info("Repaired REGALO coupon campaign %s → %s", campaign_id, shopify_id)
+        return campaign_id
 
     seed_code = _random_code("REGALO", 6)
     shopify_id = _create_shopify_tracking_discount(COUPON_CAMPAIGN_NAME, seed_code)
@@ -109,11 +141,13 @@ def ensure_regalo_coupon_campaign(session: Session, admin_id: int | None) -> int
         text("""
             INSERT INTO coupon_campaigns (
                 name, shopify_discount_id, discount_type, discount_value,
-                min_purchase, prefix, expires_at, applies_to, coupon_mode, static_code, created_by
+                min_purchase, prefix, expires_at, applies_to, coupon_mode, static_code, created_by,
+                combines_with_order_discounts, combines_with_product_discounts, combines_with_shipping_discounts
             )
             VALUES (
-                :name, :sid, 'percentage', 0,
-                0, 'REGALO', '2099-12-31T23:59:59Z', 'all', 'dynamic', NULL, :uid
+                :name, :sid, 'fixed', 1,
+                0, 'REGALO', '2099-12-31T23:59:59Z', 'all', 'dynamic', NULL, :uid,
+                TRUE, TRUE, TRUE
             )
             RETURNING id
         """),
