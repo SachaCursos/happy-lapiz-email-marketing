@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import { setToken } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -19,6 +21,9 @@ export default function LoginPage() {
     try {
       const res = await authApi.login(email, password);
       setToken(res.data.access_token);
+      // Discard any cached data from a previous session in this tab (e.g. "me")
+      // so a different account never shows a stale user/shop from the last login.
+      queryClient.clear();
       router.push("/dashboard");
     } catch {
       setError("Credenciales inválidas. Verifica tu email y contraseña.");

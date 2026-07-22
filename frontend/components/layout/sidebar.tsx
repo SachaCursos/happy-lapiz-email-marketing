@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import { User } from "@/lib/types";
 import {
@@ -48,6 +48,7 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { data: user } = useQuery<User>({
     queryKey: ["me"],
     queryFn: () => authApi.me().then((r) => r.data),
@@ -61,6 +62,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   function logout() {
     clearToken();
+    queryClient.clear();
     router.push("/login");
   }
 

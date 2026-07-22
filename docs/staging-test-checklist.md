@@ -86,6 +86,7 @@ Resultado esperado: reinstalación limpia, sin duplicados, sin errores.
 
 ## Hallazgos resueltos (cont.)
 
+- **React Query no invalidaba el caché de `["me"]` al hacer login/logout (encontrado 2026-07-22, al verificar el fix de branding).** Al loguearse con una cuenta distinta en la misma pestaña (sin recarga completa), el sidebar seguía mostrando el nombre de la tienda anterior por `staleTime: 5min` en `app/providers.tsx`. Arreglado llamando `queryClient.clear()` en el login (`app/(auth)/login/page.tsx`) y en el logout (`components/layout/sidebar.tsx`).
 - **Branding "Happy Lápiz" hardcodeado en el chrome de la app (encontrado 2026-07-21, test #2; arreglado el mismo día).** Se agregó `shops.name` (poblado desde `shop.json` de Shopify en el OAuth callback, con fallback al dominio sin `.myshopify.com`), expuesto en `GET /api/auth/me` como `shop_name`. El frontend ahora usa ese valor en: sidebar (`components/layout/sidebar.tsx`), header móvil (`app/(dashboard)/layout.tsx`), página "Marca" (`app/(dashboard)/brand/page.tsx`). La página de login y el `<title>` de la pestaña (`app/layout.tsx`) se genericizaron a "Email Marketing" ya que no hay tienda conocida antes de autenticar. También se genericizaron textos menores en `contacts/[id]/page.tsx`, `variables/page.tsx`, `settings/page.tsx` y `unsubscribe/page.tsx`.
 
 ## Hallazgos conocidos (no resueltos)
