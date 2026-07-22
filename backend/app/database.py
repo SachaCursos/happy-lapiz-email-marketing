@@ -115,6 +115,19 @@ def _run_migrations():
         "ALTER TABLE IF EXISTS carritos_abandonados ADD COLUMN IF NOT EXISTS shop_id INTEGER",
         "CREATE INDEX IF NOT EXISTS ix_carritos_abandonados_shop_id ON carritos_abandonados (shop_id)",
         "ALTER TABLE IF EXISTS shops ADD COLUMN IF NOT EXISTS name VARCHAR",
+        # plantillas_de_la_marca predates multi-tenancy: on environments where it
+        # already existed (e.g. production, with Happy Lápiz's real colors/logos)
+        # it has no shop_id column yet — SQLModel.metadata.create_all above only
+        # creates the table where it's missing (e.g. staging), it doesn't alter an
+        # existing one. ALTER TABLE IF EXISTS covers both cases.
+        "ALTER TABLE IF EXISTS plantillas_de_la_marca ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_plantillas_de_la_marca_shop_id ON plantillas_de_la_marca (shop_id)",
+        # Backfill: any pre-multi-tenant rows (shop_id IS NULL) are Happy Lápiz's
+        # own brand assets — assign them to that shop by domain instead of a
+        # hardcoded id, so this works the same on any environment.
+        """UPDATE plantillas_de_la_marca SET shop_id = (
+               SELECT id FROM shops WHERE shopify_domain = 'happy-lapiz.myshopify.com' LIMIT 1
+           ) WHERE shop_id IS NULL""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

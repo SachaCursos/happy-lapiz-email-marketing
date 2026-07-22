@@ -139,6 +139,14 @@ export const automationsApi = {
   sendTest: (id: number, toEmail: string) => api.post(`/automations/${id}/send-test`, { to_email: toEmail }),
 };
 
+// Brand assets (colors/logos/fonts) — per-shop
+export const brandApi = {
+  list: () => api.get("/admin/brand"),
+  create: (data: { categoria: string; nombre: string; valor: string; descripcion?: string }) => api.post("/admin/brand", data),
+  update: (id: number, data: { nombre?: string; valor?: string; descripcion?: string }) => api.patch(`/admin/brand/${id}`, data),
+  delete: (id: number) => api.delete(`/admin/brand/${id}`),
+};
+
 // Sync
 export const syncApi = {
   run: () => api.post("/sync/run"),

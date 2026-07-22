@@ -9,12 +9,13 @@ from app.database import get_session, engine as db_engine
 
 logger = logging.getLogger(__name__)
 from app.core.config import settings
-from app.core.deps import get_current_user, require_admin, get_current_shop
+from app.core.deps import get_current_user, require_admin, require_editor, get_current_shop
 from app.models.user import User
 from app.models.shop import Shop
 from app.models.template import Template
 from app.models.campaign import Campaign, CampaignSend
 from app.models.segment import Segment
+from app.models.brand_asset import BrandAsset, BrandAssetCreate, BrandAssetUpdate, BrandAssetRead
 from app.services.shopify_client import shopify_headers, shopify_rest_url, shopify_graphql_url, register_webhooks_for_shop
 
 router = APIRouter()
@@ -743,18 +744,69 @@ def list_shopify_images(
 def get_brand_assets(
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
-    """Devuelve los activos de marca: colores, logos y tipografía."""
+    """Devuelve los activos de marca de la tienda actual: colores, logos y tipografía."""
     rows = session.exec(
-        text("SELECT id, categoria, nombre, valor, descripcion FROM plantillas_de_la_marca ORDER BY categoria, id")
+        select(BrandAsset).where(BrandAsset.shop_id == shop.id).order_by(BrandAsset.categoria, BrandAsset.id)
     ).all()
     result: dict = {"colores": [], "logos": [], "tipografia": []}
-    for r in rows:
-        item = {"id": r[0], "nombre": r[2], "valor": r[3], "descripcion": r[4]}
-        if r[1] == "color":
+    for a in rows:
+        item = {"id": a.id, "nombre": a.nombre, "valor": a.valor, "descripcion": a.descripcion}
+        if a.categoria == "color":
             result["colores"].append(item)
-        elif r[1] == "logo":
+        elif a.categoria == "logo":
             result["logos"].append(item)
-        elif r[1] == "tipografia":
+        elif a.categoria == "tipografia":
             result["tipografia"].append(item)
     return result
+
+
+@router.post("/brand", response_model=BrandAssetRead, status_code=201)
+def create_brand_asset(
+    payload: BrandAssetCreate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
+):
+    if payload.categoria not in ("color", "logo", "tipografia"):
+        raise HTTPException(status_code=400, detail="categoria debe ser color, logo o tipografia")
+    asset = BrandAsset(**payload.model_dump(), shop_id=shop.id)
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    return asset
+
+
+@router.patch("/brand/{asset_id}", response_model=BrandAssetRead)
+def update_brand_asset(
+    asset_id: int,
+    payload: BrandAssetUpdate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
+):
+    asset = session.get(BrandAsset, asset_id)
+    if not asset or asset.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Activo de marca no encontrado")
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(asset, k, v)
+    asset.updated_at = datetime.utcnow()
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    return asset
+
+
+@router.delete("/brand/{asset_id}", status_code=204)
+def delete_brand_asset(
+    asset_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
+):
+    asset = session.get(BrandAsset, asset_id)
+    if not asset or asset.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Activo de marca no encontrado")
+    session.delete(asset)
+    session.commit()
