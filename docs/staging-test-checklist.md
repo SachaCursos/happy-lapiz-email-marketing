@@ -45,9 +45,9 @@ Resultado esperado: cero superposición de datos entre tiendas.
 ## 3. CRUD básico por tenant sin fuga de datos
 
 Pasos:
-1. En la tienda A, crear un contacto de prueba, un segmento y una plantilla.
-2. Confirmar que se guardan con el `shop_id` correcto (`SELECT shop_id FROM contacts WHERE email='...'`).
-3. Loguearse en la tienda B y confirmar que esos registros no son visibles ni editables.
+1. En la tienda A, crear un contacto de prueba, un segmento y una **plantilla** (incluye probar "Instalar plantillas" y "Corregir logos" desde Configuración — antes del fix de 2026-07-22 estos dos botones tocaban plantillas de TODAS las tiendas, no solo la propia).
+2. Confirmar que se guardan con el `shop_id` correcto (`SELECT shop_id FROM contacts WHERE email='...'`, `SELECT shop_id FROM templates WHERE name='...'`).
+3. Loguearse en la tienda B y confirmar que esos registros no son visibles ni editables, y que las plantillas de la tienda B no fueron tocadas por los botones de la tienda A.
 
 Resultado esperado: cada tienda solo ve y modifica sus propios datos.
 
@@ -80,6 +80,18 @@ Pasos:
 
 Resultado esperado: reinstalación limpia, sin duplicados, sin errores.
 
+## 7. Envíos de prueba de automatizaciones y campañas
+
+Verifica de punta a punta que el contenido real (no solo el endpoint) se renderiza y llega a la bandeja de entrada, para las automatizaciones más importantes.
+
+Pasos:
+1. Abrir una automatización (ej. carrito abandonado, cumpleaños) → botón "Enviar prueba" (`POST /api/automations/{id}/send-test`) → escribir el email de prueba → confirmar que llega un email por cada paso de la secuencia, con el footer mostrando el nombre correcto de la tienda (no "Happy Lápiz" a menos que sea esa la tienda).
+2. Si el email de prueba tiene un carrito abandonado real en `carritos_abandonados`, confirmar que `{{ checkout_url }}` y `{{ cart_total }}` muestran datos reales (`cart_data_found: true` en la respuesta); si no, deben verse placeholders razonables, no vacíos ni errores de Jinja2.
+3. Abrir una plantilla → "Enviar prueba" (`POST /api/templates/{id}/send-test`) — mismo chequeo.
+4. Abrir una campaña → "Enviar prueba" (`POST /api/campaigns/{id}/send-test`, siempre va al email del usuario logueado) — mismo chequeo.
+
+Resultado esperado: contenido correcto, footer con el nombre de tienda correcto, sin errores 500, sin placeholders rotos (`{{ variable_sin_definir }}` literal en el HTML).
+
 ## Hallazgos resueltos
 
 - **`klaviyo_campaigns`/`asuntos_email` inexistentes rompían `/api/analytics/revenue`, `/klaviyo-campaigns` y `/asuntos` con un 500 (encontrado 2026-07-21, test #4).** Ambas tablas son de un import histórico de Klaviyo que nunca corrió en staging. Arreglado en `analytics.py` con un chequeo `to_regclass` que degrada a resultado vacío en vez de crashear (mismo patrón que `_shopify_orders_schema_ready` en `sync_shopify_orders.py`).
@@ -89,10 +101,16 @@ Resultado esperado: reinstalación limpia, sin duplicados, sin errores.
 - **React Query no invalidaba el caché de `["me"]` al hacer login/logout (encontrado 2026-07-22, al verificar el fix de branding).** Al loguearse con una cuenta distinta en la misma pestaña (sin recarga completa), el sidebar seguía mostrando el nombre de la tienda anterior por `staleTime: 5min` en `app/providers.tsx`. Arreglado llamando `queryClient.clear()` en el login (`app/(auth)/login/page.tsx`) y en el logout (`components/layout/sidebar.tsx`).
 - **Branding "Happy Lápiz" hardcodeado en el chrome de la app (encontrado 2026-07-21, test #2; arreglado el mismo día).** Se agregó `shops.name` (poblado desde `shop.json` de Shopify en el OAuth callback, con fallback al dominio sin `.myshopify.com`), expuesto en `GET /api/auth/me` como `shop_name`. El frontend ahora usa ese valor en: sidebar (`components/layout/sidebar.tsx`), header móvil (`app/(dashboard)/layout.tsx`), página "Marca" (`app/(dashboard)/brand/page.tsx`). La página de login y el `<title>` de la pestaña (`app/layout.tsx`) se genericizaron a "Email Marketing" ya que no hay tienda conocida antes de autenticar. También se genericizaron textos menores en `contacts/[id]/page.tsx`, `variables/page.tsx`, `settings/page.tsx` y `unsubscribe/page.tsx`.
 
+- **Footer hardcodeado "Happy Lápiz" en TODOS los emails reales enviados a clientes (encontrado y arreglado 2026-07-22).** Más grave que el branding de UI: `email_sender.py`'s `_FOOTER` decía "cliente de Happy Lápiz" en cada campaña y cada paso de automatización enviados a clientes reales de cualquier tienda. `_inject_footer` ahora recibe `shop_name` (vía `Shop.display_name()`), enhebrado en `_send_one`/`send_campaign_sync` (campañas), `_send_email_step` (automatizaciones) y ambos send-test. De paso se sacó un fallback hardcodeado `happylapiz.cl` en el send-test de plantillas.
+- **`seed-templates` y `fix-logo` (botones "Instalar plantillas"/"Corregir logos" en Configuración) operaban sobre plantillas/campañas/segmentos de TODAS las tiendas, sin filtrar por `shop_id` (encontrado y arreglado 2026-07-22).** Cualquier admin de cualquier tienda podía sobreescribir o re-marcar (con el logo real de Happy Lápiz) las plantillas de otra tienda. Ambos endpoints ahora requieren `get_current_shop` y acotan todas sus queries/creaciones a `shop.id`.
+- **`TemplateBlockEditor.tsx`: el bloque "header" ponía `alt="Happy Lápiz"` en el `<img>` del logo de CADA email real enviado (no solo en el editor) (encontrado y arreglado 2026-07-22).** Cambiado a `alt="Logo"`. También se genericizaron dos placeholders visibles solo en el editor (nombre de marca sin logo, producto de ejemplo del bloque de recomendaciones).
+- **Presets de ejemplo con texto "Happy Lápiz" en el editor de formularios (encontrado y arreglado 2026-07-22).** `app/(dashboard)/forms/[id]/page.tsx` y `forms/new/page.tsx`: labels como "Diseño Happy Lápiz" / "Tipografía oficial Happy Lápiz" ahora dicen "Diseño de ejemplo" / "Tipografía sugerida". Los valores de color/tipografía en sí no cambiaron, solo el texto.
+- **Página pública de unsubscribe no mostraba el nombre real de la tienda (encontrado y arreglado 2026-07-22).** `GET`/`POST /api/contacts/unsubscribe` ahora devuelven `shop_name` (resuelto vía `contact.shop_id` → `Shop.display_name()`), usado tanto en la página pública como en el email de notificación interna a `NOTIFY_EMAIL`.
+
 ## Hallazgos conocidos (no resueltos)
 
-- **Branding de ejemplo/demo "Happy Lápiz" en contenido de presets (no chrome de la app).** `components/TemplateBlockEditor.tsx` (paleta de colores por defecto, producto de ejemplo "Marcadores Happy Lápiz Set 12 colores") y `app/(dashboard)/forms/[id]/page.tsx` (preset "Diseño Happy Lápiz", tipografía sugerida) tienen contenido de ejemplo específico de Happy Lápiz que otras tiendas verían como opciones/presets. No es incorrecto per se (son plantillas de ejemplo editables), pero sería mejor experiencia que fueran neutrales o configurables por tienda. Baja prioridad — no bloquea el uso normal de la app por otro merchant.
-- **Página pública de unsubscribe no muestra el nombre real de la tienda que envió el email.** `app/unsubscribe/page.tsx` es una página no autenticada; hoy dice "Ya no recibirás emails de nuestra parte" en vez del nombre real de la tienda. Arreglarlo del todo requeriría que `GET /api/contacts/unsubscribe` devuelva también el nombre de la tienda asociada al contacto. Quedó pendiente.
+- **`plantillas_de_la_marca` (usada por `GET /api/admin/brand`, la página "Marca") es una tabla completamente global, sin columna `shop_id`.** Todas las tiendas ven los mismos colores/logos/tipografía — hoy son los de Happy Lápiz. A diferencia de los demás hallazgos de branding, este requiere un cambio de esquema (agregar `shop_id`, decidir qué pasa con tiendas que no configuraron nada — ¿default neutral o vacío?) y una UI para que cada tienda suba sus propios assets. Bloqueante real para vender a otro merchant si le importa que el editor de "Marca" muestre sus propios colores. No abordado en esta sesión — necesita diseño de producto, no solo un fix rápido.
+- **Campaña legada con `shop_id = NULL` (`campaigns.id=1`, "Bienvenida - Happy Lápiz").** Quedó huérfana de antes de la migración multi-tenant — invisible en la UI de cualquier tienda (`WHERE shop_id = shop.id` nunca matchea NULL). No causa fugas ni errores, pero es basura en la base. Se puede borrar o backfillear a `shop_id=23` cuando se confirme que nadie la necesita.
 
 ## Registro de corridas
 
