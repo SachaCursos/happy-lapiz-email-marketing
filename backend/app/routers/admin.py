@@ -183,8 +183,12 @@ SEED_SEGMENTS = [
 def seed_templates(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
-    """Crea o actualiza plantillas y campañas de ejemplo. Solo admins. Idempotente."""
+    """Crea o actualiza plantillas y campañas de ejemplo para la tienda actual.
+    Solo admins. Idempotente. Todo lo creado/tocado queda acotado a shop.id —
+    antes operaba sobre toda la tabla sin filtrar, lo que podía sobreescribir
+    plantillas de OTRAS tiendas (bug de aislamiento multi-tenant)."""
     now = datetime.utcnow()
     created = {"segments": [], "templates": [], "campaigns": []}
     updated = {"templates": []}
@@ -194,13 +198,15 @@ def seed_templates(
     # Segmentos
     seg_map: dict[str, int] = {}
     for s in SEED_SEGMENTS:
-        existing = session.exec(select(Segment).where(Segment.name == s["name"])).first()
+        existing = session.exec(
+            select(Segment).where(Segment.name == s["name"], Segment.shop_id == shop.id)
+        ).first()
         if existing:
             seg_map[s["name"]] = existing.id
         else:
             seg = Segment(name=s["name"], description=s["description"],
                           conditions=s["conditions"], created_by=current_user.id,
-                          created_at=now, updated_at=now)
+                          shop_id=shop.id, created_at=now, updated_at=now)
             session.add(seg)
             session.flush()
             seg_map[s["name"]] = seg.id
@@ -208,7 +214,9 @@ def seed_templates(
 
     # Plantillas y campañas
     for t in SEED_TEMPLATES:
-        existing_tpl = session.exec(select(Template).where(Template.name == t["name"])).first()
+        existing_tpl = session.exec(
+            select(Template).where(Template.name == t["name"], Template.shop_id == shop.id)
+        ).first()
         html = t["html"].replace("__LOGO_PNG__", logo_url).replace("__HL_LOGO__", logo_url).replace("__CROSS_SELL__", CROSS_SELL_TEMPLATE_HTML)
         if existing_tpl:
             existing_tpl.html_content    = html
@@ -221,7 +229,7 @@ def seed_templates(
         else:
             tpl = Template(name=t["name"], subject_default=t["subject"], preview_text=t["preview"],
                            html_content=html, created_by=current_user.id,
-                           created_at=now, updated_at=now)
+                           shop_id=shop.id, created_at=now, updated_at=now)
             session.add(tpl)
             session.flush()
             tpl_id = tpl.id
@@ -229,18 +237,20 @@ def seed_templates(
 
         seg_id = seg_map.get(t["segment"])
         if seg_id:
-            existing_camp = session.exec(select(Campaign).where(Campaign.name == t["name"])).first()
+            existing_camp = session.exec(
+                select(Campaign).where(Campaign.name == t["name"], Campaign.shop_id == shop.id)
+            ).first()
             if not existing_camp:
                 camp = Campaign(name=t["name"], subject=t["subject"], template_id=tpl_id,
                                 segment_id=seg_id, status="draft", created_by=current_user.id,
-                                created_at=now)
+                                shop_id=shop.id, created_at=now)
                 session.add(camp)
                 created["campaigns"].append(t["name"])
 
-    # Asegurar unsub en TODAS las plantillas de la BD
-    all_templates = session.exec(select(Template)).all()
+    # Asegurar unsub en todas las plantillas DE ESTA TIENDA
+    shop_templates = session.exec(select(Template).where(Template.shop_id == shop.id)).all()
     added_unsub: list[str] = []
-    for tpl in all_templates:
+    for tpl in shop_templates:
         if "##unsub##" in tpl.html_content:
             continue  # ya actualizada
         if 'href="#" style="color:#bbb;">Cancelar suscripci' in tpl.html_content:
@@ -259,13 +269,17 @@ def seed_templates(
             session.add(tpl)
             added_unsub.append(tpl.name)
 
-    # Corregir envíos mal clasificados como "bounced" que en realidad fallaron técnicamente
-    # (sin resend_id y sin bounced_at significa que nunca llegaron a Resend)
+    # Corregir envíos mal clasificados como "bounced" que en realidad fallaron técnicamente,
+    # solo para campañas de esta tienda (sin resend_id y sin bounced_at significa que
+    # nunca llegaron a Resend)
     bad_sends = session.exec(
-        select(CampaignSend).where(
+        select(CampaignSend)
+        .join(Campaign, Campaign.id == CampaignSend.campaign_id)
+        .where(
             CampaignSend.status == "bounced",
             CampaignSend.resend_id == None,  # noqa: E711
             CampaignSend.bounced_at == None,  # noqa: E711
+            Campaign.shop_id == shop.id,
         )
     ).all()
     for s in bad_sends:
@@ -273,11 +287,11 @@ def seed_templates(
         session.add(s)
     fixed_sends = len(bad_sends)
 
-    # Resetear a "draft" las campañas que tienen envíos fallidos pendientes de reintento
+    # Resetear a "draft" las campañas (de esta tienda) que tienen envíos fallidos pendientes de reintento
     affected_campaign_ids = {s.campaign_id for s in bad_sends}
     for cid in affected_campaign_ids:
         camp = session.get(Campaign, cid)
-        if camp and camp.status == "sent":
+        if camp and camp.shop_id == shop.id and camp.status == "sent":
             camp.status = "draft"
             session.add(camp)
 
@@ -289,11 +303,16 @@ def seed_templates(
 def fix_logo(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
-    """Replace old placeholder logos with the Happy Lápiz logo in all templates."""
+    """Replace old placeholder logo patterns with the Happy Lápiz logo, scoped
+    to the current shop's own templates only. This fixes stale placeholders
+    left over from Happy Lápiz's original (pre-multi-tenant) template
+    authoring — for any other tenant this is a safe no-op since their
+    templates never contain those placeholder strings."""
     old_pattern = re.compile(r'(__LOGO_PNG__|__HL_LOGO__|https?://hotboatchile\.com/[^\s"\']+)')
     now = datetime.utcnow()
-    all_templates = session.exec(select(Template)).all()
+    all_templates = session.exec(select(Template).where(Template.shop_id == shop.id)).all()
     fixed = []
     for tpl in all_templates:
         new_html = old_pattern.sub(HL_LOGO, tpl.html_content or "")
