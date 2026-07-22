@@ -80,6 +80,10 @@ Pasos:
 
 Resultado esperado: reinstalación limpia, sin duplicados, sin errores.
 
+## Hallazgos resueltos
+
+- **`klaviyo_campaigns`/`asuntos_email` inexistentes rompían `/api/analytics/revenue`, `/klaviyo-campaigns` y `/asuntos` con un 500 (encontrado 2026-07-21, test #4).** Ambas tablas son de un import histórico de Klaviyo que nunca corrió en staging. Arreglado en `analytics.py` con un chequeo `to_regclass` que degrada a resultado vacío en vez de crashear (mismo patrón que `_shopify_orders_schema_ready` en `sync_shopify_orders.py`).
+
 ## Hallazgos conocidos (no resueltos)
 
 - **Branding "Happy Lápiz" hardcodeado en el frontend (encontrado 2026-07-21, test #2).** El nombre "Happy Lápiz" está escrito literal en 12 archivos del frontend (sidebar, `<title>` de la pestaña, página de login, página "Marca", página de unsubscribe, placeholders de formularios, `TemplateBlockEditor.tsx`). No es una fuga de datos — contactos/campañas/segmentos sí están correctamente aislados por `shop_id` — pero cualquier tienda nueva que instale la app ve la marca de Happy Lápiz en vez de la suya. Bloqueante para vender a merchants no relacionados. Archivos: `components/layout/sidebar.tsx`, `components/TemplateBlockEditor.tsx`, `app/unsubscribe/page.tsx`, `app/layout.tsx`, `app/(dashboard)/variables/page.tsx`, `app/(dashboard)/settings/page.tsx`, `app/(dashboard)/layout.tsx`, `app/(dashboard)/forms/new/page.tsx`, `app/(dashboard)/forms/[id]/page.tsx`, `app/(dashboard)/contacts/[id]/page.tsx`, `app/(dashboard)/brand/page.tsx`, `app/(auth)/login/page.tsx`.
@@ -91,3 +95,4 @@ Resultado esperado: reinstalación limpia, sin duplicados, sin errores.
 | 2026-07-21 | Parcial: login manual (bootstrap) tienda Happy Lápiz | OK | Se creó el user admin de Happy Lápiz a mano por SQL (bootstrap shop nunca pasó por OAuth real) |
 | 2026-07-21 | Test 2: aislamiento entre tenants (Happy Lápiz vs test-store777) | Parcial | Datos (contactos/campañas) correctamente aislados en 0/0. Encontrado: branding hardcodeado "Happy Lápiz" visible para test-store777 (ver Hallazgos conocidos) |
 | 2026-07-21 | Test 3: CRUD por tenant sin fuga (contacto creado en test-store777) | OK | Contacto creado quedó con `shop_id=24` correcto; invisible en la lista de Happy Lápiz; acceso directo por URL a `/contacts/1` devuelve "Contacto no encontrado" (sin IDOR). Contacto de prueba eliminado después del test |
+| 2026-07-21 | Test 4: analytics/dashboard sin 500 | OK (tras fix) | `/api/analytics/revenue` daba 500/503 por `klaviyo_campaigns` inexistente. Arreglado y verificado: `revenue`, `klaviyo-campaigns` y `asuntos` devuelven 200 |
