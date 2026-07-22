@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { authApi } from "@/lib/api";
+import { User } from "@/lib/types";
 import {
   LayoutDashboard,
   Users,
@@ -45,6 +48,11 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { data: user } = useQuery<User>({
+    queryKey: ["me"],
+    queryFn: () => authApi.me().then((r) => r.data),
+  });
+  const shopName = user?.shop_name || "Email Marketing";
 
   // Cerrar sidebar al navegar en móvil
   useEffect(() => {
@@ -70,10 +78,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <div className="px-6 py-5 border-b border-gray-800">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">H</span>
+            <span className="text-white font-bold text-sm">{shopName.charAt(0).toUpperCase()}</span>
           </div>
           <div>
-            <p className="text-white font-semibold text-sm">Happy Lápiz</p>
+            <p className="text-white font-semibold text-sm">{shopName}</p>
             <p className="text-gray-500 text-xs">Email Marketing</p>
           </div>
         </div>

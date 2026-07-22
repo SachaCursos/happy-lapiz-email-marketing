@@ -1,9 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, authApi } from "@/lib/api";
 import { Copy, Check } from "lucide-react";
 import { useState } from "react";
+import { User } from "@/lib/types";
 
 interface BrandItem {
   id: number;
@@ -37,6 +38,11 @@ export default function BrandPage() {
     queryKey: ["brand-assets"],
     queryFn: () => api.get("/admin/brand").then((r) => r.data),
   });
+  const { data: user } = useQuery<User>({
+    queryKey: ["me"],
+    queryFn: () => authApi.me().then((r) => r.data),
+  });
+  const shopName = user?.shop_name || "tu tienda";
 
   if (isLoading) {
     return (
@@ -60,7 +66,7 @@ export default function BrandPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Plantilla de marca</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Activos oficiales de Happy Lápiz para usar en campañas de email.
+          Activos oficiales de {shopName} para usar en campañas de email.
         </p>
       </div>
 

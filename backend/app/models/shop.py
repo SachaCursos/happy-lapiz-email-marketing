@@ -10,6 +10,7 @@ class Shop(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     shopify_domain: str = Field(unique=True, index=True)
     shopify_shop_id: Optional[str] = None
+    name: Optional[str] = None
     access_token_encrypted: str
     scopes: Optional[str] = None
     status: str = Field(default="active", sa_column_kwargs={"server_default": "active"})  # active | uninstalled
@@ -38,6 +39,7 @@ class Shop(SQLModel, table=True):
 class ShopRead(SQLModel):
     id: int
     shopify_domain: str
+    name: Optional[str] = None
     status: str
     shop_owner_email: Optional[str] = None
     plan_name: Optional[str] = None

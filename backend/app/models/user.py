@@ -28,6 +28,7 @@ class UserRead(SQLModel):
     name: str
     role: str
     shop_id: Optional[int] = None
+    shop_name: Optional[str] = None
     created_at: datetime
 
 

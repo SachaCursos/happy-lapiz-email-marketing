@@ -31,7 +31,7 @@ function UnsubscribeContent() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 max-w-md w-full text-center">
         <img
           src="/logo.png"
-          alt="Happy Lápiz"
+          alt=""
           className="h-8 mx-auto mb-8 opacity-60"
           onError={(e) => (e.currentTarget.style.display = "none")}
         />
@@ -50,7 +50,7 @@ function UnsubscribeContent() {
             <h1 className="text-lg font-semibold text-gray-900 mb-2">Cancelación exitosa</h1>
             <p className="text-sm text-gray-500">
               <span className="font-medium text-gray-700">{email}</span> ha sido eliminado de nuestra lista.
-              Ya no recibirás emails de Happy Lápiz.
+              Ya no recibirás emails de nuestra parte.
             </p>
           </>
         )}

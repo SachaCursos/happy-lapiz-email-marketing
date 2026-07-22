@@ -217,7 +217,7 @@ export default function SettingsPage() {
           <p className="text-gray-500 text-sm mb-4">La API key de Resend se configura en las variables de entorno de Railway.</p>
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 font-mono text-xs text-gray-600 space-y-1">
             <p>RESEND_API_KEY=re_xxxxxxxxxxxx</p>
-            <p>RESEND_FROM_EMAIL=Happy Lápiz &lt;clientes@happylapiz.cl&gt;</p>
+            <p>RESEND_FROM_EMAIL=Tu Tienda &lt;ventas@tudominio.cl&gt;</p>
             <p>RESEND_WEBHOOK_SECRET=tu_secreto</p>
             <p className="text-brand-600 mt-2">NOTIFY_EMAIL=tu@email.com &nbsp;<span className="text-gray-400 font-sans not-italic">← recibe alertas de desuscripciones</span></p>
           </div>

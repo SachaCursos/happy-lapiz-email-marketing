@@ -3,6 +3,8 @@ export interface User {
   email: string;
   name: string;
   role: "admin" | "editor" | "viewer";
+  shop_id?: number | null;
+  shop_name?: string | null;
   created_at: string;
 }
 

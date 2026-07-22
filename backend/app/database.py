@@ -114,6 +114,7 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_shopify_checkouts_shop_id ON shopify_checkouts (shop_id)",
         "ALTER TABLE IF EXISTS carritos_abandonados ADD COLUMN IF NOT EXISTS shop_id INTEGER",
         "CREATE INDEX IF NOT EXISTS ix_carritos_abandonados_shop_id ON carritos_abandonados (shop_id)",
+        "ALTER TABLE IF EXISTS shops ADD COLUMN IF NOT EXISTS name VARCHAR",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

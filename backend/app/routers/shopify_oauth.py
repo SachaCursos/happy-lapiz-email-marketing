@@ -112,6 +112,7 @@ async def callback(
     shop.status = "active"
     shop.uninstalled_at = None
     shop.shopify_shop_id = str(shop_info.get("id") or "") or shop.shopify_shop_id
+    shop.name = shop_info.get("name") or shop.name
     shop.shop_owner_email = shop_info.get("email") or shop.shop_owner_email
     shop.plan_name = shop_info.get("plan_name") or shop.plan_name
     shop.currency = shop_info.get("currency") or shop.currency
