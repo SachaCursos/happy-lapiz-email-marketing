@@ -14,6 +14,13 @@ from app.models.template import Template
 router = APIRouter()
 
 
+def _table_exists(session: Session, table_name: str) -> bool:
+    """klaviyo_campaigns/asuntos_email are legacy historical-import tables that
+    don't exist in every environment (e.g. a fresh staging DB) — check before
+    querying so a missing table degrades to empty results instead of a 500."""
+    return session.execute(text("SELECT to_regclass(:name)"), {"name": table_name}).scalar() is not None
+
+
 @router.get("/overview")
 def overview(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     total_contacts = session.exec(select(func.count(Contact.id)).where(Contact.shop_id == shop.id)).one()
@@ -67,6 +74,8 @@ def recent_campaigns(session: Session = Depends(get_session), _: User = Depends(
 
 @router.get("/klaviyo-campaigns")
 def klaviyo_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+    if not _table_exists(session, "klaviyo_campaigns"):
+        return []
     rows = session.exec(text("""
         SELECT id, name, status, send_time, subject, recipients, delivered,
                open_rate, opens_unique, click_rate, clicks_unique,
@@ -209,7 +218,7 @@ def revenue_stats(
         WHERE send_time >= :from AND send_time < :to
           AND conversion_value IS NOT NULL
         ORDER BY conversion_value DESC
-    """), {"from": dt_from, "to": dt_to}).fetchall()
+    """), {"from": dt_from, "to": dt_to}).fetchall() if _table_exists(session, "klaviyo_campaigns") else []
 
     klaviyo_list = [
         {
@@ -252,6 +261,8 @@ def revenue_stats(
 
 @router.get("/asuntos")
 def asuntos(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+    if not _table_exists(session, "asuntos_email"):
+        return []
     rows = session.exec(text("""
         SELECT id, subject, preview_text, campaign_name, campaign_id,
                open_rate, click_rate, recipients, opens_unique, send_time, notas
