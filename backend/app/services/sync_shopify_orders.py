@@ -21,8 +21,14 @@ _REQUIRED_COLUMNS = {
     "first_name", "last_name", "raw", "shipping_city", "shipping_province", "shop_id",
 }
 
+# Set once the "schema not ready" warning has been logged, so it prints a single
+# time per process instead of every scheduler tick (every 60s) until the ETL
+# pipeline adds the missing column(s).
+_schema_warning_logged = False
+
 
 def _shopify_orders_schema_ready(conn) -> bool:
+    global _schema_warning_logged
     existing = {
         row[0] for row in conn.execute(text(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'shopify_orders'"
@@ -30,10 +36,12 @@ def _shopify_orders_schema_ready(conn) -> bool:
     }
     missing = _REQUIRED_COLUMNS - existing
     if missing:
-        logger.warning(
-            "sync_contacts_from_shopify_orders: shopify_orders le faltan columnas %s — salteando hasta que el ETL las cree",
-            sorted(missing),
-        )
+        if not _schema_warning_logged:
+            logger.warning(
+                "sync_contacts_from_shopify_orders: shopify_orders le faltan columnas %s — salteando hasta que el ETL las cree (este warning no se repite)",
+                sorted(missing),
+            )
+            _schema_warning_logged = True
         return False
     return True
 
