@@ -10,6 +10,7 @@ function UnsubscribeContent() {
   const token = params.get("token") ?? "";
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [detail, setDetail] = useState("");
+  const [shopName, setShopName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!email || !token) {
@@ -19,7 +20,7 @@ function UnsubscribeContent() {
     }
     api
       .get("/contacts/unsubscribe", { params: { email, token } })
-      .then(() => setStatus("success"))
+      .then((r) => { setShopName(r.data?.shop_name ?? null); setStatus("success"); })
       .catch((e) => {
         setStatus("error");
         setDetail(e.response?.data?.detail ?? "No se pudo procesar tu solicitud. Intenta de nuevo.");
@@ -50,7 +51,7 @@ function UnsubscribeContent() {
             <h1 className="text-lg font-semibold text-gray-900 mb-2">Cancelación exitosa</h1>
             <p className="text-sm text-gray-500">
               <span className="font-medium text-gray-700">{email}</span> ha sido eliminado de nuestra lista.
-              Ya no recibirás emails de nuestra parte.
+              Ya no recibirás emails de {shopName || "nuestra parte"}.
             </p>
           </>
         )}

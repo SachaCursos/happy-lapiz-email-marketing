@@ -76,17 +76,24 @@ def count_contacts(session: Session = Depends(get_session), _: User = Depends(ge
     return {"count": session.exec(select(Contact).where(Contact.shop_id == shop.id)).all().__len__()}
 
 
-def _do_unsubscribe(email: str, session: Session) -> None:
+def _do_unsubscribe(email: str, session: Session) -> Optional[str]:
+    """Returns the contact's shop display name (or None if not found/no shop),
+    so the caller can show the real store name on the public confirmation page."""
     contact = session.exec(select(Contact).where(Contact.email == email.lower())).first()
-    if contact and contact.opted_in:
+    if not contact:
+        return None
+    shop = session.get(Shop, contact.shop_id) if contact.shop_id else None
+    shop_name = shop.display_name() if shop else None
+    if contact.opted_in:
         contact.opted_in = False
         contact.opted_out_at = datetime.utcnow()
         session.add(contact)
         session.commit()
-        _notify_unsubscribe(contact)
+        _notify_unsubscribe(contact, shop_name)
+    return shop_name
 
 
-def _notify_unsubscribe(contact: Contact) -> None:
+def _notify_unsubscribe(contact: Contact, shop_name: Optional[str]) -> None:
     if not settings.NOTIFY_EMAIL:
         return
     try:
@@ -98,7 +105,7 @@ def _notify_unsubscribe(contact: Contact) -> None:
             "subject": f"Desuscripción: {name}",
             "html": (
                 f"<p><strong>{name}</strong> ({contact.email}) "
-                f"se ha dado de baja de la lista de Happy Lápiz.</p>"
+                f"se ha dado de baja de la lista de {shop_name or 'una tienda'}.</p>"
                 f"<p style='color:#999;font-size:13px;'>Puedes ver su perfil en "
                 f"<a href='{settings.FRONTEND_URL}/contacts/{contact.id}'>el panel</a>.</p>"
             ),
@@ -112,8 +119,8 @@ def unsubscribe_get(email: str = Query(...), token: str = Query(...), session: S
     """Enlace de baja desde el cuerpo del email (click del usuario)."""
     if not verify_unsub_token(email, token):
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
-    _do_unsubscribe(email, session)
-    return {"ok": True}
+    shop_name = _do_unsubscribe(email, session)
+    return {"ok": True, "shop_name": shop_name}
 
 
 @router.post("/unsubscribe")
@@ -121,8 +128,8 @@ def unsubscribe_one_click(email: str = Query(...), token: str = Query(...), sess
     """One-click unsubscribe para clientes de email (Gmail List-Unsubscribe-Post)."""
     if not verify_unsub_token(email, token):
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
-    _do_unsubscribe(email, session)
-    return {"ok": True}
+    shop_name = _do_unsubscribe(email, session)
+    return {"ok": True, "shop_name": shop_name}
 
 
 @router.post("", response_model=ContactRead, status_code=201)
