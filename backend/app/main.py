@@ -63,6 +63,8 @@ def on_startup():
             ensure_repeat_bounce_segment(session)
             from app.services.no_open_segment_seed import ensure_no_open_segment
             ensure_no_open_segment(session)
+            from app.services.family_role_segment_seed import ensure_family_role_segments
+            ensure_family_role_segments(session)
             from app.services.form_embed_snippet import log_shopify_form_sync
             log_shopify_form_sync(session)
             from app.services.form_stats import ensure_form_stats_epoch
