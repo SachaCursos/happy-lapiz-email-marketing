@@ -29,6 +29,7 @@ from app.models.automation import Automation, AutomationEnrollment, AutomationRu
 from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
+from app.models.shop import Shop
 from app.models.template import Template
 from app.services.email_sender import _inject_footer, _unsub_headers, send_campaign_sync, _fmt_nombre, apply_email_override
 from app.core.unsub_token import unsub_url
@@ -752,9 +753,12 @@ def _send_email_step(
             except (ValueError, TypeError):
                 pass
 
+        shop = session.get(Shop, auto.shop_id) if auto.shop_id else None
+        shop_name = shop.display_name() if shop else "tu tienda"
+
         _env = Environment(undefined=ChainableUndefined)
         raw_html = tpl.html_content.replace("{% unsubscribe %}", unsub_url(contact.email))
-        html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
+        html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email, shop_name)
 
         preview_text = step.get("preview_text", "")
         if preview_text:

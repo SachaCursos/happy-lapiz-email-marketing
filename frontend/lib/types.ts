@@ -329,6 +329,14 @@ export interface AutomationPending {
   contacts: AutomationPendingContact[];
 }
 
+export interface AutomationSendTestResult {
+  ok: boolean;
+  sent_to: string;
+  sent: { step: number; template_id: number; subject: string; email_id: string | null }[];
+  errors: { step: number; error: string }[];
+  cart_data_found: boolean;
+}
+
 export interface AutomationVariantStat {
   variant: string;
   sent: number;

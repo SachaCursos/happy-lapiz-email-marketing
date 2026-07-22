@@ -194,7 +194,7 @@ def send_test_email(
         tpl = session.get(Template, int(item["template_id"]))
         if not tpl:
             continue
-        html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email)
+        html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email, shop.display_name())
         label = f"[PRUEBA {item['variant']}] " if item.get("variant") else "[PRUEBA] "
         try:
             result = resend.Emails.send({

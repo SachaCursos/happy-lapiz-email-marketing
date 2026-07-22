@@ -51,7 +51,7 @@ def me(current_user: User = Depends(get_current_user), session: Session = Depend
     if current_user.shop_id:
         shop = session.get(Shop, current_user.shop_id)
         if shop:
-            shop_name = shop.name or shop.shopify_domain.removesuffix(".myshopify.com")
+            shop_name = shop.display_name()
     return UserRead(
         id=current_user.id,
         email=current_user.email,

@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select, func
 from sqlalchemy import text
 from app.database import get_session
 from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.models.user import User
 from app.models.shop import Shop
+from app.models.template import Template
 from app.models.automation import (
     Automation, AutomationCreate, AutomationRead, AutomationUpdate,
     AutomationEnrollment, AutomationRun, AutomationRunRead,
@@ -94,6 +96,63 @@ def toggle_automation(
     session.commit()
     session.refresh(a)
     return a
+
+
+class AutomationSendTestBody(BaseModel):
+    to_email: str
+
+
+@router.post("/{auto_id}/send-test")
+def send_automation_test(
+    auto_id: int,
+    body: AutomationSendTestBody,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
+):
+    """Sends one test email per step of this automation to an arbitrary
+    address, using real abandoned-cart data when available (same lookup as
+    the template send-test) or placeholders otherwise. Purely a manual
+    verification tool — does not create AutomationRun/Enrollment rows."""
+    from app.services.email_sender import build_test_vars, render_email_content, send_test_email_now
+
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
+
+    steps = auto.steps or (
+        [{"step": 1, "template_id": auto.template_id, "subject": auto.subject}] if auto.template_id else []
+    )
+    if not steps:
+        raise HTTPException(status_code=400, detail="Esta automatización no tiene pasos configurados")
+
+    email = body.to_email.lower().strip()
+    vars_ = build_test_vars(email, shop.id)
+    shop_name = shop.display_name()
+
+    sent, errors = [], []
+    for step in steps:
+        step_number = step.get("step", 1)
+        tpl = session.get(Template, int(step["template_id"])) if step.get("template_id") else None
+        if not tpl:
+            errors.append({"step": step_number, "error": "Plantilla no encontrada"})
+            continue
+        subject_override = f"[PRUEBA - Paso {step_number}] {step.get('subject') or tpl.subject_default or tpl.name}"
+        subject, html = render_email_content(tpl, email, vars_, shop_name, subject_override=subject_override)
+        try:
+            result = send_test_email_now(email, subject, html)
+            email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+            sent.append({"step": step_number, "template_id": tpl.id, "subject": subject, "email_id": email_id})
+        except Exception as exc:
+            errors.append({"step": step_number, "error": str(exc)})
+
+    return {
+        "ok": not errors,
+        "sent_to": email,
+        "sent": sent,
+        "errors": errors,
+        "cart_data_found": vars_["_cart_data_found"],
+    }
 
 
 @router.get("/{auto_id}/runs", response_model=List[AutomationRunRead])

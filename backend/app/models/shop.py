@@ -35,6 +35,12 @@ class Shop(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    def display_name(self) -> str:
+        """Human-readable shop name for UI/email use — falls back to the
+        Shopify subdomain when the real store name hasn't been fetched yet
+        (e.g. a bootstrap shop that never went through OAuth install)."""
+        return self.name or self.shopify_domain.removesuffix(".myshopify.com")
+
 
 class ShopRead(SQLModel):
     id: int

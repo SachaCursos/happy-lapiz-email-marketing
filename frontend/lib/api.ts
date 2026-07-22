@@ -136,6 +136,7 @@ export const automationsApi = {
   stats: (id: number) => api.get(`/automations/${id}/stats`),
   stepStats: (id: number) => api.get(`/automations/${id}/step-stats`),
   pending: (id: number) => api.get(`/automations/${id}/pending`),
+  sendTest: (id: number, toEmail: string) => api.post(`/automations/${id}/send-test`, { to_email: toEmail }),
 };
 
 // Sync

@@ -39,7 +39,7 @@ RATE_DELAY = 0.25  # 4 emails/segundo — límite de Resend es 5/segundo
 _FOOTER = """<div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
 text-align:center;font-size:12px;color:#9ca3af;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-Recibiste este correo porque eres cliente de <strong style="color:#6b7280">Happy Lápiz</strong>.
+Recibiste este correo porque eres cliente de <strong style="color:#6b7280">{shop_name}</strong>.
 &nbsp;&middot;&nbsp;
 <a href="{url}" style="color:#9ca3af;text-decoration:underline;">Cancelar suscripción</a>
 </div>"""
@@ -84,7 +84,7 @@ def _strip_hotboat_footer(html: str) -> str:
     return result.rstrip()
 
 
-def _inject_footer(html: str, email: str) -> str:
+def _inject_footer(html: str, email: str, shop_name: str = "tu tienda") -> str:
     url = unsub_url(email)
     if "##unsub##" in html:
         return html.replace("##unsub##", url)
@@ -97,7 +97,7 @@ def _inject_footer(html: str, email: str) -> str:
     # Check for the link text OR the /unsubscribe path in the URL.
     if "cancelar suscripci" in lower or "/unsubscribe" in lower:
         return html
-    footer = _FOOTER.format(url=url)
+    footer = _FOOTER.format(url=url, shop_name=shop_name)
     # Inject inside the email container div, not after </body>
     # to avoid unconstrained content that triggers mobile zoom-out
     insert_before = "</div>\n</td></tr>\n</table>"
@@ -193,10 +193,11 @@ def _send_one(
     session: Session,
     subject_override: Optional[str] = None,
     variant_label: Optional[str] = None,
+    shop_name: str = "tu tienda",
 ) -> None:
     resend.api_key = settings.RESEND_API_KEY
     coupon = _resolve_coupon(template.html_content, contact, campaign.id, session)
-    html = _inject_footer(render_html(template.html_content, contact, coupon_code=coupon), contact.email)
+    html = _inject_footer(render_html(template.html_content, contact, coupon_code=coupon), contact.email, shop_name)
     raw_subject = subject_override or campaign.subject
     subject = Jinja2Template(raw_subject).render(
         nombre=_fmt_nombre(contact.name, contact.email),
@@ -239,12 +240,112 @@ def _send_one(
             session.commit()
 
 
+def build_test_vars(email: str, shop_id: Optional[int]) -> dict:
+    """Mock/real variables for a manual test-send of any template — used by the
+    templates.py and automations.py send-test endpoints. Pulls the most recent
+    abandoned-cart row for this email/shop if one exists so abandoned-cart
+    templates render with real checkout data instead of placeholders."""
+    import psycopg2
+    from app.core.config import settings as _settings
+
+    checkout_url = "https://tu-tienda.cl/cart"
+    first_name = email.split("@")[0]
+    cart_total = "$0"
+    first_product = ""
+    row = None
+
+    if shop_id:
+        try:
+            conn = psycopg2.connect(_settings.DATABASE_URL)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT first_name, subtotal_price, line_items, checkout_url
+                FROM carritos_abandonados
+                WHERE email = %s AND shop_id = %s
+                  AND (recovered = FALSE OR recovered IS NULL)
+                  AND checkout_url IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1
+            """, (email, shop_id))
+            row = cur.fetchone()
+            if row:
+                first_name = (row[0] or first_name).strip()
+                subtotal = float(row[1] or 0)
+                cart_total = f"${int(subtotal):,}".replace(",", ".")
+                items = row[2] or []
+                first_product = items[0].get("title", "") if items else ""
+                checkout_url = row[3] or checkout_url
+            cur.close()
+            conn.close()
+        except Exception:
+            pass  # DB unavailable — fall through to placeholders
+
+    return {
+        "nombre": first_name,
+        "first_name": first_name,
+        "email": email,
+        "cart_total": cart_total,
+        "first_product": first_product,
+        "cart_url": checkout_url,
+        "checkout_url": checkout_url,
+        "coupon_code": "CODIGO-PRUEBA",
+        "orders_count": 0,
+        "ultima_visita": "",
+        "ticket_medio": 0,
+        "total_spent": 0,
+        "shipping_city": "",
+        "custom_fields": {},
+        "nombre_regalado": "Ejemplo",
+        "relacion": "hijo/a",
+        "event": {"extra": {
+            "checkout_url": checkout_url,
+            "checkout_url_with_coupon": f"{checkout_url}{'&' if '?' in checkout_url else '?'}discount=CODIGO-PRUEBA",
+        }},
+        "_cart_data_found": bool(row),
+    }
+
+
+def render_email_content(
+    template: Template,
+    email: str,
+    vars_: dict,
+    shop_name: str,
+    subject_override: Optional[str] = None,
+) -> tuple[str, str]:
+    """Render a template's subject + HTML with the given vars for a test send."""
+    from jinja2 import Environment, ChainableUndefined
+
+    raw_html = replace_unsub_tag(template.html_content, email)
+    _env = Environment(undefined=ChainableUndefined)
+    html = _inject_footer(_env.from_string(raw_html).render(**vars_), email, shop_name)
+    subject_tpl = subject_override or template.subject_default or template.name
+    subject = _env.from_string(subject_tpl).render(**vars_)
+    return subject, html
+
+
+def send_test_email_now(to_email: str, subject: str, html: str) -> dict:
+    """Fire-and-return a single ad-hoc email (used only by manual send-test
+    endpoints — real campaign/automation sends go through _send_one /
+    _send_email_step, which also record delivery state)."""
+    resend.api_key = settings.RESEND_API_KEY
+    return resend.Emails.send({
+        "from": settings.RESEND_FROM_EMAIL,
+        "to": [to_email],
+        "subject": subject,
+        "html": html,
+        "headers": _unsub_headers(to_email),
+    })
+
+
 def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segment: int = 0) -> None:
     """Versión síncrona para usar como BackgroundTask de FastAPI (abre su propia sesión)."""
     with Session(engine) as session:
         campaign = session.get(Campaign, campaign_id)
         if not campaign:
             return
+
+        from app.models.shop import Shop
+        shop = session.get(Shop, campaign.shop_id) if campaign.shop_id else None
+        shop_name = shop.display_name() if shop else "tu tienda"
 
         has_variants = bool(campaign.variants and len(campaign.variants) >= 2)
 
@@ -278,9 +379,9 @@ def send_campaign_sync(campaign_id: int, contact_ids: List[int], total_in_segmen
                 tpl = session.get(Template, int(v["template_id"]))
                 if not tpl:
                     continue
-                _send_one(campaign, tpl, contact, session, subject_override=v["subject"], variant_label=label)
+                _send_one(campaign, tpl, contact, session, subject_override=v["subject"], variant_label=label, shop_name=shop_name)
             else:
-                _send_one(campaign, template, contact, session)
+                _send_one(campaign, template, contact, session, shop_name=shop_name)
             if i < len(contacts) - 1:
                 time.sleep(RATE_DELAY)
 
