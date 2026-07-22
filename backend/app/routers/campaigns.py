@@ -16,7 +16,7 @@ from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
 from app.services.segment_evaluator import evaluate_segment
-from app.services.email_sender import send_campaign_sync, _inject_footer, _unsub_headers
+from app.services.email_sender import send_campaign_sync, _inject_footer, _unsub_headers, replace_unsub_tag
 
 
 class SendOptions(BaseModel):
@@ -194,7 +194,8 @@ def send_test_email(
         tpl = session.get(Template, int(item["template_id"]))
         if not tpl:
             continue
-        html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email, shop.display_name())
+        raw_html = replace_unsub_tag(tpl.html_content, current_user.email)
+        html = _inject_footer(JTemplate(raw_html).render(nombre=nombre), current_user.email, shop.display_name())
         label = f"[PRUEBA {item['variant']}] " if item.get("variant") else "[PRUEBA] "
         try:
             result = resend.Emails.send({
