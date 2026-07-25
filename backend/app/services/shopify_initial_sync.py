@@ -145,6 +145,17 @@ def _sync_products(client: httpx.Client, shop: Shop, session: Session) -> int:
 
 
 def run_initial_sync(shop_id: int) -> None:
+    # shopify_products may already exist from before this app owned it (e.g.
+    # Happy Lápiz's original table, integrated with the WhatsApp catalog bot)
+    # with a stale global-unique constraint or missing columns — self-heal
+    # before syncing so a fresh shop's first sync can't silently upsert 0
+    # rows against a schema this code no longer matches.
+    try:
+        from app.routers.admin import _ensure_shopify_products_table
+        _ensure_shopify_products_table()
+    except Exception:
+        logger.exception("run_initial_sync: no se pudo verificar el schema de shopify_products")
+
     with Session(engine) as session:
         shop = session.get(Shop, shop_id)
         if not shop:
