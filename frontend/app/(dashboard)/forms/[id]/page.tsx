@@ -54,7 +54,7 @@ const HAPPY_LAPIZ_DESIGN: FormDesign = {
   font: "Poppins",
 };
 
-// Colores de marca Happy Lápiz (desde plantillas_de_la_marca)
+// Paleta de ejemplo (mismos colores usados en la plantilla de marca por defecto)
 const BRAND_PALETTE = [
   { hex: "#ffd51e", name: "Amarillo principal" },
   { hex: "#ffc827", name: "Amarillo oscuro" },
@@ -66,7 +66,7 @@ const BRAND_PALETTE = [
 ];
 
 const FONTS = [
-  { value: "Poppins", label: "Poppins ★ (tipografía Happy Lápiz)" },
+  { value: "Poppins", label: "Poppins ★ (sugerida)" },
   { value: "system-ui", label: "Sistema (por defecto)" },
   { value: "Inter", label: "Inter" },
   { value: "Georgia", label: "Georgia" },
@@ -267,11 +267,11 @@ function DesignEditor({
 
   return (
     <div className="space-y-5">
-      {/* Preset Happy Lápiz */}
+      {/* Preset de ejemplo */}
       <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-yellow-800">Diseño Happy Lápiz</p>
-          <p className="text-xs text-yellow-700 mt-0.5">Aplica los colores y tipografía oficiales de la marca con un clic.</p>
+          <p className="text-sm font-semibold text-yellow-800">Diseño de ejemplo</p>
+          <p className="text-xs text-yellow-700 mt-0.5">Aplica una combinación de colores y tipografía de ejemplo con un clic — podés cambiarla después.</p>
         </div>
         <button
           type="button"
@@ -284,7 +284,7 @@ function DesignEditor({
 
       {/* Paleta de referencia */}
       <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Paleta Happy Lápiz</p>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Paleta de ejemplo</p>
         <div className="flex gap-2 flex-wrap">
           {BRAND_PALETTE.map((c) => (
             <div key={c.hex} className="flex flex-col items-center gap-1">
@@ -450,7 +450,7 @@ function DesignEditor({
             {FONTS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
           {design.font === "Poppins" && (
-            <p className="text-xs text-yellow-600 font-medium mt-1">★ Tipografía oficial Happy Lápiz</p>
+            <p className="text-xs text-yellow-600 font-medium mt-1">★ Tipografía sugerida</p>
           )}
         </div>
       </div>
@@ -888,7 +888,7 @@ function FieldsEditor({ fields, onChange }: { fields: FormField[]; onChange: (f:
 
       {/* Suggested presets */}
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-        <p className="text-xs font-semibold text-amber-700 mb-2.5">✨ Campos sugeridos para Happy Lápiz</p>
+        <p className="text-xs font-semibold text-amber-700 mb-2.5">✨ Campos sugeridos</p>
         <div className="flex flex-wrap gap-2">
           {PRESET_FIELDS.map((preset) => {
             const added = existingKeys.has(preset.key);

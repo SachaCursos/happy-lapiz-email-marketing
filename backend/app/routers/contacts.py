@@ -9,9 +9,10 @@ from sqlmodel import Session, select
 import resend
 from app.database import get_session
 from app.core.config import settings
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.core.unsub_token import verify_unsub_token
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdate
 from app.models.campaign import Campaign, CampaignSend
 from app.models.automation import AutomationRun
@@ -35,12 +36,13 @@ _SORT_COLUMNS = {
 
 
 @router.get("/stats")
-def contacts_stats(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def contacts_stats(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     from sqlmodel import func
-    total = session.exec(select(func.count(Contact.id))).one()
-    active = session.exec(select(func.count(Contact.id)).where(Contact.accepts_marketing == True)).one()  # noqa
-    unsubscribed = session.exec(select(func.count(Contact.id)).where(Contact.accepts_marketing == False)).one()  # noqa
-    opted_in = session.exec(select(func.count(Contact.id)).where(Contact.opted_in == True)).one()  # noqa
+    base = select(func.count(Contact.id)).where(Contact.shop_id == shop.id)
+    total = session.exec(base).one()
+    active = session.exec(base.where(Contact.accepts_marketing == True)).one()  # noqa
+    unsubscribed = session.exec(base.where(Contact.accepts_marketing == False)).one()  # noqa
+    opted_in = session.exec(base.where(Contact.opted_in == True)).one()  # noqa
     return {"total": total, "active": active, "unsubscribed": unsubscribed, "opted_in": opted_in}
 
 
@@ -54,8 +56,9 @@ def list_contacts(
     sort_dir: Optional[str] = Query("desc"),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
-    query = select(Contact)
+    query = select(Contact).where(Contact.shop_id == shop.id)
     if search:
         query = query.where(
             Contact.email.ilike(f"%{search}%") | Contact.name.ilike(f"%{search}%")
@@ -69,23 +72,30 @@ def list_contacts(
 
 
 @router.get("/count")
-def count_contacts(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def count_contacts(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     from sqlmodel import func
-    count = session.exec(select(func.count(Contact.id))).one()
+    count = session.exec(select(func.count(Contact.id)).where(Contact.shop_id == shop.id)).one()
     return {"count": count}
 
 
-def _do_unsubscribe(email: str, session: Session) -> None:
+def _do_unsubscribe(email: str, session: Session) -> Optional[str]:
+    """Returns the contact's shop display name (or None if not found/no shop),
+    so the caller can show the real store name on the public confirmation page."""
     contact = session.exec(select(Contact).where(Contact.email == email.lower())).first()
-    if contact and contact.opted_in:
+    if not contact:
+        return None
+    shop = session.get(Shop, contact.shop_id) if contact.shop_id else None
+    shop_name = shop.display_name() if shop else None
+    if contact.opted_in:
         contact.opted_in = False
         contact.opted_out_at = datetime.utcnow()
         session.add(contact)
         session.commit()
-        _notify_unsubscribe(contact)
+        _notify_unsubscribe(contact, shop_name)
+    return shop_name
 
 
-def _notify_unsubscribe(contact: Contact) -> None:
+def _notify_unsubscribe(contact: Contact, shop_name: Optional[str]) -> None:
     if not settings.NOTIFY_EMAIL:
         return
     try:
@@ -97,7 +107,7 @@ def _notify_unsubscribe(contact: Contact) -> None:
             "subject": f"Desuscripción: {name}",
             "html": (
                 f"<p><strong>{name}</strong> ({contact.email}) "
-                f"se ha dado de baja de la lista de Happy Lápiz.</p>"
+                f"se ha dado de baja de la lista de {shop_name or 'una tienda'}.</p>"
                 f"<p style='color:#999;font-size:13px;'>Puedes ver su perfil en "
                 f"<a href='{settings.FRONTEND_URL}/contacts/{contact.id}'>el panel</a>.</p>"
             ),
@@ -111,8 +121,8 @@ def unsubscribe_get(email: str = Query(...), token: str = Query(...), session: S
     """Enlace de baja desde el cuerpo del email (click del usuario)."""
     if not verify_unsub_token(email, token):
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
-    _do_unsubscribe(email, session)
-    return {"ok": True}
+    shop_name = _do_unsubscribe(email, session)
+    return {"ok": True, "shop_name": shop_name}
 
 
 @router.post("/unsubscribe")
@@ -120,8 +130,8 @@ def unsubscribe_one_click(email: str = Query(...), token: str = Query(...), sess
     """One-click unsubscribe para clientes de email (Gmail List-Unsubscribe-Post)."""
     if not verify_unsub_token(email, token):
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
-    _do_unsubscribe(email, session)
-    return {"ok": True}
+    shop_name = _do_unsubscribe(email, session)
+    return {"ok": True, "shop_name": shop_name}
 
 
 @router.post("", response_model=ContactRead, status_code=201)
@@ -129,6 +139,7 @@ def create_contact(
     payload: ContactCreate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     from app.services.email_typo_fix import is_valid_email, normalize_email
 
@@ -136,10 +147,10 @@ def create_contact(
     data["email"] = normalize_email(data["email"])
     if not is_valid_email(data["email"]):
         raise HTTPException(status_code=422, detail="Email inválido")
-    existing = session.exec(select(Contact).where(Contact.email == data["email"])).first()
+    existing = session.exec(select(Contact).where(Contact.email == data["email"], Contact.shop_id == shop.id)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email ya existe")
-    contact = Contact(**data, opted_in_at=datetime.utcnow() if payload.opted_in else None)
+    contact = Contact(**data, shop_id=shop.id, opted_in_at=datetime.utcnow() if payload.opted_in else None)
     session.add(contact)
     session.commit()
     session.refresh(contact)
@@ -147,9 +158,9 @@ def create_contact(
 
 
 @router.get("/{contact_id}", response_model=ContactRead)
-def get_contact(contact_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_contact(contact_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     return contact
 
@@ -160,9 +171,10 @@ def update_contact(
     payload: ContactUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     data = payload.model_dump(exclude_unset=True)
     if "opted_in" in data:
@@ -185,9 +197,10 @@ def delete_contact(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     # Delete FK-referencing rows first to avoid constraint violations
     for row in session.exec(select(CampaignSend).where(CampaignSend.contact_id == contact_id)).all():
@@ -203,13 +216,14 @@ def contact_segments(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Devuelve los segmentos a los que pertenece el contacto."""
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
 
-    all_segs = session.exec(select(Segment)).all()
+    all_segs = session.exec(select(Segment).where(Segment.shop_id == shop.id)).all()
     matching = []
     for seg in all_segs:
         q = select(Contact).where(Contact.id == contact_id, Contact.opted_in == True)  # noqa: E712
@@ -229,10 +243,11 @@ def contact_email_activity(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Feed de eventos de email para el contacto (enviados, abiertos, clics)."""
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
 
     sends = session.exec(
@@ -273,10 +288,11 @@ def contact_email_sends(
     contact_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Resumen por campaña: qué le enviamos, si abrió, si hizo clic."""
     contact = session.get(Contact, contact_id)
-    if not contact:
+    if not contact or contact.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
 
     sends = session.exec(
@@ -310,6 +326,7 @@ def import_csv(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Importa contactos desde CSV. Columnas requeridas: email. Opcionales: name, phone, origin_utm."""
     content = file.file.read().decode("utf-8")
@@ -324,11 +341,12 @@ def import_csv(
         from app.services.email_typo_fix import normalize_email
 
         email = normalize_email(email)
-        existing = session.exec(select(Contact).where(Contact.email == email)).first()
+        existing = session.exec(select(Contact).where(Contact.email == email, Contact.shop_id == shop.id)).first()
         if existing:
             skipped += 1
             continue
         contact = Contact(
+            shop_id=shop.id,
             email=email,
             name=row.get("name", "").strip() or None,
             phone=row.get("phone", "").strip() or None,

@@ -1,11 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session, select, func
 from sqlalchemy import text
 from app.database import get_session
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.models.user import User
+from app.models.shop import Shop
+from app.models.template import Template
 from app.models.automation import (
     Automation, AutomationCreate, AutomationRead, AutomationUpdate,
     AutomationEnrollment, AutomationRun, AutomationRunRead,
@@ -16,8 +19,10 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[AutomationRead])
-def list_automations(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    return session.exec(select(Automation).order_by(Automation.created_at.desc())).all()
+def list_automations(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
+    return session.exec(
+        select(Automation).where(Automation.shop_id == shop.id).order_by(Automation.created_at.desc())
+    ).all()
 
 
 @router.post("", response_model=AutomationRead, status_code=201)
@@ -25,8 +30,9 @@ def create_automation(
     payload: AutomationCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
-    auto = Automation(**payload.model_dump(), created_by=current_user.id)
+    auto = Automation(**payload.model_dump(), created_by=current_user.id, shop_id=shop.id)
     session.add(auto)
     session.commit()
     session.refresh(auto)
@@ -34,9 +40,9 @@ def create_automation(
 
 
 @router.get("/{auto_id}", response_model=AutomationRead)
-def get_automation(auto_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_automation(auto_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     return a
 
@@ -47,9 +53,10 @@ def update_automation(
     payload: AutomationUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(a, k, v)
@@ -65,9 +72,10 @@ def delete_automation(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     session.delete(a)
     session.commit()
@@ -78,9 +86,10 @@ def toggle_automation(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     a = session.get(Automation, auto_id)
-    if not a:
+    if not a or a.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
     a.status = "paused" if a.status == "active" else "active"
     a.updated_at = datetime.utcnow()
@@ -90,12 +99,73 @@ def toggle_automation(
     return a
 
 
+class AutomationSendTestBody(BaseModel):
+    to_email: str
+
+
+@router.post("/{auto_id}/send-test")
+def send_automation_test(
+    auto_id: int,
+    body: AutomationSendTestBody,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
+):
+    """Sends one test email per step of this automation to an arbitrary
+    address, using real abandoned-cart data when available (same lookup as
+    the template send-test) or placeholders otherwise. Purely a manual
+    verification tool — does not create AutomationRun/Enrollment rows."""
+    from app.services.email_sender import build_test_vars, render_email_content, send_test_email_now
+
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
+
+    steps = auto.steps or (
+        [{"step": 1, "template_id": auto.template_id, "subject": auto.subject}] if auto.template_id else []
+    )
+    if not steps:
+        raise HTTPException(status_code=400, detail="Esta automatización no tiene pasos configurados")
+
+    email = body.to_email.lower().strip()
+    vars_ = build_test_vars(email, shop.id)
+    shop_name = shop.display_name()
+
+    sent, errors = [], []
+    for step in steps:
+        step_number = step.get("step", 1)
+        tpl = session.get(Template, int(step["template_id"])) if step.get("template_id") else None
+        if not tpl:
+            errors.append({"step": step_number, "error": "Plantilla no encontrada"})
+            continue
+        subject_override = f"[PRUEBA - Paso {step_number}] {step.get('subject') or tpl.subject_default or tpl.name}"
+        subject, html = render_email_content(tpl, email, vars_, shop_name, subject_override=subject_override)
+        try:
+            result = send_test_email_now(email, subject, html)
+            email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+            sent.append({"step": step_number, "template_id": tpl.id, "subject": subject, "email_id": email_id})
+        except Exception as exc:
+            errors.append({"step": step_number, "error": str(exc)})
+
+    return {
+        "ok": not errors,
+        "sent_to": email,
+        "sent": sent,
+        "errors": errors,
+        "cart_data_found": vars_["_cart_data_found"],
+    }
+
+
 @router.get("/{auto_id}/runs", response_model=List[AutomationRunRead])
 def list_runs(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
     return session.exec(
         select(AutomationRun)
         .where(AutomationRun.automation_id == auto_id)
@@ -121,7 +191,12 @@ def automation_stats(
     date_to: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
+
     start, end = _day_bounds(date_from, date_to)
     params: dict = {"aid": auto_id}
     date_sql = ""
@@ -153,7 +228,7 @@ def automation_stats(
     from app.services.campaign_attribution import get_automation_attribution
 
     conv = get_automation_attribution(
-        session, auto_id, window_days=5, date_from=start, date_to=end,
+        session, auto_id, shop.id, window_days=5, date_from=start, date_to=end,
     )
     orders, revenue = conv["orders"], conv["revenue"]
 
@@ -206,8 +281,13 @@ def automation_step_stats(
     date_to: str | None = Query(default=None),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Per-step metrics breakdown, with A/B variant stats per step."""
+    auto = session.get(Automation, auto_id)
+    if not auto or auto.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Automatización no encontrada")
+
     start, end = _day_bounds(date_from, date_to)
     params: dict = {"aid": auto_id}
     date_sql = ""
@@ -288,12 +368,13 @@ def automation_pending(
     auto_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Return active enrollments grouped by step, plus will_enter count for form flows."""
     from app.services.automation_pending import build_pending_response
 
     auto = session.get(Automation, auto_id)
-    if not auto:
+    if not auto or auto.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Automatización no encontrada")
 
     return build_pending_response(auto, session)

@@ -725,7 +725,7 @@ function blockHtml(block: Block): string {
     case "header":
       return `<div style="background:${p.bg_color};padding:${p.padding_y || "20"}px ${p.padding_x || "32"}px;text-align:center;border-bottom:1px solid #f3f4f6;">
   <a href="${p.link}" style="display:inline-block;text-decoration:none;">
-    <img src="${p.logo_url}" alt="Happy Lápiz" width="${p.logo_width}" style="height:auto;display:block;margin:0 auto;" />
+    <img src="${p.logo_url}" alt="Logo" width="${p.logo_width}" style="height:auto;display:block;margin:0 auto;" />
   </a>
 </div>`;
 
@@ -1056,7 +1056,7 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
                 style={{ height: 40, maxWidth: "100%", objectFit: "contain", display: "block", margin: "0 auto" }}
                 onError={() => setImgError(true)}
               />
-            : <span style={{ fontWeight: 700, fontSize: 16, fontFamily: "system-ui", color: "#111" }}>Happy Lápiz</span>}
+            : <span style={{ fontWeight: 700, fontSize: 16, fontFamily: "system-ui", color: "#111" }}>Tu marca</span>}
         </div>
       );
     case "text":
@@ -1157,10 +1157,10 @@ export function BlockPreview({ block, compact = false }: { block: Block; compact
       };
       const label = varLabel[p.variable as string] || String(p.variable);
       const placeholders = [
-        { name: "Marcadores Happy Lápiz Set 12 colores", price: "$12.990" },
-        { name: "Kit Lettering Completo Principiantes", price: "$24.990" },
-        { name: "Cuaderno Bocetos A5", price: "$8.490" },
-        { name: "Acuarelas 24 colores Premium", price: "$18.990" },
+        { name: "Producto de ejemplo 1", price: "$12.990" },
+        { name: "Producto de ejemplo 2", price: "$24.990" },
+        { name: "Producto de ejemplo 3", price: "$8.490" },
+        { name: "Producto de ejemplo 4", price: "$18.990" },
       ];
       return (
         <div style={{ background: (p.bg_color as string) || "#fff", padding: `${p.padding_y || 16}px ${p.padding_x || 0}px` }}>

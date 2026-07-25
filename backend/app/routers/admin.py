@@ -9,8 +9,9 @@ from app.database import get_session, engine as db_engine
 
 logger = logging.getLogger(__name__)
 from app.core.config import settings
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_admin, require_editor, get_current_shop
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.template import Template
 from app.models.campaign import Campaign, CampaignSend
 from app.models.segment import Segment
@@ -20,6 +21,8 @@ from app.services.favorite_blocks_seed import (
     VACACIONES_NAME,
     BIENVENIDA_NAME,
 )
+from app.models.brand_asset import BrandAsset, BrandAssetCreate, BrandAssetUpdate, BrandAssetRead
+from app.services.shopify_client import shopify_headers, shopify_rest_url, shopify_graphql_url, register_webhooks_for_shop
 
 router = APIRouter()
 
@@ -159,8 +162,12 @@ SEED_SEGMENTS = [
 def seed_templates(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
-    """Crea o actualiza plantillas y campañas de ejemplo. Solo admins. Idempotente."""
+    """Crea o actualiza plantillas y campañas de ejemplo para la tienda actual.
+    Solo admins. Idempotente. Todo lo creado/tocado queda acotado a shop.id —
+    antes operaba sobre toda la tabla sin filtrar, lo que podía sobreescribir
+    plantillas de OTRAS tiendas (bug de aislamiento multi-tenant)."""
     now = datetime.utcnow()
     created = {"segments": [], "templates": [], "campaigns": []}
     updated = {"templates": []}
@@ -170,13 +177,15 @@ def seed_templates(
     # Segmentos
     seg_map: dict[str, int] = {}
     for s in SEED_SEGMENTS:
-        existing = session.exec(select(Segment).where(Segment.name == s["name"])).first()
+        existing = session.exec(
+            select(Segment).where(Segment.name == s["name"], Segment.shop_id == shop.id)
+        ).first()
         if existing:
             seg_map[s["name"]] = existing.id
         else:
             seg = Segment(name=s["name"], description=s["description"],
                           conditions=s["conditions"], created_by=current_user.id,
-                          created_at=now, updated_at=now)
+                          shop_id=shop.id, created_at=now, updated_at=now)
             session.add(seg)
             session.flush()
             seg_map[s["name"]] = seg.id
@@ -184,7 +193,9 @@ def seed_templates(
 
     # Plantillas y campañas
     for t in SEED_TEMPLATES:
-        existing_tpl = session.exec(select(Template).where(Template.name == t["name"])).first()
+        existing_tpl = session.exec(
+            select(Template).where(Template.name == t["name"], Template.shop_id == shop.id)
+        ).first()
         composition = t.get("composition")
         if composition:
             json_blocks, html = resolve_composition(composition)
@@ -203,7 +214,7 @@ def seed_templates(
         else:
             tpl = Template(name=t["name"], subject_default=t["subject"], preview_text=t["preview"],
                            html_content=html, json_blocks=json_blocks, created_by=current_user.id,
-                           created_at=now, updated_at=now)
+                           shop_id=shop.id, created_at=now, updated_at=now)
             session.add(tpl)
             session.flush()
             tpl_id = tpl.id
@@ -211,18 +222,20 @@ def seed_templates(
 
         seg_id = seg_map.get(t["segment"])
         if seg_id:
-            existing_camp = session.exec(select(Campaign).where(Campaign.name == t["name"])).first()
+            existing_camp = session.exec(
+                select(Campaign).where(Campaign.name == t["name"], Campaign.shop_id == shop.id)
+            ).first()
             if not existing_camp:
                 camp = Campaign(name=t["name"], subject=t["subject"], template_id=tpl_id,
                                 segment_id=seg_id, status="draft", created_by=current_user.id,
-                                created_at=now)
+                                shop_id=shop.id, created_at=now)
                 session.add(camp)
                 created["campaigns"].append(t["name"])
 
-    # Asegurar unsub en TODAS las plantillas de la BD
-    all_templates = session.exec(select(Template)).all()
+    # Asegurar unsub en todas las plantillas DE ESTA TIENDA
+    shop_templates = session.exec(select(Template).where(Template.shop_id == shop.id)).all()
     added_unsub: list[str] = []
-    for tpl in all_templates:
+    for tpl in shop_templates:
         if "##unsub##" in tpl.html_content:
             continue  # ya actualizada
         if 'href="#" style="color:#bbb;">Cancelar suscripci' in tpl.html_content:
@@ -241,13 +254,17 @@ def seed_templates(
             session.add(tpl)
             added_unsub.append(tpl.name)
 
-    # Corregir envíos mal clasificados como "bounced" que en realidad fallaron técnicamente
-    # (sin resend_id y sin bounced_at significa que nunca llegaron a Resend)
+    # Corregir envíos mal clasificados como "bounced" que en realidad fallaron técnicamente,
+    # solo para campañas de esta tienda (sin resend_id y sin bounced_at significa que
+    # nunca llegaron a Resend)
     bad_sends = session.exec(
-        select(CampaignSend).where(
+        select(CampaignSend)
+        .join(Campaign, Campaign.id == CampaignSend.campaign_id)
+        .where(
             CampaignSend.status == "bounced",
             CampaignSend.resend_id == None,  # noqa: E711
             CampaignSend.bounced_at == None,  # noqa: E711
+            Campaign.shop_id == shop.id,
         )
     ).all()
     for s in bad_sends:
@@ -255,11 +272,11 @@ def seed_templates(
         session.add(s)
     fixed_sends = len(bad_sends)
 
-    # Resetear a "draft" las campañas que tienen envíos fallidos pendientes de reintento
+    # Resetear a "draft" las campañas (de esta tienda) que tienen envíos fallidos pendientes de reintento
     affected_campaign_ids = {s.campaign_id for s in bad_sends}
     for cid in affected_campaign_ids:
         camp = session.get(Campaign, cid)
-        if camp and camp.status == "sent":
+        if camp and camp.shop_id == shop.id and camp.status == "sent":
             camp.status = "draft"
             session.add(camp)
 
@@ -267,15 +284,47 @@ def seed_templates(
     return {"ok": True, "created": created, "updated": updated, "unsub_added": added_unsub, "fixed_failed_sends": fixed_sends}
 
 
+@router.post("/yearly-plan/preview")
+def yearly_plan_preview(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
+):
+    """Shows what the yearly content plan generator would create for this
+    shop, without writing anything — lets the admin review the inferred
+    store profile before committing to it."""
+    from app.services.yearly_plan_generator import generate_yearly_plan
+    return generate_yearly_plan(session, shop, current_user.id, preview=True)
+
+
+@router.post("/yearly-plan/generate")
+def yearly_plan_generate(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
+):
+    """Creates ~11 draft templates + campaigns spread across the year, based
+    on this shop's own synced products/brand assets (rules-based, no LLM).
+    Always succeeds even with an empty catalog — falls back to neutral
+    placeholders. Idempotent: reruns skip entries that already exist."""
+    from app.services.yearly_plan_generator import generate_yearly_plan
+    return generate_yearly_plan(session, shop, current_user.id, preview=False)
+
+
 @router.post("/fix-logo")
 def fix_logo(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
-    """Replace old placeholder logos with the Happy Lápiz logo in all templates."""
+    """Replace old placeholder logo patterns with the Happy Lápiz logo, scoped
+    to the current shop's own templates only. This fixes stale placeholders
+    left over from Happy Lápiz's original (pre-multi-tenant) template
+    authoring — for any other tenant this is a safe no-op since their
+    templates never contain those placeholder strings."""
     old_pattern = re.compile(r'(__LOGO_PNG__|__HL_LOGO__|https?://hotboatchile\.com/[^\s"\']+)')
     now = datetime.utcnow()
-    all_templates = session.exec(select(Template)).all()
+    all_templates = session.exec(select(Template).where(Template.shop_id == shop.id)).all()
     fixed = []
     for tpl in all_templates:
         new_html = old_pattern.sub(HL_LOGO, tpl.html_content or "")
@@ -302,17 +351,23 @@ def repair_email_typos(
 _SHOPIFY_PRODUCTS_CREATE = """
     CREATE TABLE shopify_products (
         id SERIAL PRIMARY KEY,
-        shopify_id BIGINT UNIQUE NOT NULL,
+        shop_id INTEGER,
+        shopify_id BIGINT NOT NULL,
         title VARCHAR NOT NULL,
         handle VARCHAR,
         product_type VARCHAR,
         tags TEXT,
         vendor VARCHAR,
         image_url TEXT,
+        imagen_url TEXT,
         price NUMERIC(10,2),
+        precio_min NUMERIC(10,2),
+        raw JSONB,
         status VARCHAR NOT NULL DEFAULT 'active',
         synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        edad_recomendada VARCHAR
+        edad_recomendada VARCHAR,
+        inventory_total INTEGER NOT NULL DEFAULT 0,
+        CONSTRAINT shopify_products_shop_shopify_id_key UNIQUE (shop_id, shopify_id)
     )
 """
 
@@ -342,6 +397,7 @@ def _ensure_shopify_products_table() -> None:
             ))
         }
         needed = {
+            "shop_id":          "INTEGER",
             "shopify_id":       "BIGINT",
             "title":            "VARCHAR",
             "handle":           "VARCHAR",
@@ -349,7 +405,10 @@ def _ensure_shopify_products_table() -> None:
             "tags":             "TEXT",
             "vendor":           "VARCHAR",
             "image_url":        "TEXT",
+            "imagen_url":       "TEXT",
             "price":            "NUMERIC(10,2)",
+            "precio_min":       "NUMERIC(10,2)",
+            "raw":              "JSONB",
             "status":           "VARCHAR NOT NULL DEFAULT 'active'",
             "synced_at":        "TIMESTAMP NOT NULL DEFAULT NOW()",
             "edad_recomendada": "VARCHAR",
@@ -360,15 +419,27 @@ def _ensure_shopify_products_table() -> None:
                 logger.warning("shopify_products: adding missing column %s", col)
                 conn.execute(text(f"ALTER TABLE shopify_products ADD COLUMN {col} {col_type}"))
 
-        # Ensure unique index on shopify_id exists
-        idx_exists = conn.execute(text(
+        # shopify_id is only unique WITHIN a shop — Shopify product ids are
+        # per-store, so two different shops can easily have the same numeric
+        # id. A global UNIQUE(shopify_id) would let one shop's sync silently
+        # overwrite (and reassign to itself) another shop's product row.
+        old_global_unique = conn.execute(text(
             "SELECT COUNT(*) FROM pg_indexes "
             "WHERE tablename = 'shopify_products' AND indexname = 'shopify_products_shopify_id_key'"
         )).scalar()
+        if old_global_unique:
+            conn.execute(text(
+                "ALTER TABLE shopify_products DROP CONSTRAINT shopify_products_shopify_id_key"
+            ))
+
+        idx_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM pg_indexes "
+            "WHERE tablename = 'shopify_products' AND indexname = 'shopify_products_shop_shopify_id_key'"
+        )).scalar()
         if not idx_exists:
             conn.execute(text(
-                "ALTER TABLE shopify_products ADD CONSTRAINT shopify_products_shopify_id_key "
-                "UNIQUE (shopify_id)"
+                "ALTER TABLE shopify_products ADD CONSTRAINT shopify_products_shop_shopify_id_key "
+                "UNIQUE (shop_id, shopify_id)"
             ))
 
         try:
@@ -584,13 +655,13 @@ def _fetch_shopify_products_for_sync(token: str, domain: str) -> tuple[list[dict
 def sync_shopify_products(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Sync all Shopify products to local shopify_products table (tags, type, image, price, inventory)."""
-    from app.core.config import settings as _s
-    token = _s.SHOPIFY_ACCESS_TOKEN
-    domain = _s.SHOPIFY_DOMAIN
+    from app.services.shopify_client import get_shopify_credentials
+    token, domain = get_shopify_credentials(shop)
     if not token:
-        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN not configured"}
+        return {"ok": False, "error": "Esta tienda no tiene un token de Shopify configurado"}
 
     all_products, fetch_error = _fetch_shopify_products_for_sync(token, domain)
     if fetch_error:
@@ -607,10 +678,10 @@ def sync_shopify_products(
     errors: list[str] = []
     sql = text("""
         INSERT INTO shopify_products
-            (shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at, inventory_total)
+            (shop_id, shopify_id, title, handle, product_type, tags, vendor, image_url, price, status, synced_at, inventory_total)
         VALUES
-            (:sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now, :inventory)
-        ON CONFLICT (shopify_id) DO UPDATE SET
+            (:shop_id, :sid, :title, :handle, :ptype, :tags, :vendor, :img, :price, :status, :now, :inventory)
+        ON CONFLICT (shop_id, shopify_id) DO UPDATE SET
             title        = EXCLUDED.title,
             handle       = EXCLUDED.handle,
             product_type = EXCLUDED.product_type,
@@ -625,6 +696,7 @@ def sync_shopify_products(
     for p in all_products:
         try:
             session.execute(sql, {
+                "shop_id": shop.id,
                 "sid":    int(p["id"]),
                 "title":  p.get("title", ""),
                 "handle": p.get("handle", ""),
@@ -779,6 +851,7 @@ def list_synced_products(
     sort_dir: str = "asc",
     session: Session = Depends(get_session),
     current_user: User = Depends(require_admin),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Devuelve los productos sincronizados desde Shopify."""
     try:
@@ -790,8 +863,8 @@ def list_synced_products(
     col = _SORT_COLUMNS.get(sort_by, "title")
     direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
 
-    where_clauses = ["1=1"]
-    params: dict = {}
+    where_clauses = ["shop_id = :shop_id"]
+    params: dict = {"shop_id": shop.id}
     if search:
         where_clauses.append("(title ILIKE :search OR tags ILIKE :search)")
         params["search"] = f"%{search}%"
@@ -816,7 +889,8 @@ def list_synced_products(
     ).fetchall()
 
     types_rows = session.execute(
-        text("SELECT DISTINCT product_type FROM shopify_products WHERE product_type IS NOT NULL AND product_type <> '' ORDER BY product_type")
+        text("SELECT DISTINCT product_type FROM shopify_products WHERE shop_id = :shop_id AND product_type IS NOT NULL AND product_type <> '' ORDER BY product_type"),
+        {"shop_id": shop.id},
     ).fetchall()
 
     products = [
@@ -840,52 +914,14 @@ def list_synced_products(
 
 
 @router.post("/register-shopify-webhooks")
-def register_shopify_webhooks(current_user: User = Depends(require_admin)):
-    """Registra los webhooks de Shopify en la tienda usando el token del backend."""
-    token = settings.SHOPIFY_ACCESS_TOKEN
-    if not token:
-        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN no configurado en Railway"}
-
-    domain = settings.SHOPIFY_DOMAIN
-    backend_url = f"{settings.BACKEND_PUBLIC_URL}/api/shopify/webhooks"
-    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
-
-    topics = [
-        # Shopify order lifecycle
-        "checkouts/create",
-        "checkouts/update",
-        "carts/create",
-        "carts/update",
-        "orders/create",
-        "orders/fulfilled",
-        "orders/partially_fulfilled",
-        "orders/cancelled",
-        "orders/updated",
-        "refunds/create",
-    ]
-
-    results = []
-    for topic in topics:
-        try:
-            r = httpx.post(
-                f"https://{domain}/admin/api/2024-10/webhooks.json",
-                headers=headers,
-                json={"webhook": {"topic": topic, "address": backend_url, "format": "json"}},
-                timeout=10,
-            )
-            if r.status_code in (200, 201):
-                wh = r.json().get("webhook", {})
-                results.append({"topic": topic, "ok": True, "id": wh.get("id")})
-            elif r.status_code == 422:
-                # Already registered
-                results.append({"topic": topic, "ok": True, "note": "ya existía"})
-            else:
-                results.append({"topic": topic, "ok": False, "error": r.text[:100]})
-        except Exception as e:
-            results.append({"topic": topic, "ok": False, "error": str(e)})
-
+def register_shopify_webhooks(current_user: User = Depends(require_admin), shop: Shop = Depends(get_current_shop)):
+    """Re-registra (o confirma) los webhooks de Shopify para la tienda del usuario actual.
+    Normalmente esto ya se hace automáticamente en el callback de instalación
+    (app/routers/shopify_oauth.py); este endpoint sirve para re-sincronizar
+    manualmente si hace falta."""
+    results = register_webhooks_for_shop(shop)
     all_ok = all(r["ok"] for r in results)
-    return {"ok": all_ok, "endpoint": backend_url, "webhooks": results}
+    return {"ok": all_ok, "endpoint": f"{settings.BACKEND_PUBLIC_URL}/api/shopify/webhooks", "webhooks": results}
 
 
 @router.get("/shopify-status")
@@ -958,19 +994,13 @@ def sync_abandoned_checkouts_endpoint(
 
 
 @router.post("/register-shopify-script-tag")
-def register_shopify_script_tag(current_user: User = Depends(require_admin)):
-    """Registra el script tag de tracking en la tienda Shopify."""
-    token = settings.SHOPIFY_ACCESS_TOKEN
-    if not token:
-        return {"ok": False, "error": "SHOPIFY_ACCESS_TOKEN no configurado"}
-
-    domain = settings.SHOPIFY_DOMAIN
+def register_shopify_script_tag(current_user: User = Depends(require_admin), shop: Shop = Depends(get_current_shop)):
+    """Registra el script tag de tracking en la tienda Shopify del usuario actual."""
     script_url = f"{settings.BACKEND_PUBLIC_URL}/api/forms/track.js"
-    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+    headers = shopify_headers(shop)
 
     # Check if already registered
-    existing = httpx.get(f"https://{domain}/admin/api/2024-10/script_tags.json",
-                         headers=headers, timeout=10)
+    existing = httpx.get(shopify_rest_url(shop, "script_tags.json"), headers=headers, timeout=10)
     if existing.status_code == 200:
         tags = existing.json().get("script_tags", [])
         for tag in tags:
@@ -978,7 +1008,7 @@ def register_shopify_script_tag(current_user: User = Depends(require_admin)):
                 return {"ok": True, "note": "ya existía", "id": tag["id"], "src": script_url}
 
     r = httpx.post(
-        f"https://{domain}/admin/api/2024-10/script_tags.json",
+        shopify_rest_url(shop, "script_tags.json"),
         headers=headers,
         json={"script_tag": {"event": "onload", "src": script_url}},
         timeout=10,
@@ -1024,23 +1054,19 @@ def sync_shopify_form_embeds(
 async def upload_image_to_shopify(
     file: UploadFile = File(...),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """
     Sube una imagen a Shopify Files y devuelve la URL cdn.shopify.com.
     Flujo: stagedUploadsCreate → PUT al S3 presignado → fileCreate.
     """
-    token  = settings.SHOPIFY_ACCESS_TOKEN
-    domain = settings.SHOPIFY_DOMAIN
-    if not token:
-        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
-
     content   = await file.read()
     mime_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
     filename  = file.filename or "image.jpg"
     file_size = len(content)
 
-    gql_url = f"https://{domain}/admin/api/2024-01/graphql.json"
-    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+    gql_url = shopify_graphql_url(shop)
+    headers = shopify_headers(shop)
 
     # 1. Request a staged upload target from Shopify
     stage_query = """
@@ -1124,13 +1150,9 @@ async def upload_image_to_shopify(
 def list_shopify_images(
     after: str = None,
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """List images from Shopify Files for the in-editor image picker."""
-    token  = settings.SHOPIFY_ACCESS_TOKEN
-    domain = settings.SHOPIFY_DOMAIN
-    if not token:
-        raise HTTPException(status_code=500, detail="SHOPIFY_ACCESS_TOKEN no configurado")
-
     gql = """
     query getImages($after: String) {
       files(first: 30, after: $after, sortKey: CREATED_AT, reverse: true, query: "media_type:IMAGE") {
@@ -1144,8 +1166,8 @@ def list_shopify_images(
     }"""
     variables = {"after": after} if after else {}
     resp = httpx.post(
-        f"https://{domain}/admin/api/2024-01/graphql.json",
-        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+        shopify_graphql_url(shop),
+        headers=shopify_headers(shop),
         json={"query": gql, "variables": variables},
         timeout=20,
     )
@@ -1164,18 +1186,69 @@ def list_shopify_images(
 def get_brand_assets(
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
-    """Devuelve los activos de marca: colores, logos y tipografía."""
+    """Devuelve los activos de marca de la tienda actual: colores, logos y tipografía."""
     rows = session.exec(
-        text("SELECT id, categoria, nombre, valor, descripcion FROM plantillas_de_la_marca ORDER BY categoria, id")
+        select(BrandAsset).where(BrandAsset.shop_id == shop.id).order_by(BrandAsset.categoria, BrandAsset.id)
     ).all()
     result: dict = {"colores": [], "logos": [], "tipografia": []}
-    for r in rows:
-        item = {"id": r[0], "nombre": r[2], "valor": r[3], "descripcion": r[4]}
-        if r[1] == "color":
+    for a in rows:
+        item = {"id": a.id, "nombre": a.nombre, "valor": a.valor, "descripcion": a.descripcion}
+        if a.categoria == "color":
             result["colores"].append(item)
-        elif r[1] == "logo":
+        elif a.categoria == "logo":
             result["logos"].append(item)
-        elif r[1] == "tipografia":
+        elif a.categoria == "tipografia":
             result["tipografia"].append(item)
     return result
+
+
+@router.post("/brand", response_model=BrandAssetRead, status_code=201)
+def create_brand_asset(
+    payload: BrandAssetCreate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
+):
+    if payload.categoria not in ("color", "logo", "tipografia"):
+        raise HTTPException(status_code=400, detail="categoria debe ser color, logo o tipografia")
+    asset = BrandAsset(**payload.model_dump(), shop_id=shop.id)
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    return asset
+
+
+@router.patch("/brand/{asset_id}", response_model=BrandAssetRead)
+def update_brand_asset(
+    asset_id: int,
+    payload: BrandAssetUpdate,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
+):
+    asset = session.get(BrandAsset, asset_id)
+    if not asset or asset.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Activo de marca no encontrado")
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(asset, k, v)
+    asset.updated_at = datetime.utcnow()
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    return asset
+
+
+@router.delete("/brand/{asset_id}", status_code=204)
+def delete_brand_asset(
+    asset_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
+):
+    asset = session.get(BrandAsset, asset_id)
+    if not asset or asset.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Activo de marca no encontrado")
+    session.delete(asset)
+    session.commit()

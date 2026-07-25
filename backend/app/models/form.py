@@ -8,6 +8,7 @@ class SignupForm(SQLModel, table=True):
     __tablename__ = "signup_forms"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     name: str = Field(index=True)
     title: str
     description: Optional[str] = None
@@ -48,6 +49,7 @@ class FormSubmission(SQLModel, table=True):
     __tablename__ = "form_submissions"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     form_id: int = Field(foreign_key="signup_forms.id", index=True)
     email: str
     name: Optional[str] = None

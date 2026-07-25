@@ -45,7 +45,7 @@ def _parse_date(raw: str) -> Optional[object]:
     return None
 
 
-def import_tc_csv(content: bytes, session: Session) -> dict:
+def import_tc_csv(content: bytes, session: Session, shop_id: int) -> dict:
     text_io = io.StringIO(content.decode("utf-8-sig"))
     reader = csv.DictReader(text_io)
 
@@ -67,7 +67,9 @@ def import_tc_csv(content: bytes, session: Session) -> dict:
         birthday = _parse_date(row.get(_COL_BDAY) or "")
         now      = datetime.utcnow()
 
-        existing = session.exec(select(Contact).where(Contact.email == email)).first()
+        existing = session.exec(
+            select(Contact).where(Contact.email == email, Contact.shop_id == shop_id)
+        ).first()
 
         if existing:
             if name and not existing.name:
@@ -91,6 +93,7 @@ def import_tc_csv(content: bytes, session: Session) -> dict:
                 origin_utm  = "Formulario T&C",
                 opted_in    = True,
                 opted_in_at = now,
+                shop_id     = shop_id,
             ))
             created += 1
 

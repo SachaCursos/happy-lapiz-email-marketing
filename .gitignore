@@ -23,9 +23,5 @@ frontend/.next/
 frontend/out/
 frontend/node_modules/
 
-# Alembic versions (se generan localmente)
-backend/alembic/versions/*.py
-!backend/alembic/versions/.gitkeep
-
 # Docker volumes
 postgres_data/

@@ -1,8 +1,9 @@
 import json
 import logging
+import random
 import re
 import time
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import resend
 from sqlalchemy import text
@@ -33,6 +34,15 @@ def _fmt_first_name(value: str | None) -> str:
         return ""
     first = raw.split()[0]
     return first[:1].upper() + first[1:].lower()
+
+
+def apply_email_override(to: List[str], subject: str) -> tuple[List[str], str]:
+    """When EMAIL_OVERRIDE_TO is set (staging), redirect every outgoing email
+    to that single inbox instead of the real recipient(s), tagging the
+    original recipient(s) into the subject so test sends stay traceable."""
+    if not settings.EMAIL_OVERRIDE_TO:
+        return to, subject
+    return [settings.EMAIL_OVERRIDE_TO], f"[{', '.join(to)}] {subject}"
 
 
 def _fmt_nombre(name: str | None, email: str = "") -> str:
@@ -69,7 +79,7 @@ SUCCESS_COMPLETION_RATIO = 0.995
 _FOOTER = """<div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
 text-align:center;font-size:12px;color:#9ca3af;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-Recibiste este correo porque eres cliente de <strong style="color:#6b7280">Happy Lápiz</strong>.
+Recibiste este correo porque eres cliente de <strong style="color:#6b7280">{shop_name}</strong>.
 &nbsp;&middot;&nbsp;
 <a href="{url}" style="color:#9ca3af;text-decoration:underline;">Cancelar suscripción</a>
 </div>"""
@@ -246,7 +256,7 @@ def _strip_hotboat_footer(html: str) -> str:
     return result.rstrip()
 
 
-def _inject_footer(html: str, email: str) -> str:
+def _inject_footer(html: str, email: str, shop_name: str = "tu tienda") -> str:
     url = unsub_url(email)
     if "##unsub##" in html:
         return html.replace("##unsub##", url)
@@ -259,7 +269,7 @@ def _inject_footer(html: str, email: str) -> str:
     # Check for the link text OR the /unsubscribe path in the URL.
     if "cancelar suscripci" in lower or "/unsubscribe" in lower:
         return html
-    footer = _FOOTER.format(url=url)
+    footer = _FOOTER.format(url=url, shop_name=shop_name)
     # Inject inside the email container div, not after </body>
     # to avoid unconstrained content that triggers mobile zoom-out
     insert_before = "</div>\n</td></tr>\n</table>"
@@ -459,11 +469,14 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
     """), {"email": contact.email.lower(), "cid": campaign_id}).fetchone()
     if row:
         return row[0]
+    # Filtrar por shop_id de la campaña evita que una tienda reciba un cupón
+    # de descuento generado por otra tienda (coupon_campaigns es multi-tenant).
     row2 = session.execute(text("""
         SELECT cc.id, cc.prefix FROM coupon_campaigns cc
-        WHERE cc.status = 'active'
+        JOIN campaigns c ON c.id = :cid
+        WHERE cc.status = 'active' AND cc.shop_id = c.shop_id
         ORDER BY cc.created_at DESC LIMIT 1
-    """)).fetchone()
+    """), {"cid": campaign_id}).fetchone()
     if not row2:
         return ""
     import random, string
@@ -471,8 +484,8 @@ def _resolve_coupon(template_html: str, contact: Contact, campaign_id: int, sess
     code = f"{prefix}-{''.join(random.choices(string.ascii_uppercase+string.digits, k=8))}"
     try:
         session.execute(text("""
-            INSERT INTO coupon_sends (coupon_campaign_id, contact_id, contact_email, code, campaign_id)
-            VALUES (:ccid, :cid, :email, :code, :campid)
+            INSERT INTO coupon_sends (coupon_campaign_id, contact_id, contact_email, code, campaign_id, shop_id)
+            SELECT :ccid, :cid, :email, :code, :campid, c.shop_id FROM campaigns c WHERE c.id = :campid
             ON CONFLICT DO NOTHING
         """), {"ccid": row2[0], "cid": contact.id, "email": contact.email.lower(),
                "code": code, "campid": campaign_id})
@@ -499,7 +512,7 @@ def count_audience_completion_attempts(
         from app.services.campaign_audience import get_campaign_recipient_ids
 
         recipient_ids = get_campaign_recipient_ids(
-            session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+            session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
         )
     if not recipient_ids:
         return 0
@@ -575,7 +588,7 @@ def count_recipients_with_success(
         from app.services.campaign_audience import get_campaign_recipient_ids
 
         recipient_ids = get_campaign_recipient_ids(
-            session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+            session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
         )
     if not recipient_ids:
         return 0
@@ -618,7 +631,7 @@ def is_campaign_audience_complete(session: Session, campaign: Campaign) -> bool:
     from app.services.campaign_audience import get_campaign_recipient_ids
 
     recipient_ids = get_campaign_recipient_ids(
-        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+        session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     if not recipient_ids:
         return True
@@ -658,11 +671,11 @@ def get_campaign_send_progress(session: Session, campaign: Campaign) -> dict:
     from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipient_ids
 
     counts = count_campaign_recipients(
-        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+        session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     total = counts["recipient_count"]
     recipient_ids = get_campaign_recipient_ids(
-        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+        session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     delivered = count_recipients_with_success(session, campaign, recipient_ids)
     pending = len(get_pending_contact_ids(session, campaign))
@@ -691,7 +704,7 @@ def finalize_campaign_status(
 
     if total_in_segment <= 0:
         counts = count_campaign_recipients(
-            session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+            session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
         )
         total_in_segment = counts["recipient_count"]
 
@@ -726,7 +739,7 @@ def get_pending_contact_ids(session: Session, campaign: Campaign) -> List[int]:
     from app.services.campaign_audience import get_campaign_recipient_ids
 
     recipient_ids = get_campaign_recipient_ids(
-        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+        session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
     )
     if not recipient_ids:
         return []
@@ -810,10 +823,14 @@ def send_campaign_batch(
             session.commit()
             return stats
 
+        from app.models.shop import Shop
+        shop = session.get(Shop, campaign.shop_id) if campaign.shop_id else None
+        shop_name = shop.display_name() if shop else "tu tienda"
+
         if total_in_segment <= 0:
             from app.services.campaign_audience import count_campaign_recipients
             counts = count_campaign_recipients(
-                session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+                session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
             )
             total_in_segment = counts["recipient_count"]
 
@@ -846,7 +863,7 @@ def send_campaign_batch(
                 live = session.get(Campaign, campaign_id)
                 if not live or live.status == "paused":
                     break
-                _send_one(live, template, contact, session)
+                _send_one(live, template, contact, session, shop_name=shop_name)
                 stats["processed"] += 1
                 if i < len(contacts) - 1:
                     time.sleep(RATE_DELAY)
@@ -889,7 +906,7 @@ def finalize_stuck_sending_campaigns(session: Session) -> int:
             from app.services.campaign_audience import count_campaign_recipients
 
             counts = count_campaign_recipients(
-                session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+                session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
             )
             finalize_campaign_status(
                 session, campaign, counts["recipient_count"], auto_resume=False,
@@ -913,7 +930,7 @@ def resume_pending_campaign_sends() -> None:
                 if not pending or is_campaign_audience_complete(session, campaign):
                     from app.services.campaign_audience import count_campaign_recipients
                     counts = count_campaign_recipients(
-                        session, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
+                        session, campaign.shop_id, segment_ids=_campaign_seg_ids(campaign), exclude_segment_ids=campaign.exclude_segment_ids,
                     )
                     finalize_campaign_status(
                         session, campaign, counts["recipient_count"], auto_resume=False,
@@ -946,7 +963,7 @@ def resume_pending_campaign_sends() -> None:
             logger.exception("Error reanudando campaña %d: %s", campaign_id, exc)
 
 
-def _send_one(campaign: Campaign, template: Template, contact: Contact, session: Session) -> None:
+def _send_one(campaign: Campaign, template: Template, contact: Contact, session: Session, shop_name: str = "tu tienda") -> None:
     from app.services.template_block_compiler import resolve_template_html
 
     template_html = resolve_template_html(template)
@@ -975,6 +992,7 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
                 preprocess_regalado=regalado,
             ),
             contact.email,
+            shop_name,
         )
         preview_raw = campaign.preview_text or template.preview_text or ""
         if preview_raw:
@@ -991,9 +1009,10 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
             vars_=vars_,
             preprocess_regalado=regalado,
         )
+        to, subject = apply_email_override([contact.email], subject)
         response = resend.Emails.send({
             "from": settings.RESEND_FROM_EMAIL,
-            "to": [contact.email],
+            "to": to,
             "subject": subject,
             "html": html,
             "headers": _unsub_headers(contact.email),
@@ -1014,3 +1033,103 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
             send.status = "failed"
             session.add(send)
             session.commit()
+
+
+def build_test_vars(email: str, shop_id: Optional[int]) -> dict:
+    """Mock/real variables for a manual test-send of any template — used by the
+    templates.py and automations.py send-test endpoints. Pulls the most recent
+    abandoned-cart row for this email/shop if one exists so abandoned-cart
+    templates render with real checkout data instead of placeholders."""
+    import psycopg2
+    from app.core.config import settings as _settings
+
+    checkout_url = "https://tu-tienda.cl/cart"
+    first_name = email.split("@")[0]
+    cart_total = "$0"
+    first_product = ""
+    row = None
+
+    if shop_id:
+        try:
+            conn = psycopg2.connect(_settings.DATABASE_URL)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT first_name, subtotal_price, line_items, checkout_url
+                FROM carritos_abandonados
+                WHERE email = %s AND shop_id = %s
+                  AND (recovered = FALSE OR recovered IS NULL)
+                  AND checkout_url IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1
+            """, (email, shop_id))
+            row = cur.fetchone()
+            if row:
+                first_name = (row[0] or first_name).strip()
+                subtotal = float(row[1] or 0)
+                cart_total = f"${int(subtotal):,}".replace(",", ".")
+                items = row[2] or []
+                first_product = items[0].get("title", "") if items else ""
+                checkout_url = row[3] or checkout_url
+            cur.close()
+            conn.close()
+        except Exception:
+            pass  # DB unavailable — fall through to placeholders
+
+    return {
+        "nombre": first_name,
+        "first_name": first_name,
+        "email": email,
+        "cart_total": cart_total,
+        "first_product": first_product,
+        "cart_url": checkout_url,
+        "checkout_url": checkout_url,
+        "coupon_code": "CODIGO-PRUEBA",
+        "orders_count": 0,
+        "ultima_visita": "",
+        "ticket_medio": 0,
+        "total_spent": 0,
+        "shipping_city": "",
+        "custom_fields": {},
+        "nombre_regalado": "Ejemplo",
+        "relacion": "hijo/a",
+        "event": {"extra": {
+            "checkout_url": checkout_url,
+            "checkout_url_with_coupon": f"{checkout_url}{'&' if '?' in checkout_url else '?'}discount=CODIGO-PRUEBA",
+        }},
+        "_cart_data_found": bool(row),
+    }
+
+
+def render_email_content(
+    template: Template,
+    email: str,
+    vars_: dict,
+    shop_name: str,
+    subject_override: Optional[str] = None,
+) -> tuple[str, str]:
+    """Render a template's subject + HTML with the given vars for a test send."""
+    from jinja2 import Environment, ChainableUndefined
+    from app.services.template_block_compiler import resolve_template_html
+
+    raw_html = replace_unsub_tag(resolve_template_html(template), email)
+    _env = Environment(undefined=ChainableUndefined)
+    html = _inject_footer(_env.from_string(raw_html).render(**vars_), email, shop_name)
+    html = inject_preheader(html, template.preview_text or "")
+    subject_tpl = subject_override or template.subject_default or template.name
+    subject = _env.from_string(subject_tpl).render(**vars_)
+    return subject, html
+
+
+def send_test_email_now(to_email: str, subject: str, html: str) -> dict:
+    """Fire-and-return a single ad-hoc email (used only by manual send-test
+    endpoints — real campaign/automation sends go through _send_one /
+    _send_email_step, which also record delivery state)."""
+    resend.api_key = settings.RESEND_API_KEY
+    return resend.Emails.send({
+        "from": settings.RESEND_FROM_EMAIL,
+        "to": [to_email],
+        "subject": subject,
+        "html": html,
+        "headers": _unsub_headers(to_email),
+    })
+
+

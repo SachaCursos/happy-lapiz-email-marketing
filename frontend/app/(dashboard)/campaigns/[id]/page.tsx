@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { campaignsApi, contactsApi, segmentsApi, templatesApi } from "@/lib/api";
-import { Campaign, CampaignStats, CampaignConversions, Segment, Template } from "@/lib/types";
-import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Check, Calendar, UserMinus, BarChart2, ShoppingCart, Pause, Copy } from "lucide-react";
+import { Campaign, CampaignStats, CampaignConversions, CampaignVariantStat, Segment, Template } from "@/lib/types";
+import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Check, Calendar, UserMinus, BarChart2, ShoppingCart, Pause, Copy, FlaskConical, Trophy } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
 import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
@@ -25,11 +25,51 @@ interface CampaignSendRow {
   email: string;
   opted_in: boolean | null;
   status: string;
+  variant_sent: string | null;
   sent_at: string | null;
   delivered_at: string | null;
   opened_at: string | null;
   clicked_at: string | null;
   bounced_at: string | null;
+}
+
+const VARIANT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  A: { bg: "bg-purple-100", text: "text-purple-700", border: "border-purple-300" },
+  B: { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300" },
+  C: { bg: "bg-teal-100",   text: "text-teal-700",   border: "border-teal-300" },
+  D: { bg: "bg-pink-100",   text: "text-pink-700",   border: "border-pink-300" },
+};
+
+function VariantResultCard({ v, isWinner }: { v: CampaignVariantStat; isWinner: boolean }) {
+  const col = VARIANT_COLORS[v.variant] ?? { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-300" };
+  return (
+    <div className={`flex-1 rounded-lg border p-3 space-y-1.5 ${isWinner ? "border-amber-300 bg-amber-50" : `${col.border} bg-white`}`}>
+      <div className="flex items-center gap-2">
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isWinner ? "bg-amber-200 text-amber-800" : `${col.bg} ${col.text}`}`}>
+          Variante {v.variant}
+        </span>
+        {isWinner && (
+          <span className="flex items-center gap-1 text-xs font-semibold text-amber-700">
+            <Trophy size={11} /> Ganador
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div>
+          <p className="text-sm font-bold text-gray-900">{v.sent.toLocaleString("es-CL")}</p>
+          <p className="text-xs text-gray-400">enviados</p>
+        </div>
+        <div>
+          <p className={`text-sm font-bold ${isWinner ? "text-amber-700" : "text-gray-900"}`}>{v.open_rate}%</p>
+          <p className="text-xs text-gray-400">abiertos</p>
+        </div>
+        <div>
+          <p className="text-sm font-bold text-gray-900">{v.click_rate}%</p>
+          <p className="text-xs text-gray-400">clics</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Tick({ date, label }: { date: string | null; label: string }) {
@@ -265,7 +305,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                   subject: campaign.subject,
                   preview_text: campaign.preview_text ?? "",
                   segment_ids: campaign.segment_ids ?? (campaign.segment_id ? [campaign.segment_id] : []),
-                  template_id: campaign.template_id,
+                  template_id: campaign.template_id ?? 0,
                   exclude_segment_ids: campaign.exclude_segment_ids ?? [],
                   scheduled_at: campaign.scheduled_at
                     ? utcToLocalInput(campaign.scheduled_at)
@@ -364,6 +404,23 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               </p>
             )}
           </div>
+
+          {/* A/B breakdown */}
+          {stats && stats.variants.length >= 2 && (() => {
+            const winner = stats.variants.reduce((best, v) => v.open_rate > best.open_rate ? v : best).variant;
+            return (
+              <div className="bg-white border border-gray-200 rounded-xl p-5">
+                <p className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <FlaskConical size={15} className="text-purple-500" /> Resultados A/B
+                </p>
+                <div className="flex gap-3">
+                  {stats.variants.map((v) => (
+                    <VariantResultCard key={v.variant} v={v} isWinner={v.variant === winner} />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Funnel */}
           {stats && (
@@ -731,6 +788,9 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                       {sortCol === col ? (sortAsc ? " ↑" : " ↓") : ""}
                     </th>
                   ))}
+                  {sends.some((s) => s.variant_sent) && (
+                    <th className="px-4 py-3 text-center">Variante</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -768,6 +828,19 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                         ? <span title="Se desuscribió" className="text-orange-500 font-semibold">✕</span>
                         : <span className="text-gray-200">—</span>}
                     </td>
+                    {sends.some((r) => r.variant_sent) && (
+                      <td className="px-4 py-3 text-center">
+                        {s.variant_sent ? (
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                            VARIANT_COLORS[s.variant_sent]
+                              ? `${VARIANT_COLORS[s.variant_sent].bg} ${VARIANT_COLORS[s.variant_sent].text}`
+                              : "bg-gray-100 text-gray-600"
+                          }`}>
+                            {s.variant_sent}
+                          </span>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

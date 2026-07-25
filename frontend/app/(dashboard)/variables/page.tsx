@@ -37,7 +37,7 @@ const GROUPS: VarGroup[] = [
   {
     title: "Campos personalizados (formularios)",
     color: "bg-pink-50 border-pink-200",
-    description: "Datos capturados en formularios de Happy Lápiz (regalo, cumpleaños, etc.). Disponibles en automatizaciones de cumpleaños (desde custom_fields o la última submission del popup), post-formulario y campañas masivas.",
+    description: "Datos capturados en formularios propios (regalo, cumpleaños, etc.). Disponibles en automatizaciones de cumpleaños (desde custom_fields o la última submission del popup), post-formulario y campañas masivas.",
     vars: [
       { tag: "{{ nombre_regalado }}",      description: "1.er regalado: nombre válido, o relación en forma «tu hijo/a» si el nombre es inválido", example: "Matías" },
       { tag: "{{ relacion }}",             description: "Relación del 1.er regalado en forma «tu» (Mi hijo → tu hijo)", example: "tu hijo" },

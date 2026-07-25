@@ -3,6 +3,8 @@ export interface User {
   email: string;
   name: string;
   role: "admin" | "editor" | "viewer";
+  shop_id?: number | null;
+  shop_name?: string | null;
   created_at: string;
 }
 
@@ -108,20 +110,37 @@ export interface Template extends TemplateSummary {
 
 export type CampaignStatus = "draft" | "scheduled" | "sending" | "paused" | "sent" | "cancelled";
 
+export interface CampaignVariant {
+  variant: string;      // "A", "B", "C", "D"
+  subject: string;
+  template_id: number;
+  weight: number;
+}
+
 export interface Campaign {
   id: number;
   name: string;
   subject: string;
   preview_text: string | null;
-  template_id: number;
+  template_id: number | null;
   segment_id: number | null;
   segment_ids: number[] | null;
   exclude_segment_ids: number[] | null;
+  variants: CampaignVariant[] | null;
   status: CampaignStatus;
   scheduled_at: string | null;
   sent_at: string | null;
   created_by: number | null;
   created_at: string;
+}
+
+export interface CampaignVariantStat {
+  variant: string;
+  sent: number;
+  opened: number;
+  clicked: number;
+  open_rate: number;
+  click_rate: number;
 }
 
 export interface CampaignStats {
@@ -136,6 +155,7 @@ export interface CampaignStats {
   open_rate: number;
   click_rate: number;
   bounce_rate: number;
+  variants: CampaignVariantStat[];
 }
 
 export interface CampaignConversions {
@@ -456,6 +476,14 @@ export interface AutomationPending {
   count: number;
   steps: AutomationPendingStep[];
   will_enter: { count: number } | null;
+}
+
+export interface AutomationSendTestResult {
+  ok: boolean;
+  sent_to: string;
+  sent: { step: number; template_id: number; subject: string; email_id: string | null }[];
+  errors: { step: number; error: string }[];
+  cart_data_found: boolean;
 }
 
 export interface AutomationVariantStat {

@@ -1,13 +1,15 @@
 """
-kok
 Adds new columns to existing tables in Railway DB.
 Safe to run multiple times (uses IF NOT EXISTS logic).
+
+Run with DATABASE_URL pointed at the target environment, e.g.:
+    railway run --environment staging python migrate_add_columns.py
 """
-import sys, psycopg2
+import os, sys, psycopg2
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-DB = "postgresql://postgres:nfKjyKqezPIGMgmneHgxdscnCFXypQQq@switchyard.proxy.rlwy.net:22708/railway"
+DB = os.environ["DATABASE_URL"]
 conn = psycopg2.connect(DB)
 cur = conn.cursor()
 

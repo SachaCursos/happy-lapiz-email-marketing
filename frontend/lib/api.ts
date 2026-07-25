@@ -43,6 +43,8 @@ export const authApi = {
     });
   },
   me: () => api.get("/auth/me"),
+  setPassword: (token: string, password: string) =>
+    api.post("/auth/set-password", { token, password }),
 };
 
 // Contacts
@@ -196,6 +198,15 @@ export const automationsApi = {
   stepStats: (id: number, params?: { date_from?: string; date_to?: string }) =>
     api.get(`/automations/${id}/step-stats`, { params }),
   pending: (id: number) => api.get(`/automations/${id}/pending`),
+  sendTest: (id: number, toEmail: string) => api.post(`/automations/${id}/send-test`, { to_email: toEmail }),
+};
+
+// Brand assets (colors/logos/fonts) — per-shop
+export const brandApi = {
+  list: () => api.get("/admin/brand"),
+  create: (data: { categoria: string; nombre: string; valor: string; descripcion?: string }) => api.post("/admin/brand", data),
+  update: (id: number, data: { nombre?: string; valor?: string; descripcion?: string }) => api.patch(`/admin/brand/${id}`, data),
+  delete: (id: number) => api.delete(`/admin/brand/${id}`),
 };
 
 // Sync
@@ -213,6 +224,8 @@ export const syncApi = {
 export const adminApi = {
   syncProducts: () => api.post("/admin/sync-products"),
   seedTemplates: () => api.post("/admin/seed-templates"),
+  yearlyPlanPreview: () => api.post("/admin/yearly-plan/preview"),
+  yearlyPlanGenerate: () => api.post("/admin/yearly-plan/generate"),
   backfillOrders: () => api.post("/admin/backfill-shopify-orders"),
   shopifyStatus: () => api.get("/admin/shopify-status"),
   registerWebhooks: () => api.post("/admin/register-shopify-webhooks"),

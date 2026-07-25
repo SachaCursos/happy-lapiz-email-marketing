@@ -584,7 +584,7 @@ function ObjectsTab({ contactId }: { contactId: number }) {
         <Anchor size={48} className="text-gray-400" />
       </div>
       <p className="text-sm font-medium text-gray-600">Este cliente no tiene reservas registradas</p>
-      <p className="text-xs text-gray-400 mt-1">Los pedidos de Happy Lápiz aparecerán aquí automáticamente al sincronizar</p>
+      <p className="text-xs text-gray-400 mt-1">Los pedidos de Shopify aparecerán aquí automáticamente al sincronizar</p>
     </div>
   );
 

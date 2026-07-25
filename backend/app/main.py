@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks, surveys, dynamic_criteria
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks, surveys, dynamic_criteria, shopify_oauth
 from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
 from app.models import form as _form_model  # noqa: F401 — form_views table
 from app.models import evergreen as _evergreen_model  # noqa: F401
@@ -41,6 +41,7 @@ app.include_router(html_blocks.router, prefix="/api/html-blocks", tags=["html-bl
 app.include_router(favorite_blocks.router, prefix="/api/favorite-blocks", tags=["favorite-blocks"])
 app.include_router(surveys.router, prefix="/api/surveys", tags=["surveys"])
 app.include_router(dynamic_criteria.router, prefix="/api/dynamic-criteria", tags=["dynamic-criteria"])
+app.include_router(shopify_oauth.router, prefix="/api/shopify", tags=["shopify-oauth"])
 
 
 @app.on_event("startup")
@@ -48,15 +49,23 @@ def on_startup():
     create_db_and_tables()
     from app.services.scheduler import start_scheduler
     from app.database import engine
-    from sqlmodel import Session
+    from sqlmodel import Session, select
     from app.services.template_compositions import ensure_managed_block_templates
+    from app.models.shop import Shop
 
     start_scheduler()
     try:
         with Session(engine) as session:
-            ensure_managed_block_templates(session)
+            # Managed block templates + REGALO birthday automation are Happy
+            # Lápiz-specific seed data today — resolve its shop explicitly
+            # rather than guessing "first shop in DB" once more tenants exist.
+            hl_shop = session.exec(
+                select(Shop).where(Shop.shopify_domain == "happy-lapiz.myshopify.com")
+            ).first()
+            if hl_shop:
+                ensure_managed_block_templates(session, hl_shop.id)
             from app.services.birthday_automation_seed import ensure_birthday_reminder_setup
-            ensure_birthday_reminder_setup(session)
+            ensure_birthday_reminder_setup(session, hl_shop)
             from app.services.email_sender import finalize_stuck_sending_campaigns
             finalize_stuck_sending_campaigns(session)
             from app.services.bounce_segment_seed import ensure_repeat_bounce_segment
@@ -87,9 +96,10 @@ def tracking_pixel_root():
     backend = settings.BACKEND_PUBLIC_URL
     js = f"""(function(){{
   var API='{backend}/api/shopify/track';
+  var SHOP_DOMAIN=(window.Shopify&&window.Shopify.shop)||'';
   function send(evt,data){{
     fetch(API,{{method:'POST',headers:{{'Content-Type':'application/json'}},
-      body:JSON.stringify(Object.assign({{event:evt,url:location.href}},data||{{}})),keepalive:true}}).catch(function(){{}});
+      body:JSON.stringify(Object.assign({{event:evt,url:location.href,shop_domain:SHOP_DOMAIN}},data||{{}})),keepalive:true}}).catch(function(){{}});
   }}
   // Viewed Product
   if(window.meta&&window.meta.product){{

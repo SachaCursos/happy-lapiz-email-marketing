@@ -4,6 +4,12 @@ Klaviyo default (email): last-touch, 5-day lookback after open OR click.
 An order is attributed to a message if the contact opened or clicked that
 message and placed the order within `window_days` of that interaction.
 When multiple messages qualify, the most recent open/click wins.
+
+Every query here is scoped by shop_id — contacts.email is only unique per
+shop_id, not globally, so joining shopify_orders by email alone (without
+also matching shop_id) could attribute one tenant's order to another
+tenant's campaign/automation when the same email exists as a customer in
+more than one shop.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ DEFAULT_ATTRIBUTION_DAYS = 5
 def get_campaign_attribution(
     session: Session,
     campaign_id: int,
+    shop_id: int,
     *,
     window_days: int = DEFAULT_ATTRIBUTION_DAYS,
     order_date_from: datetime | None = None,
@@ -31,7 +38,7 @@ def get_campaign_attribution(
       - order was placed within `window_days` after that open/click, and
       - this campaign was the last email touch among campaigns for that order.
     """
-    params: dict = {"campaign_id": campaign_id, "window_days": window_days}
+    params: dict = {"campaign_id": campaign_id, "window_days": window_days, "shop_id": shop_id}
     date_filter = ""
     if order_date_from is not None:
         date_filter += " AND so.created_at >= :order_from"
@@ -66,8 +73,9 @@ def get_campaign_attribution(
                     ) AS touch_at
                 FROM campaign_sends cs
                 JOIN contacts ct ON ct.id = cs.contact_id
-                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ct.email)
+                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ct.email) AND so.shop_id = :shop_id
                 WHERE (cs.clicked_at IS NOT NULL OR cs.opened_at IS NOT NULL)
+                  AND cs.shop_id = :shop_id
                   {date_filter}
             ),
             attributed AS (
@@ -96,6 +104,7 @@ def get_campaign_attribution(
 
 def list_campaign_attribution_summary(
     session: Session,
+    shop_id: int,
     *,
     order_date_from: datetime,
     order_date_to: datetime,
@@ -127,8 +136,9 @@ def list_campaign_attribution_summary(
                     ) AS touch_at
                 FROM campaign_sends cs
                 JOIN contacts ct ON ct.id = cs.contact_id
-                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ct.email)
+                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ct.email) AND so.shop_id = :shop_id
                 WHERE (cs.clicked_at IS NOT NULL OR cs.opened_at IS NOT NULL)
+                  AND cs.shop_id = :shop_id
                   AND so.created_at >= :order_from
                   AND so.created_at < :order_to
             ),
@@ -150,12 +160,12 @@ def list_campaign_attribution_summary(
             recipients AS (
                 SELECT campaign_id, COUNT(DISTINCT contact_id)::int AS recipients
                 FROM campaign_sends
-                WHERE sent_at IS NOT NULL
+                WHERE sent_at IS NOT NULL AND shop_id = :shop_id
                 GROUP BY campaign_id
             )
             SELECT c.id, c.name, r.recipients, a.orders, a.revenue
             FROM agg a
-            JOIN campaigns c ON c.id = a.campaign_id
+            JOIN campaigns c ON c.id = a.campaign_id AND c.shop_id = :shop_id
             JOIN recipients r ON r.campaign_id = c.id
             ORDER BY a.revenue DESC
         """),
@@ -163,6 +173,7 @@ def list_campaign_attribution_summary(
             "order_from": order_date_from,
             "order_to": order_date_to,
             "window_days": window_days,
+            "shop_id": shop_id,
         },
     ).fetchall()
 
@@ -180,6 +191,7 @@ def list_campaign_attribution_summary(
 
 def list_automation_attribution_summary(
     session: Session,
+    shop_id: int,
     *,
     order_date_from: datetime,
     order_date_to: datetime,
@@ -211,9 +223,10 @@ def list_automation_attribution_summary(
                         END
                     ) AS touch_at
                 FROM automation_runs ar
-                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ar.contact_email)
+                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ar.contact_email) AND so.shop_id = :shop_id
                 WHERE ar.status = 'sent'
                   AND (ar.clicked_at IS NOT NULL OR ar.opened_at IS NOT NULL)
+                  AND ar.shop_id = :shop_id
                   AND so.created_at >= :order_from
                   AND so.created_at < :order_to
             ),
@@ -235,12 +248,12 @@ def list_automation_attribution_summary(
             sends AS (
                 SELECT automation_id, COUNT(DISTINCT contact_email)::int AS sends
                 FROM automation_runs
-                WHERE status = 'sent' AND executed_at IS NOT NULL
+                WHERE status = 'sent' AND executed_at IS NOT NULL AND shop_id = :shop_id
                 GROUP BY automation_id
             )
             SELECT a.id, a.name, s.sends, agg.orders, agg.revenue
             FROM agg
-            JOIN automations a ON a.id = agg.automation_id
+            JOIN automations a ON a.id = agg.automation_id AND a.shop_id = :shop_id
             JOIN sends s ON s.automation_id = a.id
             ORDER BY agg.revenue DESC
         """),
@@ -248,6 +261,7 @@ def list_automation_attribution_summary(
             "order_from": order_date_from,
             "order_to": order_date_to,
             "window_days": window_days,
+            "shop_id": shop_id,
         },
     ).fetchall()
 
@@ -266,13 +280,14 @@ def list_automation_attribution_summary(
 def get_automation_attribution(
     session: Session,
     automation_id: int,
+    shop_id: int,
     *,
     window_days: int = DEFAULT_ATTRIBUTION_DAYS,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
 ) -> dict:
     """Klaviyo-style open/click last-touch attribution for one automation."""
-    params: dict = {"aid": automation_id, "window_days": window_days}
+    params: dict = {"aid": automation_id, "window_days": window_days, "shop_id": shop_id}
     run_filter = ""
     order_filter = ""
     if date_from is not None:
@@ -308,9 +323,10 @@ def get_automation_attribution(
                         END
                     ) AS touch_at
                 FROM automation_runs ar
-                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ar.contact_email)
+                JOIN shopify_orders so ON LOWER(so.email) = LOWER(ar.contact_email) AND so.shop_id = :shop_id
                 WHERE ar.status = 'sent'
                   AND (ar.clicked_at IS NOT NULL OR ar.opened_at IS NOT NULL)
+                  AND ar.shop_id = :shop_id
                   {run_filter}
                   {order_filter}
             ),

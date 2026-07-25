@@ -4,7 +4,29 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { authApi, syncApi, api, adminApi } from "@/lib/api";
 import { User } from "@/lib/types";
-import { RefreshCw, PackagePlus, ImageOff, Package } from "lucide-react";
+import { RefreshCw, PackagePlus, ImageOff, Package, CalendarRange } from "lucide-react";
+
+interface YearlyPlanEntry {
+  name: string;
+  date: string;
+  subject: string;
+  teaser: string;
+  status: string;
+}
+
+interface YearlyPlanResult {
+  ok: boolean;
+  preview: boolean;
+  profile: {
+    product_count: number;
+    top_categories: { category: string; count: number }[];
+    price_min: number | null;
+    price_max: number | null;
+    brand_color: string;
+    logo_url: string | null;
+  };
+  planned: YearlyPlanEntry[];
+}
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -24,8 +46,9 @@ export default function SettingsPage() {
   });
 
   const [syncResult, setSyncResult] = useState<Record<string, unknown> | null>(null);
-  const [seedResult, setSeedResult] = useState<{ ok: boolean; created: Record<string, string[]>; updated?: Record<string, string[]> } | null>(null);
-  const [seeding, setSeeding]       = useState(false);
+  const [planResult, setPlanResult] = useState<YearlyPlanResult | null>(null);
+  const [analyzingPlan, setAnalyzingPlan] = useState(false);
+  const [generatingPlan, setGeneratingPlan] = useState(false);
   const [logoResult, setLogoResult] = useState<{ ok: boolean; fixed: string[] } | null>(null);
   const [fixingLogo, setFixingLogo] = useState(false);
   const [syncProductsResult, setSyncProductsResult] = useState<{ ok?: boolean; synced?: number; total_fetched?: number; error?: string; errors?: string[] } | null>(null);
@@ -57,16 +80,28 @@ export default function SettingsPage() {
     }
   }
 
-  async function runSeed() {
-    setSeeding(true);
-    setSeedResult(null);
+  async function analyzePlan() {
+    setAnalyzingPlan(true);
+    setPlanResult(null);
     try {
-      const r = await api.post("/admin/seed-templates");
-      setSeedResult(r.data);
+      const r = await adminApi.yearlyPlanPreview();
+      setPlanResult(r.data);
     } catch {
-      setSeedResult({ ok: false, created: {} });
+      setPlanResult(null);
     } finally {
-      setSeeding(false);
+      setAnalyzingPlan(false);
+    }
+  }
+
+  async function generatePlan() {
+    setGeneratingPlan(true);
+    try {
+      const r = await adminApi.yearlyPlanGenerate();
+      setPlanResult(r.data);
+    } catch {
+      // keep the last preview visible; the button will just show the error state briefly
+    } finally {
+      setGeneratingPlan(false);
     }
   }
 
@@ -151,35 +186,71 @@ export default function SettingsPage() {
 
         {user?.role === "admin" && (
           <div className="bg-white border border-gray-200 rounded-xl p-6">
-            <h2 className="font-semibold text-gray-900 mb-1">Plantillas y campañas de ejemplo</h2>
+            <h2 className="font-semibold text-gray-900 mb-1">Plan de contenido anual</h2>
             <p className="text-gray-500 text-sm mb-4">
-              Instala las plantillas de bienvenida y Día de la Madre con sus segmentos y campañas en borrador.
-              Es seguro correrlo varias veces — no duplica nada que ya exista.
+              Genera hasta 11 plantillas y campañas en borrador para fechas comerciales del año
+              (Día de la Madre, Cyber Monday, Navidad, aniversario de la tienda, etc.), usando tus
+              propios productos y color de marca cuando están disponibles. No envía nada — todo
+              queda como borrador para que lo revises. Es seguro correrlo varias veces.
             </p>
-            <button
-              onClick={runSeed}
-              disabled={seeding}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-60 transition-colors"
-            >
-              <PackagePlus size={14} className={seeding ? "animate-pulse" : ""} />
-              {seeding ? "Instalando..." : "Instalar plantillas"}
-            </button>
-            {seedResult && (
-              <div className={`mt-3 px-4 py-3 rounded-lg text-sm ${seedResult.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-                {seedResult.ok ? (
-                  <>
-                    ✓ Listo.
-                    {Object.entries(seedResult.created).map(([k, v]) =>
-                      v.length > 0 ? <span key={k}> · {v.length} {k} nuevos</span> : null
-                    )}
-                    {seedResult.updated && Object.entries(seedResult.updated).map(([k, v]) =>
-                      v.length > 0 ? <span key={`upd-${k}`}> · {v.length} {k} actualizadas</span> : null
-                    )}
-                    {Object.values(seedResult.created).every(v => v.length === 0) &&
-                     (!seedResult.updated || Object.values(seedResult.updated).every(v => v.length === 0)) &&
-                     " Todo ya estaba al día."}
-                  </>
-                ) : "Error al instalar. Revisá los logs del backend."}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={analyzePlan}
+                disabled={analyzingPlan}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-60 transition-colors"
+              >
+                <CalendarRange size={14} className={analyzingPlan ? "animate-pulse" : ""} />
+                {analyzingPlan ? "Analizando..." : "Analizar tienda"}
+              </button>
+              {planResult && planResult.preview && (
+                <button
+                  onClick={generatePlan}
+                  disabled={generatingPlan}
+                  className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-60 transition-colors"
+                >
+                  <PackagePlus size={14} className={generatingPlan ? "animate-pulse" : ""} />
+                  {generatingPlan ? "Generando..." : "Generar plan"}
+                </button>
+              )}
+            </div>
+
+            {planResult && (
+              <div className="mt-4 space-y-3">
+                <div className="px-4 py-3 rounded-lg text-sm bg-gray-50 border border-gray-200">
+                  <p className="text-gray-700">
+                    {planResult.profile.product_count > 0
+                      ? `${planResult.profile.product_count} productos sincronizados · categoría principal: ${planResult.profile.top_categories[0]?.category ?? "—"}`
+                      : "Sin productos sincronizados todavía — se usarán bloques de producto genéricos."}
+                  </p>
+                  <p className="text-gray-500 mt-1">
+                    Color de marca detectado:{" "}
+                    <span className="inline-block w-3 h-3 rounded-full align-middle border border-gray-300" style={{ backgroundColor: planResult.profile.brand_color }} />{" "}
+                    {planResult.profile.brand_color}
+                  </p>
+                </div>
+
+                {!planResult.preview && (
+                  <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                    ✓ Listo. Revisá las campañas creadas en la sección Campañas antes de programarlas.
+                  </p>
+                )}
+
+                <ul className="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+                  {planResult.planned.map((entry) => (
+                    <li key={entry.name} className="px-4 py-2.5 text-sm flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900 truncate">{entry.name}</p>
+                        <p className="text-gray-400 text-xs truncate">{entry.subject}</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-gray-500 text-xs">{entry.date}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${entry.status === "ya existe" ? "bg-gray-100 text-gray-500" : "bg-brand-50 text-brand-700"}`}>
+                          {entry.status}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>
@@ -217,7 +288,7 @@ export default function SettingsPage() {
           <p className="text-gray-500 text-sm mb-4">La API key de Resend se configura en las variables de entorno de Railway.</p>
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 font-mono text-xs text-gray-600 space-y-1">
             <p>RESEND_API_KEY=re_xxxxxxxxxxxx</p>
-            <p>RESEND_FROM_EMAIL=Happy Lápiz &lt;clientes@happylapiz.cl&gt;</p>
+            <p>RESEND_FROM_EMAIL=Tu Tienda &lt;ventas@tudominio.cl&gt;</p>
             <p>RESEND_WEBHOOK_SECRET=tu_secreto</p>
             <p className="text-brand-600 mt-2">NOTIFY_EMAIL=tu@email.com &nbsp;<span className="text-gray-400 font-sans not-italic">← recibe alertas de desuscripciones</span></p>
           </div>

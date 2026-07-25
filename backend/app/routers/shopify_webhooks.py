@@ -5,15 +5,20 @@ Triggers cubiertos (espejo de Klaviyo):
   Desde Shopify:
     checkout_started       checkouts/create
     abandoned_cart         checkouts/create (sin orden tras X horas)
-    placed_order           orders/create
-    ordered_product        orders/create (por cada line_item)
-    fulfilled_order        orders/fulfilled
+    placed_order            orders/create
+    ordered_product         orders/create (por cada line_item)
+    fulfilled_order         orders/fulfilled
     fulfilled_partial_order orders/partially_fulfilled
-    confirmed_shipment     orders/fulfilled con tracking_number
-    delivered_shipment     orders/updated con fulfillment status=delivered
-    cancelled_order        orders/cancelled
-    refunded_order         refunds/create
-    added_to_cart          carts/create / carts/update
+    confirmed_shipment      orders/fulfilled con tracking_number
+    delivered_shipment      orders/updated con fulfillment status=delivered
+    cancelled_order         orders/cancelled
+    refunded_order          refunds/create
+    added_to_cart           carts/create / carts/update
+
+  Compliance (obligatorios para toda app de Shopify que accede a datos de clientes):
+    customers/data_request  → log + 200 (borrado/entrega real es trabajo futuro)
+    customers/redact        → log + 200
+    shop/redact              → log + 200
 
   Internos (no-webhook):
     subscribed_to_email_marketing  → welcome flow
@@ -25,22 +30,27 @@ Triggers cubiertos (espejo de Klaviyo):
   Tracking web (JS pixel → /api/track):
     viewed_product         POST /api/track {event: viewed_product}
     active_on_site         POST /api/track {event: active_on_site}
+
+Multi-tenant: cada webhook trae el header X-Shopify-Shop-Domain, que se usa
+para resolver a qué Shop pertenece el evento y así popular shop_id en cada
+tabla. Si el dominio no corresponde a una tienda instalada/activa, el evento
+se descarta (devolviendo 200 igual, como exige Shopify para no reintentar).
 """
 import hashlib
 import hmac
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
-from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.core.deps import get_current_user
-from app.models.contact import Contact
-from app.models.user import User
+from app.core.deps import get_current_shop
+from app.models.shop import Shop
+from app.services.shopify_client import shopify_headers, shopify_rest_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,18 +58,13 @@ router = APIRouter()
 
 # ── Shopify Products (for template editor product picker) ─────────────────────
 @router.get("/products")
-async def list_shopify_products(_: User = Depends(get_current_user)):
+async def list_shopify_products(shop: Shop = Depends(get_current_shop)):
     """Devuelve los productos activos de Shopify para el editor de plantillas."""
-    token = settings.SHOPIFY_ACCESS_TOKEN
-    domain = settings.SHOPIFY_DOMAIN
-    if not token:
-        raise HTTPException(status_code=400, detail="SHOPIFY_ACCESS_TOKEN no configurado")
-
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(
-            f"https://{domain}/admin/api/2024-01/products.json",
+            shopify_rest_url(shop, "products.json"),
             params={"status": "active", "limit": 250, "fields": "id,title,handle,images,variants"},
-            headers={"X-Shopify-Access-Token": token},
+            headers=shopify_headers(shop),
         )
 
     if resp.status_code != 200:
@@ -73,7 +78,7 @@ async def list_shopify_products(_: User = Depends(get_current_user)):
             "id": str(p["id"]),
             "title": p["title"],
             "handle": p.get("handle", ""),
-            "url": f"https://www.happylapiz.cl/products/{p.get('handle', '')}",
+            "url": f"https://{shop.shopify_domain.replace('.myshopify.com', '')}.myshopify.com/products/{p.get('handle', '')}",
             "image_url": p["images"][0]["src"] if p.get("images") else "",
             "price": variant.get("price", ""),
             "compare_at_price": variant.get("compare_at_price") or "",
@@ -82,23 +87,19 @@ async def list_shopify_products(_: User = Depends(get_current_user)):
 
 
 @router.get("/collections")
-async def list_shopify_collections(_: User = Depends(get_current_user)):
+async def list_shopify_collections(shop: Shop = Depends(get_current_shop)):
     """Devuelve todas las colecciones de Shopify para el configurador de cross-sell."""
-    token = settings.SHOPIFY_ACCESS_TOKEN
-    domain = settings.SHOPIFY_DOMAIN
-    if not token:
-        raise HTTPException(status_code=400, detail="SHOPIFY_ACCESS_TOKEN no configurado")
-    headers = {"X-Shopify-Access-Token": token}
+    headers = shopify_headers(shop)
     smart, custom = [], []
     async with httpx.AsyncClient(timeout=15.0) as client:
         r1 = await client.get(
-            f"https://{domain}/admin/api/2024-01/smart_collections.json",
+            shopify_rest_url(shop, "smart_collections.json"),
             params={"limit": 250, "fields": "id,title,handle"}, headers=headers,
         )
         if r1.status_code == 200:
             smart = r1.json().get("smart_collections", [])
         r2 = await client.get(
-            f"https://{domain}/admin/api/2024-01/custom_collections.json",
+            shopify_rest_url(shop, "custom_collections.json"),
             params={"limit": 250, "fields": "id,title,handle"}, headers=headers,
         )
         if r2.status_code == 200:
@@ -110,54 +111,140 @@ async def list_shopify_collections(_: User = Depends(get_current_user)):
 
 
 def _verify_shopify(body: bytes, hmac_header: str) -> bool:
-    secret = getattr(settings, "SHOPIFY_WEBHOOK_SECRET", "")
-    if not secret:
-        return True
+    """Verifica la firma HMAC del webhook usando el client secret de la app.
+
+    Shopify firma el body con el mismo secret usado en el OAuth flow
+    (SHOPIFY_API_SECRET) — no hay un secret separado "de webhooks".
+    """
+    if not hmac_header or not settings.SHOPIFY_API_SECRET:
+        return False
     import base64
-    digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    digest = hmac.new(settings.SHOPIFY_API_SECRET.encode(), body, hashlib.sha256).digest()
     return hmac.compare_digest(base64.b64encode(digest).decode(), hmac_header)
 
 
-def _log_event(cur, topic: str, shopify_id: str, email: str, payload: dict, now: datetime, trigger: str = None):
+def _log_event(cur, topic: str, shopify_id: str, email: str, payload: dict, now: datetime, shop_id: int, trigger: str = None):
     cur.execute("""
-        INSERT INTO shopify_events (topic, shopify_id, email, payload, automation_triggered, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (topic, shopify_id, email or None, json.dumps(payload), trigger, now))
+        INSERT INTO shopify_events (shop_id, topic, shopify_id, email, payload, automation_triggered, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (shop_id, topic, shopify_id, email or None, json.dumps(payload), trigger, now))
 
 
-@router.post("/webhooks")
-async def shopify_webhook(
-    request: Request,
-    x_shopify_topic: str = Header(default="", alias="x-shopify-topic"),
-    x_shopify_hmac_sha256: str = Header(default="", alias="x-shopify-hmac-sha256"),
-):
-    body = await request.body()
-    if not _verify_shopify(body, x_shopify_hmac_sha256):
-        raise HTTPException(status_code=401, detail="HMAC inválido")
-    try:
-        payload = json.loads(body)
-    except Exception:
-        raise HTTPException(status_code=400, detail="JSON inválido")
+def _resolve_shop_id(cur, shop_domain: str, require_active: bool = True) -> int | None:
+    if not shop_domain:
+        return None
+    # Compliance topics (customers/redact, shop/redact) legitimately arrive for
+    # a shop that's already 'uninstalled' — shop/redact by design fires ~48h
+    # *after* app/uninstalled. Business topics still require 'active' so we
+    # don't process new orders/checkouts for a shop that's no longer installed.
+    if require_active:
+        cur.execute("SELECT id FROM shops WHERE shopify_domain = %s AND status = 'active'", (shop_domain,))
+    else:
+        cur.execute("SELECT id FROM shops WHERE shopify_domain = %s", (shop_domain,))
+    row = cur.fetchone()
+    return row[0] if row else None
 
-    topic = x_shopify_topic
-    logger.info("Shopify webhook: %s", topic)
 
-    import psycopg2
-    conn = psycopg2.connect(settings.DATABASE_URL)
-    conn.autocommit = True
-    cur = conn.cursor()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+def _redact_customer(cur, shop_id: int, email: str) -> None:
+    """Erase/anonymize one customer's PII within one shop (Shopify customers/redact).
 
-    email = (
-        payload.get("email") or
-        payload.get("customer", {}).get("email") or
-        payload.get("contact_email") or ""
-    ).lower().strip()
+    contacts is anonymized in place rather than deleted: campaign_sends and
+    automation_runs hold a NOT NULL/optional FK to contacts.id and are legitimate
+    business records (send/open/click history) worth keeping for reporting —
+    deleting the contacts row would either violate that FK or destroy those
+    records. Tables that store the raw email as free text with no FK pointing
+    at them are wiped or anonymized directly.
 
+    shopify_orders is intentionally left untouched: it's owned by the separate
+    ETL pipeline (happylapiz-etl), not this app, and would just get overwritten
+    on the next sync — redacting it needs an equivalent fix on that side.
+    """
+    if not shop_id or not email:
+        return
+    placeholder = f"redacted-{uuid.uuid4().hex[:12]}@redacted.invalid"
+
+    cur.execute("""
+        UPDATE contacts SET
+            email = %s, name = NULL, phone = NULL,
+            shipping_city = NULL, shipping_province = NULL,
+            all_shipping_cities = NULL, custom_fields = NULL,
+            klaviyo_properties = NULL, klaviyo_location = NULL,
+            location = NULL
+        WHERE shop_id = %s AND email = %s
+    """, (placeholder, shop_id, email))
+
+    cur.execute(
+        "DELETE FROM automation_enrollments WHERE shop_id = %s AND contact_email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "UPDATE automation_runs SET contact_email = %s WHERE shop_id = %s AND contact_email = %s",
+        (placeholder, shop_id, email),
+    )
+    cur.execute(
+        "DELETE FROM form_submissions WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "DELETE FROM gift_recipients WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "DELETE FROM shopify_events WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute(
+        "UPDATE shopify_checkouts SET email = NULL WHERE shop_id = %s AND email = %s",
+        (shop_id, email),
+    )
+    cur.execute("""
+        UPDATE carritos_abandonados SET email = %s, first_name = NULL, last_name = NULL, phone = NULL
+        WHERE shop_id = %s AND email = %s
+    """, (placeholder, shop_id, email))
+    cur.execute(
+        "UPDATE coupon_sends SET contact_email = %s WHERE shop_id = %s AND contact_email = %s",
+        (placeholder, shop_id, email),
+    )
+
+
+def _redact_shop_data(cur, shop_id: int) -> None:
+    """Full tenant wipe for one shop (Shopify shop/redact, fired ~48h after
+    app/uninstalled). Ordered to respect FK constraints — children before the
+    parents they reference (campaign_sends before campaigns/contacts, everything
+    that references users.created_by before users, etc).
+    """
+    if not shop_id:
+        return
+    tables_in_fk_order = [
+        "campaign_sends", "automation_runs", "automation_enrollments",
+        "coupon_sends", "form_submissions",
+        "campaigns", "automations", "signup_forms",
+        "templates", "segments", "coupon_campaigns",
+        "contacts", "gift_recipients",
+        "shopify_events", "shopify_checkouts", "carritos_abandonados", "shopify_products",
+        "users",
+    ]
+    for table in tables_in_fk_order:
+        cur.execute(f"DELETE FROM {table} WHERE shop_id = %s", (shop_id,))
+    # Blank the access token too — status is already 'uninstalled' from the
+    # app/uninstalled handler, but this makes a stale/leaked credential unusable
+    # even if the shops row itself is kept around for audit purposes.
+    cur.execute(
+        "UPDATE shops SET access_token_encrypted = '', shop_owner_email = NULL WHERE id = %s",
+        (shop_id,),
+    )
+
+
+def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: datetime, shop_id: int) -> None:
+    """Runs the per-topic side effects for one webhook. Raises on failure (e.g. a
+    raw table like shopify_checkouts/shopify_events not existing yet in this
+    environment) — the caller is responsible for catching that and still
+    returning 200 to Shopify so it doesn't retry-storm the endpoint.
+    """
     # ── Cart events → Added to Cart ──────────────────────────────────────────
     if topic in ("carts/create", "carts/update"):
         cart_id = str(payload.get("id", payload.get("token", "")))
-        _log_event(cur, topic, cart_id, email, payload, now, "added_to_cart")
+        _log_event(cur, topic, cart_id, email, payload, now, shop_id, "added_to_cart")
 
     # ── Checkout → Checkout Started + future Abandoned Cart ──────────────────
     elif topic in ("checkouts/create", "checkouts/update"):
@@ -168,14 +255,14 @@ async def shopify_webhook(
 
         # Legacy table (used by automation engine)
         cur.execute("""
-            INSERT INTO shopify_checkouts (checkout_token, email, cart_total, line_items, recovered, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO shopify_checkouts (shop_id, checkout_token, email, cart_total, line_items, recovered, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (checkout_token) DO UPDATE SET
                 email = EXCLUDED.email, cart_total = EXCLUDED.cart_total,
                 line_items = EXCLUDED.line_items,
                 recovered = shopify_checkouts.recovered OR %s,
                 updated_at = EXCLUDED.updated_at
-        """, (token, email or None, total, json.dumps(items), completed, now, completed))
+        """, (shop_id, token, email or None, total, json.dumps(items), completed, now, completed))
 
         # Full abandoned cart table
         customer   = payload.get("customer") or {}
@@ -207,7 +294,7 @@ async def shopify_webhook(
 
         cur.execute("""
             INSERT INTO carritos_abandonados (
-                checkout_token, email, first_name, last_name, phone,
+                shop_id, checkout_token, email, first_name, last_name, phone,
                 subtotal_price, total_price, total_discounts, currency,
                 line_items,
                 shipping_city, shipping_province, shipping_country,
@@ -216,7 +303,7 @@ async def shopify_webhook(
                 shopify_created_at, shopify_updated_at,
                 created_at, updated_at
             ) VALUES (
-                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s,
                 %s, %s, %s,
@@ -245,7 +332,7 @@ async def shopify_webhook(
                 shopify_updated_at = EXCLUDED.shopify_updated_at,
                 updated_at         = NOW()
         """, (
-            token, email or None, first_name, last_name, phone,
+            shop_id, token, email or None, first_name, last_name, phone,
             float(payload.get("subtotal_price") or 0),
             total,
             float(payload.get("total_discounts") or 0),
@@ -262,7 +349,7 @@ async def shopify_webhook(
             shopify_updated,
         ))
 
-        _log_event(cur, topic, token, email, payload, now, "checkout_started")
+        _log_event(cur, topic, token, email, payload, now, shop_id, "checkout_started")
 
     # ── Order created → Placed Order + Ordered Product + Coupon Used ─────────
     elif topic == "orders/create":
@@ -275,13 +362,13 @@ async def shopify_webhook(
         if email:
             cur.execute("""
                 UPDATE shopify_checkouts SET recovered = TRUE, updated_at = %s
-                WHERE email = %s AND recovered = FALSE
-            """, (now, email))
+                WHERE email = %s AND shop_id = %s AND recovered = FALSE
+            """, (now, email, shop_id))
             cur.execute("""
                 UPDATE carritos_abandonados
                 SET recovered = TRUE, recovered_at = %s, updated_at = %s
-                WHERE email = %s AND recovered = FALSE
-            """, (now, now, email))
+                WHERE email = %s AND shop_id = %s AND recovered = FALSE
+            """, (now, now, email, shop_id))
 
         # Update contact stats
         if email:
@@ -292,16 +379,16 @@ async def shopify_webhook(
                     last_purchase = %s,
                     ticket_medio = (COALESCE(total_spent, 0) + %s) / NULLIF(orders_count + 1, 0),
                     updated_at = %s
-                WHERE email = %s
-            """, (total, now.date(), total, now, email))
+                WHERE email = %s AND shop_id = %s
+            """, (total, now.date(), total, now, email, shop_id))
 
         # placed_order trigger
-        _log_event(cur, topic, order_id, email, payload, now, "placed_order")
+        _log_event(cur, topic, order_id, email, payload, now, shop_id, "placed_order")
 
         # ordered_product: one event per line item
         for item in items:
             _log_event(cur, "ordered_product", order_id,
-                       email, {**payload, "_item": item}, now, "ordered_product")
+                       email, {**payload, "_item": item}, now, shop_id, "ordered_product")
 
         # Sync to normalized order tables so the purchased_product segment filter works
         import json as _json
@@ -361,47 +448,131 @@ async def shopify_webhook(
             if code:
                 # Mark coupon as used in our system
                 cur.execute("""
-                    UPDATE coupon_sends SET used = TRUE WHERE code = %s
-                """, (code,))
+                    UPDATE coupon_sends SET used = TRUE WHERE code = %s AND shop_id = %s
+                """, (code, shop_id))
                 _log_event(cur, "coupon_used", order_id, email,
-                           {**payload, "_coupon": code}, now, "coupon_used")
+                           {**payload, "_coupon": code}, now, shop_id, "coupon_used")
 
     # ── Order fulfilled ───────────────────────────────────────────────────────
     elif topic == "orders/fulfilled":
         order_id = str(payload.get("id", ""))
         fulfillments = payload.get("fulfillments", [])
         has_tracking = any(f.get("tracking_number") for f in fulfillments)
-        _log_event(cur, topic, order_id, email, payload, now, "fulfilled_order")
+        _log_event(cur, topic, order_id, email, payload, now, shop_id, "fulfilled_order")
         if has_tracking:
-            _log_event(cur, "confirmed_shipment", order_id, email, payload, now, "confirmed_shipment")
+            _log_event(cur, "confirmed_shipment", order_id, email, payload, now, shop_id, "confirmed_shipment")
 
     # ── Partial fulfillment ───────────────────────────────────────────────────
     elif topic == "orders/partially_fulfilled":
         order_id = str(payload.get("id", ""))
-        _log_event(cur, topic, order_id, email, payload, now, "fulfilled_partial_order")
+        _log_event(cur, topic, order_id, email, payload, now, shop_id, "fulfilled_partial_order")
 
     # ── Order updated → check for delivered shipment ──────────────────────────
     elif topic == "orders/updated":
         order_id = str(payload.get("id", ""))
         for f in payload.get("fulfillments", []):
             if f.get("shipment_status") == "delivered":
-                _log_event(cur, "delivered_shipment", order_id, email, payload, now, "delivered_shipment")
+                _log_event(cur, "delivered_shipment", order_id, email, payload, now, shop_id, "delivered_shipment")
                 break
         # marked_out_for_delivery
         for f in payload.get("fulfillments", []):
             if f.get("shipment_status") in ("out_for_delivery", "in_transit"):
-                _log_event(cur, "marked_out_for_delivery", order_id, email, payload, now, "marked_out_for_delivery")
+                _log_event(cur, "marked_out_for_delivery", order_id, email, payload, now, shop_id, "marked_out_for_delivery")
                 break
 
     # ── Order cancelled ───────────────────────────────────────────────────────
     elif topic == "orders/cancelled":
         order_id = str(payload.get("id", ""))
-        _log_event(cur, topic, order_id, email, payload, now, "cancelled_order")
+        _log_event(cur, topic, order_id, email, payload, now, shop_id, "cancelled_order")
 
     # ── Refund ────────────────────────────────────────────────────────────────
     elif topic == "refunds/create":
         order_id = str(payload.get("order_id", ""))
-        _log_event(cur, topic, order_id, email, payload, now, "refunded_order")
+        _log_event(cur, topic, order_id, email, payload, now, shop_id, "refunded_order")
+
+    # ── App uninstalled ─────────────────────────────────────────────────────────
+    elif topic == "app/uninstalled":
+        cur.execute("""
+            UPDATE shops SET status = 'uninstalled', uninstalled_at = %s, updated_at = %s
+            WHERE id = %s
+        """, (now, now, shop_id))
+        logger.info("App desinstalada por la tienda id=%s", shop_id)
+
+    # ── Compliance / GDPR (obligatorios) ─────────────────────────────────────────
+    elif topic in ("customers/data_request", "customers/redact", "shop/redact"):
+        subject_id = str(
+            (payload.get("customer") or {}).get("id") or payload.get("shop_id") or ""
+        )
+        trigger = "gdpr_" + topic.replace("/", "_")
+
+        if topic == "customers/redact":
+            _redact_customer(cur, shop_id, email)
+            # Log the fact that a redact happened, not the PII we just erased.
+            _log_event(cur, topic, subject_id, None, {"redacted": True}, now, shop_id, trigger)
+            logger.info("customers/redact: PII borrada/anonimizada (shop_id=%s)", shop_id)
+        elif topic == "shop/redact":
+            _redact_shop_data(cur, shop_id)
+            _log_event(cur, topic, subject_id, None, {"redacted": True}, now, shop_id, trigger)
+            logger.info("shop/redact: datos de shop_id=%s eliminados", shop_id)
+        else:
+            # customers/data_request exige *entregar* los datos al comerciante,
+            # no borrarlos — eso todavía no está implementado. Por ahora queda
+            # registrado en shopify_events para trackear que Shopify lo pidió
+            # y cuándo, y se responde 200 para que no reintente.
+            _log_event(cur, topic, subject_id, email, payload, now, shop_id, trigger)
+            logger.info("customers/data_request recibido (shop_id=%s) — export manual pendiente", shop_id)
+
+
+@router.post("/webhooks")
+async def shopify_webhook(
+    request: Request,
+    x_shopify_topic: str = Header(default="", alias="x-shopify-topic"),
+    x_shopify_hmac_sha256: str = Header(default="", alias="x-shopify-hmac-sha256"),
+    x_shopify_shop_domain: str = Header(default="", alias="x-shopify-shop-domain"),
+):
+    body = await request.body()
+    if not _verify_shopify(body, x_shopify_hmac_sha256):
+        raise HTTPException(status_code=401, detail="HMAC inválido")
+    try:
+        payload = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON inválido")
+
+    topic = x_shopify_topic
+    logger.info("Shopify webhook: %s (shop=%s)", topic, x_shopify_shop_domain)
+
+    import psycopg2
+    conn = psycopg2.connect(settings.DATABASE_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    compliance_topics = ("customers/data_request", "customers/redact", "shop/redact")
+    shop_id = _resolve_shop_id(cur, x_shopify_shop_domain, require_active=topic not in compliance_topics)
+    if shop_id is None:
+        logger.warning("Webhook de tienda desconocida o desinstalada: %s", x_shopify_shop_domain)
+        cur.close()
+        conn.close()
+        # Shopify exige 200 para no reintentar, aunque no procesemos el evento.
+        return {"ok": True, "topic": topic, "skipped": "unknown_shop"}
+
+    email = (
+        payload.get("email") or
+        payload.get("customer", {}).get("email") or
+        payload.get("contact_email") or ""
+    ).lower().strip()
+
+    try:
+        _dispatch_webhook_topic(cur, topic, payload, email, now, shop_id)
+    except Exception:
+        # No dejar que un error de procesamiento (ej. una tabla que todavía no
+        # existe en este ambiente) tumbe la respuesta con un 500 — Shopify
+        # reintenta webhooks fallidos agresivamente y puede llegar a desactivar
+        # la suscripción. Se loguea y se responde 200 igual.
+        logger.exception("Error procesando webhook %s (shop_id=%s)", topic, shop_id)
+        cur.close()
+        conn.close()
+        return {"ok": True, "topic": topic, "skipped": "processing_error"}
 
     cur.close()
     conn.close()
@@ -411,6 +582,7 @@ async def shopify_webhook(
 # ── Web tracking pixel ────────────────────────────────────────────────────────
 class TrackEvent(BaseModel):
     event: str           # viewed_product | active_on_site | added_to_cart
+    shop_domain: str = ""  # ej: "mi-tienda.myshopify.com" — lo setea el snippet embebido
     email: str = ""
     product_id: str = ""
     product_title: str = ""
@@ -420,7 +592,8 @@ class TrackEvent(BaseModel):
 
 @router.post("/track")
 async def track_event(body: TrackEvent):
-    """Recibe eventos de tracking desde el JS pixel en happylapiz.cl."""
+    """Recibe eventos de tracking desde el JS pixel embebido en la tienda (público,
+    lo llaman visitantes anónimos del storefront — no requiere login)."""
     allowed = {"viewed_product", "active_on_site", "added_to_cart", "subscribed_to_back_in_stock"}
     if body.event not in allowed:
         raise HTTPException(status_code=400, detail=f"Evento no permitido: {body.event}")
@@ -431,16 +604,22 @@ async def track_event(body: TrackEvent):
     cur = conn.cursor()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
+    shop_id = _resolve_shop_id(cur, body.shop_domain)
+    if shop_id is None:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Tienda desconocida")
+
     email = body.email.lower().strip() if body.email else ""
 
     # Update last_event_date if contact exists
     if email and body.event == "active_on_site":
         cur.execute("""
-            UPDATE contacts SET ultima_visita_web = %s, updated_at = %s WHERE email = %s
-        """, (now, now, email))
+            UPDATE contacts SET ultima_visita_web = %s, updated_at = %s WHERE email = %s AND shop_id = %s
+        """, (now, now, email, shop_id))
 
     _log_event(cur, body.event, body.product_id or "web", email,
-               {"url": body.url, "product_title": body.product_title, **body.extra}, now, body.event)
+               {"url": body.url, "product_title": body.product_title, **body.extra}, now, shop_id, body.event)
 
     cur.close()
     conn.close()

@@ -121,6 +121,7 @@ def compile_template_payload(data: dict) -> dict:
 def upsert_block_template(
     session: Session,
     *,
+    shop_id: int,
     name: str,
     subject: str,
     preview: str,
@@ -130,7 +131,9 @@ def upsert_block_template(
 ) -> Template:
     now = datetime.utcnow()
     html = blocks_to_html(blocks)
-    existing = session.exec(select(Template).where(Template.name == name)).first()
+    existing = session.exec(
+        select(Template).where(Template.name == name, Template.shop_id == shop_id)
+    ).first()
     if existing:
         if not force:
             return existing
@@ -149,6 +152,7 @@ def upsert_block_template(
         html_content=html,
         json_blocks=blocks,
         created_by=created_by,
+        shop_id=shop_id,
         created_at=now,
         updated_at=now,
     )
@@ -157,18 +161,22 @@ def upsert_block_template(
     return tpl
 
 
-def ensure_managed_block_templates(session: Session, *, force: bool = False) -> None:
-    """Create managed templates if missing. Never overwrites user-edited blocks unless force=True."""
-    admin = session.exec(select(User).order_by(User.id)).first()
+def ensure_managed_block_templates(session: Session, shop_id: int, *, force: bool = False) -> None:
+    """Create managed templates if missing, for the given shop. Never overwrites
+    user-edited blocks unless force=True."""
+    admin = session.exec(select(User).where(User.shop_id == shop_id).order_by(User.id)).first()
     admin_id = admin.id if admin else None
     for meta in MANAGED_BLOCK_TEMPLATES:
-        existing = session.exec(select(Template).where(Template.name == meta["name"])).first()
+        existing = session.exec(
+            select(Template).where(Template.name == meta["name"], Template.shop_id == shop_id)
+        ).first()
         blocks, html = resolve_composition(meta["composition"])
 
         if existing:
             if force:
                 upsert_block_template(
                     session,
+                    shop_id=shop_id,
                     name=meta["name"],
                     subject=meta["subject"],
                     preview=meta["preview"],
@@ -188,6 +196,7 @@ def ensure_managed_block_templates(session: Session, *, force: bool = False) -> 
 
         upsert_block_template(
             session,
+            shop_id=shop_id,
             name=meta["name"],
             subject=meta["subject"],
             preview=meta["preview"],

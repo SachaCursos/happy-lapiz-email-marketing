@@ -3,8 +3,8 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Happy Lápiz Email",
-  description: "Plataforma de email marketing Happy Lápiz",
+  title: "Email Marketing",
+  description: "Plataforma de email marketing",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

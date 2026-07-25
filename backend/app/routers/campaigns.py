@@ -8,13 +8,15 @@ from jinja2 import Template as JTemplate
 import resend
 from app.database import get_session, engine
 from app.core.config import settings
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.models.user import User
-from app.models.campaign import Campaign, CampaignCreate, CampaignRead, CampaignStats, CampaignUpdate, CampaignSend
+from app.models.shop import Shop
+from app.models.campaign import Campaign, CampaignCreate, CampaignRead, CampaignStats, CampaignUpdate, CampaignSend, CampaignVariantStat
 from app.models.contact import Contact
 from app.models.segment import Segment
 from app.models.template import Template
 from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipients
+from app.services.segment_evaluator import evaluate_segment
 from app.services.email_sender import (
     send_campaign_batch,
     send_campaign_until_idle,
@@ -27,6 +29,7 @@ from app.services.email_sender import (
     render_html,
     render_template_text,
     uses_regalado_vars,
+    replace_unsub_tag,
 )
 
 
@@ -49,10 +52,10 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[CampaignRead])
-def list_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def list_campaigns(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     # Newest activity first; UI does secondary sorting by column.
     return session.exec(
-        select(Campaign).order_by(
+        select(Campaign).where(Campaign.shop_id == shop.id).order_by(
             nulls_last(desc(Campaign.sent_at)),
             desc(Campaign.created_at),
         )
@@ -64,11 +67,12 @@ def create_campaign(
     payload: CampaignCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     data = payload.model_dump()
     if not data.get("status"):
         data["status"] = "scheduled" if data.get("scheduled_at") else "draft"
-    campaign = Campaign(**data, created_by=current_user.id)
+    campaign = Campaign(**data, created_by=current_user.id, shop_id=shop.id)
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
@@ -80,15 +84,18 @@ def preview_campaign_audience(
     payload: AudiencePreviewRequest,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     seg_ids = payload.segment_ids or ([payload.segment_id] if payload.segment_id else [])
     if not seg_ids:
         raise HTTPException(status_code=400, detail="No se especificó ningún segmento")
     for sid in seg_ids:
-        if not session.get(Segment, sid):
+        seg = session.get(Segment, sid)
+        if not seg or seg.shop_id != shop.id:
             raise HTTPException(status_code=404, detail=f"Segmento {sid} no encontrado")
     return count_campaign_recipients(
         session,
+        shop.id,
         segment_ids=seg_ids,
         exclude_segment_ids=payload.exclude_segment_ids or None,
     )
@@ -99,9 +106,10 @@ def duplicate_campaign(
     campaign_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     copy = Campaign(
         name=f"{c.name} (copia)",
@@ -113,6 +121,7 @@ def duplicate_campaign(
         exclude_segment_ids=c.exclude_segment_ids,
         status="draft",
         created_by=current_user.id,
+        shop_id=shop.id,
     )
     session.add(copy)
     session.commit()
@@ -121,9 +130,9 @@ def duplicate_campaign(
 
 
 @router.get("/{campaign_id}", response_model=CampaignRead)
-def get_campaign(campaign_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_campaign(campaign_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     return c
 
@@ -134,9 +143,10 @@ def update_campaign(
     payload: CampaignUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     if c.status == "sent":
         raise HTTPException(status_code=400, detail="No se puede editar una campaña ya enviada")
@@ -155,9 +165,10 @@ def delete_campaign(
     campaign_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     if c.status in ("sending", "paused", "sent"):
         raise HTTPException(status_code=400, detail="No se puede eliminar campaña enviada o en envío")
@@ -170,9 +181,10 @@ def pause_campaign(
     campaign_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     if c.status != "sending":
         raise HTTPException(status_code=400, detail="Solo se pueden pausar campañas en envío")
@@ -190,9 +202,10 @@ def send_campaign_now(
     opts: SendOptions = Body(default=SendOptions()),
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     if c.status not in ("draft", "scheduled", "sent", "sending", "paused"):
         raise HTTPException(status_code=400, detail=f"Estado inválido para envío: {c.status}")
@@ -201,7 +214,7 @@ def send_campaign_now(
     if not seg_ids:
         raise HTTPException(status_code=400, detail="Segmento no configurado")
 
-    contacts = get_campaign_recipients(session, segment_ids=seg_ids, exclude_segment_ids=c.exclude_segment_ids)
+    contacts = get_campaign_recipients(session, shop.id, segment_ids=seg_ids, exclude_segment_ids=c.exclude_segment_ids)
     if not contacts:
         raise HTTPException(
             status_code=400,
@@ -243,10 +256,10 @@ def send_campaign_now(
 
 
 @router.get("/{campaign_id}/send-progress")
-def send_progress(campaign_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def send_progress(campaign_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     """Retorna cuántos contactos tiene el segmento y cuántos ya recibieron la campaña."""
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     from app.services.email_sender import get_campaign_send_progress
 
@@ -258,72 +271,86 @@ def send_test_email(
     campaign_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
-    """Envía un email de prueba al usuario autenticado."""
+    """Envía un email de prueba al usuario autenticado (una prueba por variante si hay A/B)."""
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
-    tpl = session.get(Template, c.template_id)
-    if not tpl:
-        raise HTTPException(status_code=400, detail="Plantilla no encontrada")
 
     contact = session.exec(
-        select(Contact).where(Contact.email == current_user.email.lower())
+        select(Contact).where(Contact.email == current_user.email.lower(), Contact.shop_id == shop.id)
     ).first()
     from app.services.template_block_compiler import resolve_template_html
 
-    tpl_html = resolve_template_html(tpl)
-    regalado = uses_regalado_vars(tpl_html, c.subject)
+    resend.api_key = settings.RESEND_API_KEY
+    nombre = current_user.name or current_user.email.split("@")[0]
+    sent = []
 
-    if contact:
-        vars_ = build_contact_template_vars(
-            contact,
-            session=session,
-            load_submission=regalado,
-        )
-        html = _inject_footer(
-            render_html(
-                tpl_html,
+    variants = c.variants if c.variants and len(c.variants) >= 2 else None
+    items = variants if variants else [{"variant": None, "subject": c.subject, "template_id": c.template_id}]
+
+    for item in items:
+        tpl = session.get(Template, int(item["template_id"]))
+        if not tpl:
+            continue
+
+        tpl_html = resolve_template_html(tpl)
+        item_subject = item.get("subject") or c.subject
+        regalado = uses_regalado_vars(tpl_html, item_subject)
+
+        if contact:
+            vars_ = build_contact_template_vars(
                 contact,
-                vars_=vars_,
-                preprocess_regalado=regalado,
-            ),
-            current_user.email,
-        )
-        subject = render_template_text(
-            c.subject,
-            contact,
-            vars_=vars_,
-            preprocess_regalado=regalado,
-        )
-        preview_raw = c.preview_text or tpl.preview_text or ""
-        if preview_raw:
-            preview_rendered = render_template_text(
-                preview_raw,
+                session=session,
+                load_submission=regalado,
+            )
+            html = _inject_footer(
+                render_html(
+                    tpl_html,
+                    contact,
+                    vars_=vars_,
+                    preprocess_regalado=regalado,
+                ),
+                current_user.email,
+                shop.display_name(),
+            )
+            subject = render_template_text(
+                item_subject,
                 contact,
                 vars_=vars_,
                 preprocess_regalado=regalado,
             )
-            html = inject_preheader(html, preview_rendered)
-    else:
-        nombre = current_user.name or current_user.email.split("@")[0]
-        html = _inject_footer(JTemplate(tpl_html).render(nombre=nombre), current_user.email)
-        subject = c.subject
-        html = inject_preheader(html, c.preview_text or tpl.preview_text or "")
+            preview_raw = c.preview_text or tpl.preview_text or ""
+            if preview_raw:
+                preview_rendered = render_template_text(
+                    preview_raw,
+                    contact,
+                    vars_=vars_,
+                    preprocess_regalado=regalado,
+                )
+                html = inject_preheader(html, preview_rendered)
+        else:
+            raw_html = replace_unsub_tag(tpl_html, current_user.email)
+            html = _inject_footer(JTemplate(raw_html).render(nombre=nombre), current_user.email, shop.display_name())
+            subject = item_subject
+            html = inject_preheader(html, c.preview_text or tpl.preview_text or "")
 
-    resend.api_key = settings.RESEND_API_KEY
-    try:
-        result = resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": [current_user.email],
-            "subject": f"[PRUEBA] {subject}",
-            "html": html,
-            "headers": _unsub_headers(current_user.email),
-        })
-        email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
-        return {"ok": True, "sent_to": current_user.email, "email_id": email_id}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        label = f"[PRUEBA {item['variant']}] " if item.get("variant") else "[PRUEBA] "
+        try:
+            result = resend.Emails.send({
+                "from": settings.RESEND_FROM_EMAIL,
+                "to": [current_user.email],
+                "subject": f"{label}{subject}",
+                "html": html,
+                "headers": _unsub_headers(current_user.email),
+            })
+            email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+            sent.append({"variant": item.get("variant"), "email_id": email_id})
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    return {"ok": True, "sent_to": current_user.email, "sent": sent}
 
 
 @router.get("/{campaign_id}/stats", response_model=CampaignStats)
@@ -333,9 +360,10 @@ def campaign_stats(
     date_to: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     c = session.get(Campaign, campaign_id)
-    if not c:
+    if not c or c.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
     params: dict = {"cid": campaign_id}
@@ -373,6 +401,28 @@ def campaign_stats(
     complained = int(row[6] or 0)
 
     base = delivered or sent or 1
+
+    # Build per-variant stats
+    sends = session.exec(
+        select(CampaignSend).where(CampaignSend.campaign_id == campaign_id, CampaignSend.variant_sent.isnot(None))
+    ).all()
+    variant_labels = sorted({s.variant_sent for s in sends if s.variant_sent})
+    variant_stats: list[CampaignVariantStat] = []
+    for label in variant_labels:
+        vs = [s for s in sends if s.variant_sent == label]
+        vs_sent    = sum(1 for s in vs if s.status not in ("queued", "failed"))
+        vs_opened  = sum(1 for s in vs if s.opened_at is not None)
+        vs_clicked = sum(1 for s in vs if s.clicked_at is not None)
+        vs_base    = vs_sent or 1
+        variant_stats.append(CampaignVariantStat(
+            variant=label,
+            sent=vs_sent,
+            opened=vs_opened,
+            clicked=vs_clicked,
+            open_rate=round(vs_opened / vs_base * 100, 1),
+            click_rate=round(vs_clicked / vs_base * 100, 1),
+        ))
+
     return CampaignStats(
         campaign_id=campaign_id,
         total=total,
@@ -385,6 +435,7 @@ def campaign_stats(
         open_rate=round(opened / base * 100, 1),
         click_rate=round(clicked / base * 100, 1),
         bounce_rate=round(bounced / (sent or 1) * 100, 1),
+        variants=variant_stats,
     )
 
 
@@ -396,6 +447,7 @@ def campaign_conversions(
     date_to: str | None = Query(default=None),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """
     Atribución estilo Klaviyo: pedidos dentro de `days` días posteriores
@@ -404,7 +456,7 @@ def campaign_conversions(
     from app.services.campaign_attribution import get_campaign_attribution
 
     campaign = session.get(Campaign, campaign_id)
-    if not campaign:
+    if not campaign or campaign.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
     empty = {"campaign_id": campaign_id, "window_days": days, "bookings": 0, "revenue": 0.0, "converted_contacts": 0}
@@ -425,7 +477,7 @@ def campaign_conversions(
     order_to = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)) if date_to else None
 
     stats = get_campaign_attribution(
-        session, campaign_id, window_days=days,
+        session, campaign_id, shop.id, window_days=days,
         order_date_from=order_from, order_date_to=order_to,
     )
     return {
@@ -440,10 +492,11 @@ def campaign_sends(
     campaign_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """Lista de contactos a los que se envió la campaña con su estado individual."""
     campaign = session.get(Campaign, campaign_id)
-    if not campaign:
+    if not campaign or campaign.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
     sends = session.exec(
@@ -455,16 +508,17 @@ def campaign_sends(
 
     return [
         {
-            "contact_id": s.contact_id,
-            "name":       contacts[s.contact_id].name if s.contact_id in contacts else "—",
-            "email":      contacts[s.contact_id].email if s.contact_id in contacts else "—",
-            "opted_in":   contacts[s.contact_id].opted_in if s.contact_id in contacts else None,
-            "status":     s.status,
-            "sent_at":    s.sent_at,
+            "contact_id":   s.contact_id,
+            "name":         contacts[s.contact_id].name if s.contact_id in contacts else "—",
+            "email":        contacts[s.contact_id].email if s.contact_id in contacts else "—",
+            "opted_in":     contacts[s.contact_id].opted_in if s.contact_id in contacts else None,
+            "status":       s.status,
+            "variant_sent": s.variant_sent,
+            "sent_at":      s.sent_at,
             "delivered_at": s.delivered_at,
-            "opened_at":  s.opened_at,
-            "clicked_at": s.clicked_at,
-            "bounced_at": s.bounced_at,
+            "opened_at":    s.opened_at,
+            "clicked_at":   s.clicked_at,
+            "bounced_at":   s.bounced_at,
         }
         for s in sends
     ]

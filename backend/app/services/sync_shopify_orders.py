@@ -22,6 +22,41 @@ logger = logging.getLogger(__name__)
 
 _API_VERSION = "2024-10"
 
+# shopify_orders can also be populated by a separate external ETL pipeline
+# (happylapiz-etl) ahead of this app tagging shop_id — on an environment where
+# that hasn't happened yet (e.g. a fresh DB) the table can exist with only a
+# subset of its normal columns. Check before querying so a schema that isn't
+# ready yet logs one short line instead of the scheduler dumping a full
+# traceback every tick.
+_REQUIRED_COLUMNS = {
+    "email", "total_price", "financial_status", "cancelled_at", "created_at",
+    "first_name", "last_name", "raw", "shipping_city", "shipping_province", "shop_id",
+}
+
+# Set once the "schema not ready" warning has been logged, so it prints a single
+# time per process instead of every scheduler tick until the missing column(s)
+# show up.
+_schema_warning_logged = False
+
+
+def _shopify_orders_schema_ready(conn) -> bool:
+    global _schema_warning_logged
+    existing = {
+        row[0] for row in conn.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'shopify_orders'"
+        ))
+    }
+    missing = _REQUIRED_COLUMNS - existing
+    if missing:
+        if not _schema_warning_logged:
+            logger.warning(
+                "sync_contacts_from_shopify_orders: shopify_orders le faltan columnas %s — salteando hasta que esten listas (este warning no se repite)",
+                sorted(missing),
+            )
+            _schema_warning_logged = True
+        return False
+    return True
+
 
 def _parse_shopify_dt(value: str | None) -> datetime | None:
     if not value:
@@ -264,12 +299,24 @@ def _backfill_missing_order_events(conn) -> int:
 def sync_contacts_from_shopify_orders() -> dict:
     pull = pull_recent_orders_from_shopify(lookback_hours=72)
 
-    _RECENT = "AND created_at >= NOW() - INTERVAL '72 hours'"
-
-    _STATS_CTE = f"""
+    # Aggregate stats and latest-order details per buyer email. Lifetime
+    # totals (not windowed) — a windowed aggregate here would overwrite
+    # orders_count/total_spent down to just "orders in the last N hours"
+    # on every scheduler tick, silently erasing older order history.
+    #
+    # shop_id IS NOT NULL on both CTEs: rows land in shopify_orders before
+    # shop_id is always guaranteed to be tagged (e.g. via the external
+    # happylapiz-etl pipeline, or _upsert_order_from_payload above pending its
+    # own multi-tenant follow-up). Guessing a shop_id here (e.g. defaulting to
+    # "the" shop) would either mis-assign orders once a second shop exists, or
+    # keep inserting shop_id-NULL contacts forever and block the eventual NOT
+    # NULL tightening (0004_tighten_shop_id_constraints). Skipping untagged
+    # orders is a no-op today and self-heals once every source tags shop_id.
+    _STATS_CTE = """
         order_stats AS (
             SELECT
                 lower(email)                              AS email,
+                shop_id                                   AS shop_id,
                 COUNT(*)                                  AS orders_count,
                 SUM(total_price)                          AS total_spent,
                 SUM(total_price) / NULLIF(COUNT(*), 0)   AS ticket_medio,
@@ -279,12 +326,13 @@ def sync_contacts_from_shopify_orders() -> dict:
               AND email <> ''
               AND cancelled_at IS NULL
               AND financial_status NOT IN ('voided', 'refunded')
-              {_RECENT}
-            GROUP BY lower(email)
+              AND shop_id IS NOT NULL
+            GROUP BY lower(email), shop_id
         ),
         latest_order AS (
-            SELECT DISTINCT ON (lower(email))
+            SELECT DISTINCT ON (lower(email), shop_id)
                 lower(email)                                              AS email,
+                shop_id                                                   AS shop_id,
                 TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) AS name,
                 shipping_city,
                 shipping_province,
@@ -292,29 +340,15 @@ def sync_contacts_from_shopify_orders() -> dict:
             FROM shopify_orders
             WHERE email IS NOT NULL
               AND cancelled_at IS NULL
-              {_RECENT}
-            ORDER BY lower(email), created_at DESC
+              AND shop_id IS NOT NULL
+            ORDER BY lower(email), shop_id, created_at DESC
         )
     """
 
     insert_sql = text(f"""
-        WITH {_STATS_CTE},
-        new_buyers AS (
-            SELECT DISTINCT ON (lower(so.email))
-                lower(so.email) AS email,
-                TRIM(COALESCE(so.first_name, '') || ' ' || COALESCE(so.last_name, '')) AS name,
-                so.shipping_city,
-                so.shipping_province,
-                COALESCE((so.raw->>'buyer_accepts_marketing')::boolean, false) AS accepts_marketing,
-                so.created_at
-            FROM shopify_orders so
-            WHERE so.email IS NOT NULL AND so.email <> ''
-              AND so.cancelled_at IS NULL
-              AND so.created_at >= NOW() - INTERVAL '30 days'
-            ORDER BY lower(so.email), so.created_at DESC
-        )
+        WITH {_STATS_CTE}
         INSERT INTO contacts (
-            email, name,
+            shop_id, email, name,
             orders_count, total_spent, ticket_medio, last_purchase,
             shipping_city, shipping_province,
             opted_in, accepts_marketing,
@@ -322,18 +356,23 @@ def sync_contacts_from_shopify_orders() -> dict:
             created_at, updated_at
         )
         SELECT
-            nb.email,
-            nb.name,
-            1, 0, 0, nb.created_at::date,
-            nb.shipping_city,
-            nb.shipping_province,
+            os.shop_id,
+            os.email,
+            lo.name,
+            os.orders_count,
+            os.total_spent,
+            os.ticket_medio,
+            os.last_purchase,
+            lo.shipping_city,
+            lo.shipping_province,
             true,
-            nb.accepts_marketing,
+            lo.accepts_marketing,
             'shopify',
             NOW(), NOW()
-        FROM new_buyers nb
+        FROM order_stats os
+        JOIN latest_order lo ON lo.email = os.email AND lo.shop_id = os.shop_id
         WHERE NOT EXISTS (
-            SELECT 1 FROM contacts c WHERE lower(c.email) = nb.email
+            SELECT 1 FROM contacts c WHERE lower(c.email) = os.email
         )
         RETURNING id
     """)
@@ -348,9 +387,10 @@ def sync_contacts_from_shopify_orders() -> dict:
             last_purchase     = os.last_purchase,
             shipping_city     = COALESCE(lo.shipping_city,    c.shipping_city),
             shipping_province = COALESCE(lo.shipping_province, c.shipping_province),
+            shop_id           = COALESCE(c.shop_id, os.shop_id),
             updated_at        = NOW()
         FROM order_stats os
-        JOIN latest_order lo ON lo.email = os.email
+        JOIN latest_order lo ON lo.email = os.email AND lo.shop_id = os.shop_id
         WHERE lower(c.email) = os.email
           AND (
               c.last_purchase   IS DISTINCT FROM os.last_purchase
@@ -360,6 +400,8 @@ def sync_contacts_from_shopify_orders() -> dict:
     """)
 
     with engine.connect() as conn:
+        if not _shopify_orders_schema_ready(conn):
+            return {"created": 0, "updated": 0, "skipped": "shopify_orders schema not ready"}
         ins = conn.execute(insert_sql)
         upd = conn.execute(update_sql)
         backfilled = _backfill_missing_order_events(conn)

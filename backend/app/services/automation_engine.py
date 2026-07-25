@@ -18,6 +18,7 @@ import httpx
 import resend
 from jinja2 import Environment, ChainableUndefined
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -26,6 +27,7 @@ from app.models.automation import Automation, AutomationEnrollment, AutomationRu
 from app.models.campaign import Campaign, CampaignSend
 from app.models.contact import Contact
 from app.models.segment import Segment
+from app.models.shop import Shop
 from app.models.template import Template
 from app.services.email_sender import (
     _inject_footer,
@@ -36,6 +38,7 @@ from app.services.email_sender import (
     replace_unsub_tag,
     resolve_relative_timers,
     resume_pending_campaign_sends,
+    apply_email_override,
 )
 from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment, evaluate_segment_ids
@@ -584,13 +587,33 @@ def _send_email_step(
         status="failed",
         variant_sent=variant,
     )
+    # Atomic claim: insert the run row up front so the unique index on
+    # (automation_id, trigger_key, step_number) rejects a second process
+    # trying to send this same step concurrently. Without this, the
+    # SELECT-based check in _process_enrollments has a check-then-act gap
+    # spanning the Resend API call below, wide enough for two engine
+    # instances to both pass the check and both send.
+    session.add(run)
     try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        logger.warning(
+            "Automation %d step %d for %s already claimed by another run, skipping send",
+            auto.id, step_number, contact.email,
+        )
+        return
+    session.refresh(run)
+
+    try:
+        shop = session.get(Shop, auto.shop_id) if auto.shop_id else None
+
         # Generate dynamic coupon if automation has one configured
         coupon_code: str | None = None
-        if auto.coupon_campaign_id:
+        if auto.coupon_campaign_id and shop:
             try:
                 from app.routers.forms import _generate_dynamic_coupon
-                coupon_code = _generate_dynamic_coupon(session, auto.coupon_campaign_id, contact.email)
+                coupon_code = _generate_dynamic_coupon(session, auto.coupon_campaign_id, contact.email, shop)
             except Exception as exc:
                 logger.warning("Coupon generation failed for %s: %s", contact.email, exc)
 
@@ -706,12 +729,14 @@ def _send_email_step(
             vars_["producto_del_mes"] = fp.get("title", vars_.get("producto_del_mes", ""))
             vars_["producto_del_mes_url"] = fp.get("url", vars_.get("producto_del_mes_url", ""))
 
+        shop_name = shop.display_name() if shop else "tu tienda"
+
         _env = Environment(undefined=ChainableUndefined)
         from app.services.template_block_compiler import resolve_template_html
         normalize_first_name_vars(vars_)
         raw_html = preprocess_regalado_template(replace_unsub_tag(resolve_template_html(tpl), contact.email))
         raw_html = resolve_relative_timers(raw_html)
-        html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email)
+        html = _inject_footer(_env.from_string(raw_html).render(**vars_), contact.email, shop_name)
 
         preview_text = _env.from_string(
             preprocess_regalado_template(str(step.get("preview_text", "")))
@@ -724,12 +749,16 @@ def _send_email_step(
             html = inject_preheader(html, preview_text)
 
         resend.api_key = settings.RESEND_API_KEY
-        result = resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": [contact.email],
-            "subject": _env.from_string(
+        to, subject = apply_email_override(
+            [contact.email],
+            _env.from_string(
                 preprocess_regalado_template(str(step.get("subject", "")))
             ).render(**vars_),
+        )
+        result = resend.Emails.send({
+            "from": settings.RESEND_FROM_EMAIL,
+            "to": to,
+            "subject": subject,
             "html": html,
             "headers": _unsub_headers(contact.email),
         })
@@ -1483,7 +1512,7 @@ def run_scheduled_campaigns() -> None:
                 from app.services.campaign_audience import get_campaign_recipient_ids
 
                 recipient_ids = get_campaign_recipient_ids(
-                    session, campaign.segment_id, campaign.exclude_segment_ids,
+                    session, campaign.shop_id, segment_id=campaign.segment_id, exclude_segment_ids=campaign.exclude_segment_ids,
                 )
                 if not recipient_ids:
                     continue

@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from sqlmodel import Field, SQLModel, Column
 from sqlalchemy import JSON
@@ -8,6 +8,7 @@ class Campaign(SQLModel, table=True):
     __tablename__ = "campaigns"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     name: str = Field(index=True)
     subject: str
     preview_text: Optional[str] = None
@@ -15,6 +16,8 @@ class Campaign(SQLModel, table=True):
     segment_id: Optional[int] = Field(default=None, foreign_key="segments.id")
     segment_ids: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     exclude_segment_ids: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    # A/B variants: [{variant, subject, template_id, weight}, ...]
+    variants: Optional[Any] = Field(default=None, sa_column=Column("variants", JSON))
     # draft | scheduled | sending | paused | sent | cancelled
     status: str = Field(default="draft")
     scheduled_at: Optional[datetime] = None
@@ -27,11 +30,13 @@ class CampaignSend(SQLModel, table=True):
     __tablename__ = "campaign_sends"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     campaign_id: int = Field(foreign_key="campaigns.id", index=True)
     contact_id: int = Field(foreign_key="contacts.id", index=True)
     resend_id: Optional[str] = Field(default=None, index=True)
     # queued | sent | delivered | opened | clicked | bounced | complained
     status: str = Field(default="queued")
+    variant_sent: Optional[str] = Field(default=None)  # "A", "B", etc.
     sent_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     opened_at: Optional[datetime] = None
@@ -47,6 +52,7 @@ class CampaignCreate(SQLModel):
     segment_id: Optional[int] = None
     segment_ids: Optional[List[int]] = None
     exclude_segment_ids: Optional[List[int]] = None
+    variants: Optional[List[Dict]] = None
     scheduled_at: Optional[datetime] = None
     status: Optional[str] = None
 
@@ -59,6 +65,7 @@ class CampaignUpdate(SQLModel):
     segment_id: Optional[int] = None
     segment_ids: Optional[List[int]] = None
     exclude_segment_ids: Optional[List[int]] = None
+    variants: Optional[List[Dict]] = None
     scheduled_at: Optional[datetime] = None
     status: Optional[str] = None
 
@@ -72,11 +79,21 @@ class CampaignRead(SQLModel):
     segment_id: Optional[int] = None
     segment_ids: Optional[List[int]] = None
     exclude_segment_ids: Optional[List[int]] = None
+    variants: Optional[List[Dict]] = None
     status: str
     scheduled_at: Optional[datetime]
     sent_at: Optional[datetime]
     created_by: Optional[int]
     created_at: datetime
+
+
+class CampaignVariantStat(SQLModel):
+    variant: str
+    sent: int
+    opened: int
+    clicked: int
+    open_rate: float
+    click_rate: float
 
 
 class CampaignStats(SQLModel):
@@ -91,3 +108,4 @@ class CampaignStats(SQLModel):
     open_rate: float
     click_rate: float
     bounce_rate: float
+    variants: List[CampaignVariantStat] = []

@@ -1,18 +1,20 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { automationsApi } from "@/lib/api";
+import { automationsApi, authApi } from "@/lib/api";
 import {
   Automation, AutomationStats, AutomationStepStat,
-  AutomationVariantStat, AutomationPending, AutomationRun,
+  AutomationVariantStat, AutomationPending, AutomationRun, User,
+  AutomationSendTestResult,
 } from "@/lib/types";
 import AutomationPendingSections from "@/components/AutomationPendingSections";
 import { formatDate } from "@/lib/utils";
 import {
   ArrowLeft, Zap, Play, Pause, FlaskConical, Clock, Trophy,
-  Send, Mail, MousePointerClick, ShoppingBag, ChevronRight, GitBranch,
+  Send, Mail, MousePointerClick, ShoppingBag, ChevronRight, GitBranch, X,
 } from "lucide-react";
 import DateRangeFilter, { useStatsDateRange } from "@/components/DateRangeFilter";
 
@@ -201,6 +203,10 @@ export default function AutomationDetailPage() {
   const autoId = Number(id);
   const qc = useQueryClient();
   const dateRange = useStatsDateRange("30d");
+  const [showTestModal, setShowTestModal] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 8000); };
 
   const { data: auto, isLoading: autoLoading } = useQuery<Automation>({
     queryKey: ["automation", autoId],
@@ -209,6 +215,24 @@ export default function AutomationDetailPage() {
   });
 
   const statsParams = { date_from: dateRange.dateFrom, date_to: dateRange.dateTo };
+
+  const { data: me } = useQuery<User>({
+    queryKey: ["me"],
+    queryFn: () => authApi.me().then((r) => r.data),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: (email: string) => automationsApi.sendTest(autoId, email).then((r) => r.data as AutomationSendTestResult),
+    onSuccess: (res) => {
+      setShowTestModal(false);
+      if (res.errors.length > 0) {
+        showToast(`Enviados ${res.sent.length}/${res.sent.length + res.errors.length} pasos a ${res.sent_to}. Error en paso ${res.errors.map((e) => e.step).join(", ")}.`);
+      } else {
+        showToast(`Prueba enviada: ${res.sent.length} paso${res.sent.length !== 1 ? "s" : ""} a ${res.sent_to}${res.cart_data_found ? " (con datos reales de carrito)" : ""}.`);
+      }
+    },
+    onError: () => showToast("No se pudo enviar la prueba. Revisá los logs del backend."),
+  });
 
   const { data: stats } = useQuery<AutomationStats>({
     queryKey: ["automation-stats", autoId, dateRange.dateFrom, dateRange.dateTo],
@@ -320,6 +344,12 @@ export default function AutomationDetailPage() {
         <div className="flex items-center gap-2 shrink-0">
           <DateRangeFilter {...dateRange} />
           <button
+            onClick={() => { setTestEmail(me?.email ?? ""); setShowTestModal(true); }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            <FlaskConical size={13} className="text-gray-400" /> Enviar prueba
+          </button>
+          <button
             onClick={() => toggleMutation.mutate()}
             disabled={toggleMutation.isPending}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors disabled:opacity-50 ${
@@ -338,6 +368,41 @@ export default function AutomationDetailPage() {
           </Link>
         </div>
       </div>
+
+      {/* Send-test modal */}
+      {showTestModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-4" onClick={() => setShowTestModal(false)}>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-1.5"><FlaskConical size={15} className="text-gray-400" /> Enviar prueba</h3>
+              <button onClick={() => setShowTestModal(false)} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">
+              Envía un email por cada paso ({steps.length || 1}) de esta automatización a la dirección indicada, con datos de prueba (o reales de carrito abandonado si existen para ese email).
+            </p>
+            <input
+              type="email"
+              value={testEmail}
+              onChange={(e) => setTestEmail(e.target.value)}
+              placeholder="tu@email.com"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <button
+              onClick={() => testEmail && testMutation.mutate(testEmail)}
+              disabled={!testEmail || testMutation.isPending}
+              className="w-full bg-brand-600 text-white text-sm font-medium rounded-lg py-2 hover:bg-brand-700 disabled:opacity-50 transition-colors"
+            >
+              {testMutation.isPending ? "Enviando..." : "Enviar"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-3 rounded-lg shadow-lg z-50 max-w-sm">
+          {toast}
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">

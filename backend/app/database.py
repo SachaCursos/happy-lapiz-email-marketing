@@ -46,18 +46,32 @@ def _run_migrations():
         "ALTER TABLE automations ADD COLUMN IF NOT EXISTS coupon_campaign_id INTEGER",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS coupon_mode VARCHAR NOT NULL DEFAULT 'dynamic'",
         "ALTER TABLE coupon_campaigns ADD COLUMN IF NOT EXISTS static_code VARCHAR",
+        # Keep only the earliest run per (automation, trigger_key, step) before adding
+        # the unique index below, in case the pre-fix race already produced duplicates.
+        """DELETE FROM automation_runs a USING automation_runs b
+           WHERE a.id > b.id
+             AND a.automation_id = b.automation_id
+             AND a.trigger_key = b.trigger_key
+             AND a.step_number = b.step_number""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_automation_runs_dedup ON automation_runs (automation_id, trigger_key, step_number)",
         """CREATE TABLE IF NOT EXISTS shopify_products (
             id SERIAL PRIMARY KEY,
-            shopify_id BIGINT UNIQUE NOT NULL,
+            shop_id INTEGER,
+            shopify_id BIGINT NOT NULL,
             title VARCHAR NOT NULL,
             handle VARCHAR,
             product_type VARCHAR,
             tags TEXT,
             vendor VARCHAR,
             image_url TEXT,
+            imagen_url TEXT,
             price NUMERIC(10,2),
+            precio_min NUMERIC(10,2),
+            raw JSONB,
             status VARCHAR NOT NULL DEFAULT 'active',
-            synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+            synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            edad_recomendada VARCHAR,
+            inventory_total INTEGER NOT NULL DEFAULT 0
         )""",
         """CREATE TABLE IF NOT EXISTS coupon_campaigns (
             id SERIAL PRIMARY KEY,
@@ -240,6 +254,40 @@ def _run_migrations():
         # contacts.family_role — madre|padre|abuela|abuelo|tia|tio|…
         "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS family_role VARCHAR",
         "CREATE INDEX IF NOT EXISTS idx_contacts_family_role ON contacts(family_role)",
+        # shop_id for every raw-SQL table above, plus shopify_orders/shopify_events/
+        # shopify_checkouts/carritos_abandonados — those four aren't created anywhere
+        # in this repo (they're populated by the separate ETL pipeline), so this list
+        # can't assume they exist yet. ALTER TABLE IF EXISTS is a safe no-op until
+        # they show up; this block then self-heals them on the next app restart
+        # instead of depending on deploy ordering between the ETL and this app.
+        "ALTER TABLE IF EXISTS shopify_products ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_products_shop_id ON shopify_products (shop_id)",
+        "ALTER TABLE IF EXISTS coupon_campaigns ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_coupon_campaigns_shop_id ON coupon_campaigns (shop_id)",
+        "ALTER TABLE IF EXISTS coupon_sends ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_coupon_sends_shop_id ON coupon_sends (shop_id)",
+        "ALTER TABLE IF EXISTS shopify_orders ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_orders_shop_id ON shopify_orders (shop_id)",
+        "ALTER TABLE IF EXISTS shopify_events ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_events_shop_id ON shopify_events (shop_id)",
+        "ALTER TABLE IF EXISTS shopify_checkouts ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_shopify_checkouts_shop_id ON shopify_checkouts (shop_id)",
+        "ALTER TABLE IF EXISTS carritos_abandonados ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_carritos_abandonados_shop_id ON carritos_abandonados (shop_id)",
+        "ALTER TABLE IF EXISTS shops ADD COLUMN IF NOT EXISTS name VARCHAR",
+        # plantillas_de_la_marca predates multi-tenancy: on environments where it
+        # already existed (e.g. production, with Happy Lápiz's real colors/logos)
+        # it has no shop_id column yet — SQLModel.metadata.create_all above only
+        # creates the table where it's missing (e.g. staging), it doesn't alter an
+        # existing one. ALTER TABLE IF EXISTS covers both cases.
+        "ALTER TABLE IF EXISTS plantillas_de_la_marca ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_plantillas_de_la_marca_shop_id ON plantillas_de_la_marca (shop_id)",
+        # Backfill: any pre-multi-tenant rows (shop_id IS NULL) are Happy Lápiz's
+        # own brand assets — assign them to that shop by domain instead of a
+        # hardcoded id, so this works the same on any environment.
+        """UPDATE plantillas_de_la_marca SET shop_id = (
+               SELECT id FROM shops WHERE shopify_domain = 'happy-lapiz.myshopify.com' LIMIT 1
+           ) WHERE shop_id IS NULL""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

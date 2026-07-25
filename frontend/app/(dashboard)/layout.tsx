@@ -2,12 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Menu } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
+import { authApi } from "@/lib/api";
+import { User } from "@/lib/types";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { data: user } = useQuery<User>({
+    queryKey: ["me"],
+    queryFn: () => authApi.me().then((r) => r.data),
+  });
+  const shopName = user?.shop_name || "Email Marketing";
 
   useEffect(() => {
     const token = localStorage.getItem("hb_token");
@@ -38,9 +46,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-brand-600 rounded flex items-center justify-center">
-              <span className="text-white font-bold text-xs">H</span>
+              <span className="text-white font-bold text-xs">{shopName.charAt(0).toUpperCase()}</span>
             </div>
-            <span className="text-white font-semibold text-sm">Happy Lápiz</span>
+            <span className="text-white font-semibold text-sm">{shopName}</span>
           </div>
         </header>
 

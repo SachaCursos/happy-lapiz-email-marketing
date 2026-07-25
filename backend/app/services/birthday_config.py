@@ -69,11 +69,12 @@ def repair_birthday_automation_if_needed(auto: Automation, session: Session) -> 
     return True
 
 
-def repair_birthday_automation_configs(session: Session) -> int:
+def repair_birthday_automation_configs(session: Session, shop_id: int | None = None) -> int:
     """Patch renamed REGALO/cumpleaños automations missing gift_popup config."""
-    autos = session.exec(
-        select(Automation).where(Automation.trigger_type == "birthday_reminder")
-    ).all()
+    query = select(Automation).where(Automation.trigger_type == "birthday_reminder")
+    if shop_id is not None:
+        query = query.where(Automation.shop_id == shop_id)
+    autos = session.exec(query).all()
     fixed = 0
     for auto in autos:
         if not _is_gift_regalo_flow(auto):

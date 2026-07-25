@@ -5,12 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import load_only
 from sqlmodel import Session, select
 from app.database import get_session
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, require_editor, get_current_shop
 from app.models.user import User
+from app.models.shop import Shop
 from app.models.template import Template, TemplateCreate, TemplateRead, TemplateSummary, TemplateUpdate
 from app.models.campaign import Campaign
 from app.models.automation import Automation
-from app.services.block_catalog_templates import ensure_catalog_templates
 from app.services.template_compositions import compile_template_payload, is_editor_block_list
 from app.services.template_block_compiler import blocks_to_html
 
@@ -18,10 +18,10 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[TemplateSummary])
-def list_templates(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
-    ensure_catalog_templates(session)
+def list_templates(session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     return session.exec(
         select(Template)
+        .where(Template.shop_id == shop.id)
         .options(load_only(
             Template.id,
             Template.name,
@@ -41,9 +41,10 @@ def create_template(
     payload: TemplateCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     data = compile_template_payload(payload.model_dump())
-    tpl = Template(**data, created_by=current_user.id)
+    tpl = Template(**data, created_by=current_user.id, shop_id=shop.id)
     session.add(tpl)
     session.commit()
     session.refresh(tpl)
@@ -51,9 +52,9 @@ def create_template(
 
 
 @router.get("/{template_id}", response_model=TemplateRead)
-def get_template(template_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def get_template(template_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
     return tpl
 
@@ -64,9 +65,10 @@ def update_template(
     payload: TemplateUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
     updates = payload.model_dump(exclude_unset=True)
     for k, v in updates.items():
@@ -85,9 +87,10 @@ def delete_template(
     template_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
 
     # Nullify FK references so deletion doesn't fail on constraints
@@ -107,9 +110,10 @@ def duplicate_template(
     template_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     tpl = session.get(Template, template_id)
-    if not tpl:
+    if not tpl or tpl.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
     copy = Template(
         name=f"{tpl.name} (copia)",
@@ -118,6 +122,7 @@ def duplicate_template(
         html_content=tpl.html_content,
         json_blocks=tpl.json_blocks,
         created_by=current_user.id,
+        shop_id=shop.id,
     )
     session.add(copy)
     session.commit()
@@ -138,6 +143,7 @@ def send_template_test(
     body: SendTestBody,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     """
     Renders a template with real or placeholder variables and sends it to
@@ -145,109 +151,28 @@ def send_template_test(
     {{ checkout_url }}, {{ event.extra.checkout_url }}, {{ first_name }}, etc.
     are populated with real values.
     """
-    import resend
-    import psycopg2
-    from jinja2 import Environment, ChainableUndefined
-    from app.core.config import settings
-    from app.core.unsub_token import unsub_url
-    from app.services.email_sender import (
-        _inject_footer,
-        _unsub_headers,
-        inject_preheader,
-        replace_unsub_tag,
-    )
-
+    from app.services.email_sender import build_test_vars, render_email_content, send_test_email_now
     from app.services.template_block_compiler import resolve_template_html
 
     tpl = session.get(Template, template_id)
     tpl_html = resolve_template_html(tpl) if tpl else ""
-    if not tpl or not tpl_html:
+    if not tpl or tpl.shop_id != shop.id or not tpl_html:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada o sin contenido HTML")
 
     email = body.to_email.lower().strip()
-
-    # ── Pull most recent abandoned cart for this email ────────────────────────
-    checkout_url = f"https://happylapiz.cl/cart"
-    first_name = email.split("@")[0]
-    cart_total = "$0"
-    first_product = ""
+    vars_ = build_test_vars(email, shop.id)
+    subject_override = body.subject or f"[PRUEBA] {tpl.subject_default or tpl.name}"
+    subject, html = render_email_content(tpl, email, vars_, shop.display_name(), subject_override=subject_override)
 
     try:
-        conn = psycopg2.connect(settings.DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT first_name, subtotal_price, line_items, checkout_url
-            FROM carritos_abandonados
-            WHERE email = %s
-              AND (recovered = FALSE OR recovered IS NULL)
-              AND checkout_url IS NOT NULL
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (email,))
-        row = cur.fetchone()
-        if row:
-            first_name   = (row[0] or email.split("@")[0]).strip()
-            subtotal     = float(row[1] or 0)
-            cart_total   = f"${int(subtotal):,}".replace(",", ".")
-            items        = row[2] or []
-            first_product = items[0].get("title", "") if items else ""
-            checkout_url  = row[3] or checkout_url
-        cur.close()
-        conn.close()
-    except Exception:
-        pass  # DB unavailable — fall through to placeholders
-
-    unsub = unsub_url(email)
-    from app.services.email_sender import _fmt_first_name
-    first_name = _fmt_first_name(first_name)
-    vars_ = {
-        "nombre":        first_name,
-        "first_name":    first_name,
-        "email":         email,
-        "cart_total":    cart_total,
-        "first_product": first_product,
-        "cart_url":      checkout_url,
-        "checkout_url":  checkout_url,
-        "coupon_code":   "CODIGO-PRUEBA",
-        "orders_count":  0,
-        "ultima_visita": "",
-        "ticket_medio":  0,
-        "total_spent":   0,
-        "shipping_city": "",
-        # Mirrors Klaviyo's {{ event.extra.checkout_url }} nested access.
-        # checkout_url_with_coupon appends ?discount=CODE for Shopify auto-apply.
-        "event": {"extra": {
-            "checkout_url": checkout_url,
-            "checkout_url_with_coupon": f"{checkout_url}{'&' if '?' in checkout_url else '?'}discount=CODIGO-PRUEBA",
-        }},
-    }
-
-    # Replace {% unsubscribe %} with anchor link BEFORE Jinja2 (avoids syntax error)
-    raw_html = replace_unsub_tag(tpl_html, email)
-    _env = Environment(undefined=ChainableUndefined)
-    html = _inject_footer(_env.from_string(raw_html).render(**vars_), email)
-    html = inject_preheader(html, tpl.preview_text or "")
-
-    subject_tpl = body.subject or f"[PRUEBA] {tpl.subject_default or tpl.name}"
-    subject = _env.from_string(subject_tpl).render(**vars_)
-
-    resend.api_key = settings.RESEND_API_KEY
-    try:
-        result = resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": [email],
-            "subject": subject,
-            "html": html,
-            "headers": _unsub_headers(email),
-        })
+        result = send_test_email_now(email, subject, html)
         email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
-        cart_found = bool(row) if "row" in dir() else False
         return {
             "ok": True,
             "sent_to": email,
             "email_id": email_id,
-            "cart_data_found": cart_found,
-            "checkout_url_used": checkout_url,
+            "cart_data_found": vars_["_cart_data_found"],
+            "checkout_url_used": vars_["checkout_url"],
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

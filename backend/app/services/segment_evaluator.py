@@ -338,17 +338,19 @@ def _build_clause(node: dict) -> Optional[Any]:
     return fn(col, value)
 
 
-def evaluate_segment(conditions: Optional[dict], session: Session) -> List[Contact]:
+def evaluate_segment(conditions: Optional[dict], session: Session, shop_id: Optional[int] = None) -> List[Contact]:
     """Retorna contactos que coinciden con las condiciones del segmento (opted_in=True)."""
-    ids = evaluate_segment_ids(conditions, session)
+    ids = evaluate_segment_ids(conditions, session, shop_id)
     if not ids:
         return []
     return list(session.exec(select(Contact).where(Contact.id.in_(ids))).all())
 
 
-def evaluate_segment_ids(conditions: Optional[dict], session: Session) -> List[int]:
+def evaluate_segment_ids(conditions: Optional[dict], session: Session, shop_id: Optional[int] = None) -> List[int]:
     """IDs de contactos en el segmento — sin cargar custom_fields ni filas completas."""
     query = select(Contact.id).where(Contact.opted_in == True)  # noqa: E712
+    if shop_id is not None:
+        query = query.where(Contact.shop_id == shop_id)
     if conditions:
         clause = _build_clause(conditions)
         if clause is not None:
@@ -356,8 +358,10 @@ def evaluate_segment_ids(conditions: Optional[dict], session: Session) -> List[i
     return list(session.exec(query).all())
 
 
-def count_segment(conditions: Optional[dict], session: Session) -> int:
+def count_segment(conditions: Optional[dict], session: Session, shop_id: Optional[int] = None) -> int:
     query = select(func.count(Contact.id)).where(Contact.opted_in == True)  # noqa: E712
+    if shop_id is not None:
+        query = query.where(Contact.shop_id == shop_id)
     if conditions:
         clause = _build_clause(conditions)
         if clause is not None:
