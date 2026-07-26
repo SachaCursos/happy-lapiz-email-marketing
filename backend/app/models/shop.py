@@ -32,6 +32,10 @@ class Shop(SQLModel, table=True):
     initial_sync_error: Optional[str] = None
     initial_sync_stats: Optional[Any] = Field(default=None, sa_column=Column(JSON))
 
+    # None = usa el proveedor global (settings.EMAIL_PROVIDER, hoy "resend").
+    # "resend" | "ses" para fijar el proveedor de esta tienda explícitamente.
+    email_provider: Optional[str] = None
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

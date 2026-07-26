@@ -56,6 +56,7 @@ class AutomationRun(SQLModel, table=True):
     triggered_at: datetime = Field(default_factory=datetime.utcnow)
     executed_at: Optional[datetime] = None
     resend_id: Optional[str] = None
+    send_provider: Optional[str] = None
     error: Optional[str] = None
     opened_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None

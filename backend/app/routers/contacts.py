@@ -6,7 +6,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import text
 from sqlmodel import Session, select
-import resend
 from app.database import get_session
 from app.core.config import settings
 from app.core.deps import get_current_user, require_editor, get_current_shop
@@ -17,6 +16,7 @@ from app.models.contact import Contact, ContactCreate, ContactRead, ContactUpdat
 from app.models.campaign import Campaign, CampaignSend
 from app.models.automation import AutomationRun
 from app.models.segment import Segment
+from app.services.email_provider import send_email
 from app.services.segment_evaluator import _build_clause
 
 logger = logging.getLogger(__name__)
@@ -99,19 +99,19 @@ def _notify_unsubscribe(contact: Contact, shop_name: Optional[str]) -> None:
     if not settings.NOTIFY_EMAIL:
         return
     try:
-        resend.api_key = settings.RESEND_API_KEY
         name = contact.name or contact.email
-        resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": [settings.NOTIFY_EMAIL],
-            "subject": f"Desuscripción: {name}",
-            "html": (
+        send_email(
+            shop_id=contact.shop_id,
+            from_email=settings.RESEND_FROM_EMAIL,
+            to=[settings.NOTIFY_EMAIL],
+            subject=f"Desuscripción: {name}",
+            html=(
                 f"<p><strong>{name}</strong> ({contact.email}) "
                 f"se ha dado de baja de la lista de {shop_name or 'una tienda'}.</p>"
                 f"<p style='color:#999;font-size:13px;'>Puedes ver su perfil en "
                 f"<a href='{settings.FRONTEND_URL}/contacts/{contact.id}'>el panel</a>.</p>"
             ),
-        })
+        )
     except Exception as exc:
         logger.warning("No se pudo enviar notificación de desuscripción: %s", exc)
 

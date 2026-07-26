@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks, surveys, dynamic_criteria, shopify_oauth
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, ses_webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks, surveys, dynamic_criteria, shopify_oauth
 from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
 from app.models import form as _form_model  # noqa: F401 — form_views table
 from app.models import evergreen as _evergreen_model  # noqa: F401
@@ -30,6 +30,7 @@ app.include_router(templates.router, prefix="/api/templates", tags=["templates"]
 app.include_router(campaigns.router, prefix="/api/campaigns", tags=["campaigns"])
 app.include_router(evergreen.router, prefix="/api/evergreen", tags=["evergreen"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
+app.include_router(ses_webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 app.include_router(automations.router, prefix="/api/automations", tags=["automations"])

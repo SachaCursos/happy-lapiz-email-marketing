@@ -49,6 +49,7 @@ class EvergreenSend(SQLModel, table=True):
     enrollment_id: Optional[int] = Field(default=None, foreign_key="evergreen_enrollments.id")
     step_number: int = Field(default=1)
     resend_id: Optional[str] = Field(default=None, index=True)
+    send_provider: Optional[str] = Field(default=None)
     status: str = Field(default="queued")
     sent_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None

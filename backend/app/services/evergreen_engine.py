@@ -5,7 +5,6 @@ import logging
 import time
 from datetime import datetime, timedelta
 
-import resend
 from sqlalchemy import text
 from sqlmodel import Session, select
 
@@ -30,6 +29,7 @@ from app.services.email_sender import (
     render_template_text,
     uses_regalado_vars,
 )
+from app.services.email_provider import send_email
 from app.services.segment_evaluator import evaluate_segment
 
 logger = logging.getLogger(__name__)
@@ -226,22 +226,22 @@ def _send_evergreen_step(
     session.commit()
     session.refresh(send)
 
-    resend.api_key = settings.RESEND_API_KEY
     try:
-        result = resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": [contact.email],
-            "subject": subject,
-            "html": html,
-            "headers": _unsub_headers(contact.email),
-            "tags": [
+        provider, message_id = send_email(
+            shop_id=getattr(contact, "shop_id", None),
+            from_email=settings.RESEND_FROM_EMAIL,
+            to=[contact.email],
+            subject=subject,
+            html=html,
+            headers=_unsub_headers(contact.email),
+            tags=[
                 {"name": "evergreen_id", "value": str(eg.id)},
                 {"name": "contact_id", "value": str(contact.id)},
                 {"name": "evergreen_step", "value": str(step_number)},
             ],
-        })
-        resend_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
-        send.resend_id = resend_id
+        )
+        send.resend_id = message_id
+        send.send_provider = provider
         send.status = "sent"
         send.sent_at = datetime.utcnow()
         session.add(send)

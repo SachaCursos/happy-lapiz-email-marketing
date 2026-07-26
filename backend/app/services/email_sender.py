@@ -5,7 +5,6 @@ import re
 import time
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-import resend
 from sqlalchemy import text
 from jinja2 import Environment, ChainableUndefined, Template as Jinja2Template
 from sqlmodel import Session, select, func
@@ -16,6 +15,7 @@ from app.models.contact import Contact
 from app.models.campaign import Campaign, CampaignSend
 from app.models.template import Template
 from app.models.segment import Segment
+from app.services.email_provider import send_email, apply_email_override
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +34,6 @@ def _fmt_first_name(value: str | None) -> str:
         return ""
     first = raw.split()[0]
     return first[:1].upper() + first[1:].lower()
-
-
-def apply_email_override(to: List[str], subject: str) -> tuple[List[str], str]:
-    """When EMAIL_OVERRIDE_TO is set (staging), redirect every outgoing email
-    to that single inbox instead of the real recipient(s), tagging the
-    original recipient(s) into the subject so test sends stay traceable."""
-    if not settings.EMAIL_OVERRIDE_TO:
-        return to, subject
-    return [settings.EMAIL_OVERRIDE_TO], f"[{', '.join(to)}] {subject}"
 
 
 def _fmt_nombre(name: str | None, email: str = "") -> str:
@@ -974,7 +965,6 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
         )
     ).first()
     try:
-        resend.api_key = settings.RESEND_API_KEY
         coupon = _resolve_coupon(template_html, contact, campaign.id, session)
         regalado = uses_regalado_vars(template_html, campaign.subject)
         vars_ = build_contact_template_vars(
@@ -1009,20 +999,21 @@ def _send_one(campaign: Campaign, template: Template, contact: Contact, session:
             vars_=vars_,
             preprocess_regalado=regalado,
         )
-        to, subject = apply_email_override([contact.email], subject)
-        response = resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": to,
-            "subject": subject,
-            "html": html,
-            "headers": _unsub_headers(contact.email),
-            "tags": [
+        provider, message_id = send_email(
+            shop_id=campaign.shop_id,
+            from_email=settings.RESEND_FROM_EMAIL,
+            to=[contact.email],
+            subject=subject,
+            html=html,
+            headers=_unsub_headers(contact.email),
+            tags=[
                 {"name": "campaign_id", "value": str(campaign.id)},
                 {"name": "contact_id",  "value": str(contact.id)},
             ],
-        })
+        )
         if send:
-            send.resend_id = response["id"]
+            send.resend_id = message_id
+            send.send_provider = provider
             send.status = "sent"
             send.sent_at = datetime.utcnow()
             session.add(send)
@@ -1119,17 +1110,18 @@ def render_email_content(
     return subject, html
 
 
-def send_test_email_now(to_email: str, subject: str, html: str) -> dict:
+def send_test_email_now(to_email: str, subject: str, html: str, shop_id: Optional[int] = None) -> dict:
     """Fire-and-return a single ad-hoc email (used only by manual send-test
     endpoints — real campaign/automation sends go through _send_one /
     _send_email_step, which also record delivery state)."""
-    resend.api_key = settings.RESEND_API_KEY
-    return resend.Emails.send({
-        "from": settings.RESEND_FROM_EMAIL,
-        "to": [to_email],
-        "subject": subject,
-        "html": html,
-        "headers": _unsub_headers(to_email),
-    })
+    _provider, message_id = send_email(
+        shop_id=shop_id,
+        from_email=settings.RESEND_FROM_EMAIL,
+        to=[to_email],
+        subject=subject,
+        html=html,
+        headers=_unsub_headers(to_email),
+    )
+    return {"id": message_id}
 
 

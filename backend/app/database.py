@@ -290,6 +290,12 @@ def _run_migrations():
         """UPDATE plantillas_de_la_marca SET shop_id = (
                SELECT id FROM shops WHERE shopify_domain = 'happy-lapiz.myshopify.com' LIMIT 1
            ) WHERE shop_id IS NULL""",
+        # AWS SES migration: opt-in provider per shop (NULL = usa el default global
+        # settings.EMAIL_PROVIDER) + qué proveedor mandó cada envío ya realizado.
+        "ALTER TABLE shops ADD COLUMN IF NOT EXISTS email_provider VARCHAR",
+        "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS send_provider VARCHAR",
+        "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS send_provider VARCHAR",
+        "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS send_provider VARCHAR",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

@@ -9,6 +9,16 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str
     RESEND_FROM_EMAIL: str = "Happy Lápiz <hola@happylapiz.cl>"
     RESEND_WEBHOOK_SECRET: str = ""
+
+    # AWS SES — proveedor alternativo, gradual por tienda (ver Shop.email_provider).
+    # EMAIL_PROVIDER es el default global; queda en "resend" hasta migrar tiendas
+    # explícitamente. Ninguno de estos campos es obligatorio mientras SES no se use.
+    EMAIL_PROVIDER: str = "resend"
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "us-east-1"
+    SES_FROM_EMAIL: str = ""
+
     FRONTEND_URL: str = "http://localhost:3000"
     # Public URL of THIS backend — used in embed.js to point the form submit call
     BACKEND_PUBLIC_URL: str = "http://localhost:8000"

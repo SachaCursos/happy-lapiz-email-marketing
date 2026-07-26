@@ -141,7 +141,7 @@ def send_automation_test(
         subject_override = f"[PRUEBA - Paso {step_number}] {step.get('subject') or tpl.subject_default or tpl.name}"
         subject, html = render_email_content(tpl, email, vars_, shop_name, subject_override=subject_override)
         try:
-            result = send_test_email_now(email, subject, html)
+            result = send_test_email_now(email, subject, html, shop_id=shop.id)
             email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
             sent.append({"step": step_number, "template_id": tpl.id, "subject": subject, "email_id": email_id})
         except Exception as exc:

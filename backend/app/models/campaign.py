@@ -34,6 +34,8 @@ class CampaignSend(SQLModel, table=True):
     campaign_id: int = Field(foreign_key="campaigns.id", index=True)
     contact_id: int = Field(foreign_key="contacts.id", index=True)
     resend_id: Optional[str] = Field(default=None, index=True)
+    # NULL en filas históricas = "resend" (único proveedor que existía antes de SES).
+    send_provider: Optional[str] = Field(default=None)
     # queued | sent | delivered | opened | clicked | bounced | complained
     status: str = Field(default="queued")
     variant_sent: Optional[str] = Field(default=None)  # "A", "B", etc.

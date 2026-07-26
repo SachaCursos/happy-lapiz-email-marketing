@@ -165,7 +165,7 @@ def send_template_test(
     subject, html = render_email_content(tpl, email, vars_, shop.display_name(), subject_override=subject_override)
 
     try:
-        result = send_test_email_now(email, subject, html)
+        result = send_test_email_now(email, subject, html, shop_id=shop.id)
         email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
         return {
             "ok": True,

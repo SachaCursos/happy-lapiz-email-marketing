@@ -15,7 +15,6 @@ import time
 from datetime import datetime, timedelta
 
 import httpx
-import resend
 from jinja2 import Environment, ChainableUndefined
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -38,8 +37,8 @@ from app.services.email_sender import (
     replace_unsub_tag,
     resolve_relative_timers,
     resume_pending_campaign_sends,
-    apply_email_override,
 )
+from app.services.email_provider import send_email
 from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment, evaluate_segment_ids
 
@@ -748,23 +747,20 @@ def _send_email_step(
             from app.services.email_sender import inject_preheader
             html = inject_preheader(html, preview_text)
 
-        resend.api_key = settings.RESEND_API_KEY
-        to, subject = apply_email_override(
-            [contact.email],
-            _env.from_string(
-                preprocess_regalado_template(str(step.get("subject", "")))
-            ).render(**vars_),
+        subject = _env.from_string(
+            preprocess_regalado_template(str(step.get("subject", "")))
+        ).render(**vars_)
+        provider, message_id = send_email(
+            shop_id=auto.shop_id,
+            from_email=settings.RESEND_FROM_EMAIL,
+            to=[contact.email],
+            subject=subject,
+            html=html,
+            headers=_unsub_headers(contact.email),
         )
-        result = resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": to,
-            "subject": subject,
-            "html": html,
-            "headers": _unsub_headers(contact.email),
-        })
-        resend_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
         run.status = "sent"
-        run.resend_id = resend_id
+        run.resend_id = message_id
+        run.send_provider = provider
         run.executed_at = datetime.utcnow()
         logger.info("Automation %d step %d variant=%s sent to %s", auto.id, step_number, variant or "-", contact.email)
         session.add(run)

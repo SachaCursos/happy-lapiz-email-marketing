@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from sqlalchemy import desc, nulls_last, text
 from sqlmodel import Session, select, func
 from jinja2 import Template as JTemplate
-import resend
 from app.database import get_session, engine
 from app.core.config import settings
 from app.core.deps import get_current_user, require_editor, get_current_shop
@@ -17,6 +16,7 @@ from app.models.segment import Segment
 from app.models.template import Template
 from app.services.campaign_audience import count_campaign_recipients, get_campaign_recipients
 from app.services.segment_evaluator import evaluate_segment
+from app.services.email_provider import send_email
 from app.services.email_sender import (
     send_campaign_batch,
     send_campaign_until_idle,
@@ -283,7 +283,6 @@ def send_test_email(
     ).first()
     from app.services.template_block_compiler import resolve_template_html
 
-    resend.api_key = settings.RESEND_API_KEY
     nombre = current_user.name or current_user.email.split("@")[0]
     sent = []
 
@@ -338,14 +337,14 @@ def send_test_email(
 
         label = f"[PRUEBA {item['variant']}] " if item.get("variant") else "[PRUEBA] "
         try:
-            result = resend.Emails.send({
-                "from": settings.RESEND_FROM_EMAIL,
-                "to": [current_user.email],
-                "subject": f"{label}{subject}",
-                "html": html,
-                "headers": _unsub_headers(current_user.email),
-            })
-            email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+            _provider, email_id = send_email(
+                shop_id=shop.id,
+                from_email=settings.RESEND_FROM_EMAIL,
+                to=[current_user.email],
+                subject=f"{label}{subject}",
+                html=html,
+                headers=_unsub_headers(current_user.email),
+            )
             sent.append({"variant": item.get("variant"), "email_id": email_id})
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))

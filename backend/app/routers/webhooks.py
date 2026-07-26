@@ -3,13 +3,11 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from sqlmodel import Session, select
+from sqlmodel import Session
 from app.database import get_session
 from app.core.config import settings
-from app.models.campaign import CampaignSend
-from app.models.automation import AutomationRun
+from app.services.send_status_updater import apply_send_status_update
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -53,6 +51,19 @@ def _verify_svix(payload: bytes, svix_id: str, svix_timestamp: str, svix_signatu
     return False
 
 
+def _email_from_resend_payload(data: dict) -> str | None:
+    to = data.get("to")
+    if isinstance(to, list) and to:
+        first = to[0]
+        if isinstance(first, str):
+            return first
+        if isinstance(first, dict):
+            return first.get("email") or first.get("address")
+    if isinstance(to, str):
+        return to
+    return data.get("email") or data.get("recipient")
+
+
 @router.post("/resend")
 async def resend_webhook(
     request: Request,
@@ -82,104 +93,7 @@ async def resend_webhook(
     if not new_status or not resend_id:
         return {"ok": True}
 
-    now = datetime.utcnow()
-
-    def _email_from_webhook() -> str | None:
-        to = data.get("to")
-        if isinstance(to, list) and to:
-            first = to[0]
-            if isinstance(first, str):
-                return first
-            if isinstance(first, dict):
-                return first.get("email") or first.get("address")
-        if isinstance(to, str):
-            return to
-        return data.get("email") or data.get("recipient")
-
-    def _maybe_fix_typo_on_bounce(bounced_email: str | None) -> None:
-        if new_status != "bounced" or not bounced_email:
-            return
-        try:
-            from app.services.email_typo_fix import apply_bounce_typo_fix
-
-            result = apply_bounce_typo_fix(session, bounced_email)
-            if result:
-                logger.info(
-                    "Bounce typo auto-fix: %s → %s (%s)",
-                    result["from"],
-                    result["to"],
-                    result["action"],
-                )
-        except Exception:
-            logger.exception("Error auto-corrigiendo typo tras bounce: %s", bounced_email)
-
-    # Try campaign send first
-    send = session.exec(select(CampaignSend).where(CampaignSend.resend_id == resend_id)).first()
-    if send:
-        send.status = new_status
-        if new_status == "delivered":
-            send.delivered_at = now
-        elif new_status == "opened" and not send.opened_at:
-            send.opened_at = now
-        elif new_status == "clicked" and not send.clicked_at:
-            send.clicked_at = now
-        elif new_status == "bounced":
-            send.bounced_at = now
-        session.add(send)
-        session.commit()
-        logger.info("CampaignSend actualizado: id=%s status=%s", send.id, new_status)
-        if new_status == "bounced":
-            from app.models.contact import Contact
-
-            contact = session.get(Contact, send.contact_id)
-            _maybe_fix_typo_on_bounce(
-                _email_from_webhook() or (contact.email if contact else None)
-            )
-        return {"ok": True}
-
-    # Try automation run
-    run = session.exec(select(AutomationRun).where(AutomationRun.resend_id == resend_id)).first()
-    if run:
-        if new_status == "opened" and not run.opened_at:
-            run.opened_at = now
-        elif new_status == "clicked" and not run.clicked_at:
-            run.clicked_at = now
-        elif new_status == "bounced":
-            run.status = "bounced"
-        session.add(run)
-        session.commit()
-        logger.info("AutomationRun actualizado: id=%s status=%s", run.id, new_status)
-        if new_status == "bounced":
-            _maybe_fix_typo_on_bounce(_email_from_webhook() or run.contact_email)
-        return {"ok": True}
-
-    from app.models.evergreen import EvergreenSend
-    eg_send = session.exec(select(EvergreenSend).where(EvergreenSend.resend_id == resend_id)).first()
-    if eg_send:
-        eg_send.status = new_status
-        if new_status == "delivered":
-            eg_send.delivered_at = now
-        elif new_status == "opened" and not eg_send.opened_at:
-            eg_send.opened_at = now
-        elif new_status == "clicked" and not eg_send.clicked_at:
-            eg_send.clicked_at = now
-        elif new_status == "bounced":
-            eg_send.bounced_at = now
-        session.add(eg_send)
-        session.commit()
-        logger.info("EvergreenSend actualizado: id=%s status=%s", eg_send.id, new_status)
-        if new_status == "bounced":
-            from app.models.contact import Contact
-
-            contact = session.get(Contact, eg_send.contact_id)
-            _maybe_fix_typo_on_bounce(
-                _email_from_webhook() or (contact.email if contact else None)
-            )
-        return {"ok": True}
-
-    # Bounce for an email we couldn't map to a send — still try typo fix from payload
-    if new_status == "bounced":
-        _maybe_fix_typo_on_bounce(_email_from_webhook())
-
-    logger.warning("Email no encontrado para resend_id=%s", resend_id)
+    apply_send_status_update(
+        session, resend_id, new_status, webhook_email=_email_from_resend_payload(data)
+    )
     return {"ok": True}

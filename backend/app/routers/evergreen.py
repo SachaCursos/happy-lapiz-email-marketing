@@ -3,7 +3,6 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select, func
-import resend
 
 from app.core.config import settings
 from app.core.deps import get_current_user, require_editor
@@ -30,6 +29,7 @@ from app.services.email_sender import (
     uses_regalado_vars,
 )
 from app.models.evergreen import get_evergreen_steps
+from app.services.email_provider import send_email
 from app.services.evergreen_engine import run_evergreen_campaigns, process_evergreen_followups
 
 router = APIRouter()
@@ -221,16 +221,15 @@ def send_test_evergreen(
         html = _inject_footer(JTemplate(tpl.html_content).render(nombre=nombre), current_user.email)
         subject = step1["subject"]
 
-    resend.api_key = settings.RESEND_API_KEY
     try:
-        result = resend.Emails.send({
-            "from": settings.RESEND_FROM_EMAIL,
-            "to": [current_user.email],
-            "subject": f"[PRUEBA] {subject}",
-            "html": html,
-            "headers": _unsub_headers(current_user.email),
-        })
-        email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+        _provider, email_id = send_email(
+            shop_id=current_user.shop_id,
+            from_email=settings.RESEND_FROM_EMAIL,
+            to=[current_user.email],
+            subject=f"[PRUEBA] {subject}",
+            html=html,
+            headers=_unsub_headers(current_user.email),
+        )
         return {"ok": True, "sent_to": current_user.email, "email_id": email_id}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
