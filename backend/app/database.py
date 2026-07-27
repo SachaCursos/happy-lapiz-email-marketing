@@ -296,6 +296,12 @@ def _run_migrations():
         "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS send_provider VARCHAR",
         "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS send_provider VARCHAR",
         "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS send_provider VARCHAR",
+        # contacts.gender/birthday/notes predate this staging DB's table creation —
+        # found crashing every real campaign send (get_campaign_recipients selects
+        # every Contact column) while validating the SES migration above.
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS gender VARCHAR",
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS birthday DATE",
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes VARCHAR",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:
