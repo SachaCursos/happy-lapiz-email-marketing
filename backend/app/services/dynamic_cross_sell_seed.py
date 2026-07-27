@@ -177,12 +177,24 @@ def _ensure_coupon_campaign(session: Session, shop_id: int, created_by: int | No
     pr = session.execute(
         text(
             "SELECT shopify_discount_id FROM coupon_campaigns "
-            "WHERE shop_id = :shop_id AND discount_type = 'shipping' "
-            "AND shopify_discount_id IS NOT NULL LIMIT 1"
+            "WHERE discount_type = 'shipping' AND shopify_discount_id IS NOT NULL "
+            "AND (shop_id = :shop_id OR shop_id IS NULL) "
+            "ORDER BY CASE WHEN shop_id = :shop_id THEN 0 ELSE 1 END, id DESC LIMIT 1"
         ),
         {"shop_id": shop_id},
     ).fetchone()
     sid = pr[0] if pr else None
+    if not sid:
+        # Last resort: any ENVIO/shipping PriceRule already created for this storefront
+        pr = session.execute(
+            text(
+                "SELECT shopify_discount_id FROM coupon_campaigns "
+                "WHERE shopify_discount_id IS NOT NULL "
+                "AND (name LIKE 'Envío gratis%' OR prefix = 'ENVIO') "
+                "ORDER BY id DESC LIMIT 1"
+            )
+        ).fetchone()
+        sid = pr[0] if pr else None
     if not sid:
         logger.warning("No shipping coupon campaign found for shop %s — automation without coupons", shop_id)
         return None
