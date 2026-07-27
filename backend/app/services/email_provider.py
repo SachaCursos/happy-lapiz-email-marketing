@@ -8,6 +8,7 @@ olvidarlo (ver email_typo_fix / el incidente de envíos duplicados)."""
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr, parseaddr
 from typing import List, Optional
 
 import resend
@@ -76,9 +77,14 @@ def _send_via_ses(
 
     # SESv2's simple send_email() doesn't support custom headers (List-Unsubscribe,
     # etc.) — hay que armar el MIME crudo, igual que exige la API "Raw" de SES.
+    # formataddr() encodea solo el display name (ej. "Happy Lápiz") como RFC 2047 y
+    # deja la dirección en texto plano — asignar el string crudo directo al header
+    # hace que Python encodee TODO el header (incluida la dirección) como una sola
+    # palabra codificada, y SES rechaza el From con "Missing final '@domain'".
+    from_name, from_addr = parseaddr(from_email)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = from_email
+    msg["From"] = formataddr((from_name, from_addr)) if from_name else from_addr
     msg["To"] = ", ".join(to)
     for key, value in (headers or {}).items():
         msg[key] = value
