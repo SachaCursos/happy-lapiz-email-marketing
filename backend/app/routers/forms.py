@@ -25,7 +25,7 @@ from app.models.shop import Shop
 from app.models.user import User
 from app.services.form_stats import get_form_stats
 from app.services.form_embed_snippet import build_install_snippet, build_loader_js, form_loader_url
-from app.services.shopify_client import shopify_headers, shopify_graphql_url
+from app.services.shopify_client import shopify_headers, shopify_graphql_url, shopify_rest_url
 
 router = APIRouter()
 
@@ -316,19 +316,29 @@ def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: s
 
     if shopify_id:
         try:
-            mutation = """
-            mutation discountRedeemCodeBulkAdd($discountId: ID!, $codes: [DiscountRedeemCodeInput!]!) {
-              discountRedeemCodeBulkAdd(discountId: $discountId, codes: $codes) {
-                bulkCreation { id }
-                userErrors { field message }
-              }
-            }"""
-            httpx.post(
-                shopify_graphql_url(shop),
-                json={"query": mutation, "variables": {"discountId": shopify_id, "codes": [{"code": code}]}},
-                headers=shopify_headers(shop),
-                timeout=8,
-            )
+            # Legacy free-shipping campaigns may use PriceRule GIDs (REST), not DiscountCodeNode.
+            if "PriceRule" in str(shopify_id):
+                pr_id = str(shopify_id).rstrip("/").split("/")[-1]
+                httpx.post(
+                    shopify_rest_url(shop, f"price_rules/{pr_id}/discount_codes.json", version="2024-01"),
+                    json={"discount_code": {"code": code}},
+                    headers=shopify_headers(shop),
+                    timeout=8,
+                )
+            else:
+                mutation = """
+                mutation discountRedeemCodeBulkAdd($discountId: ID!, $codes: [DiscountRedeemCodeInput!]!) {
+                  discountRedeemCodeBulkAdd(discountId: $discountId, codes: $codes) {
+                    bulkCreation { id }
+                    userErrors { field message }
+                  }
+                }"""
+                httpx.post(
+                    shopify_graphql_url(shop),
+                    json={"query": mutation, "variables": {"discountId": shopify_id, "codes": [{"code": code}]}},
+                    headers=shopify_headers(shop),
+                    timeout=8,
+                )
         except Exception:
             pass
 

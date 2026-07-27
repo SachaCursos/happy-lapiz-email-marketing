@@ -534,6 +534,138 @@ def _build_cross_sell_html(products: list[dict], btn_color: str = "#f97316") -> 
     )
 
 
+def _is_dynamic_cross_sell(auto: Automation) -> bool:
+    cfg = auto.trigger_config or {}
+    return bool(cfg.get("dynamic_cross_sell"))
+
+
+def _build_single_product_html(product: dict, cta_url: str, btn_color: str = "#2563eb") -> str:
+    """Hero-style single product block for sequential cross-sell emails."""
+    title = (product.get("title") or "").replace("'", "&#39;").replace('"', "&quot;")
+    price = product.get("price") or ""
+    img_html = ""
+    if product.get("image_url"):
+        img_html = (
+            f'<a href="{cta_url}" style="text-decoration:none;">'
+            f'<img src="{product["image_url"]}" alt="{title}" width="480" '
+            f'style="width:100%;max-width:480px;height:auto;border-radius:12px;display:block;margin:0 auto 16px;" />'
+            f"</a>"
+        )
+    return (
+        f'<div style="text-align:center;padding:8px 16px;">'
+        f"{img_html}"
+        f'<p style="margin:0 0 6px;font-size:20px;font-weight:800;color:#111827;line-height:1.3;">{title}</p>'
+        f'<p style="margin:0 0 16px;font-size:18px;font-weight:700;color:#2563eb;">{price}</p>'
+        f'<a href="{cta_url}" style="display:inline-block;background:{btn_color};color:#ffffff;'
+        f'text-decoration:none;font-size:15px;font-weight:700;padding:14px 28px;border-radius:30px;">'
+        f"Ver producto con env&#237;o gratis &rarr;</a>"
+        f"</div>"
+    )
+
+
+def _prepare_dynamic_cross_sell(
+    session: Session,
+    auto: Automation,
+    contact: Contact,
+    extra_vars: dict,
+) -> tuple[dict | None, dict]:
+    """Pick the next cross-sell product for this enrollment.
+
+    Returns (product_or_None, updated_extra_vars). None = queue exhausted.
+    """
+    from app.services.product_recommendations import (
+        build_cross_sell_product_queue,
+        infer_age_from_purchased_products,
+        pick_next_cross_sell_product,
+    )
+
+    cfg = auto.trigger_config or {}
+    max_products = int(cfg.get("cross_sell_max_products") or 8)
+    lookback = int((cfg.get("product_recommendation_config") or {}).get("lookback_days") or 180)
+
+    # Reuse product reserved on a previous attempt (transient Resend failure)
+    pending_id = extra_vars.get("cross_sell_current_id")
+    pending = extra_vars.get("cross_sell_product")
+    if pending_id and isinstance(pending, dict) and pending.get("title"):
+        return pending, extra_vars
+
+    cf = contact.custom_fields or {}
+    if isinstance(cf, str):
+        try:
+            cf = json.loads(cf)
+        except Exception:
+            cf = {}
+
+    edad = _resolve_regalon_age(cf, extra_vars)
+    trigger_pids = _parse_trigger_product_ids(extra_vars)
+    if edad is None and trigger_pids:
+        edad = infer_age_from_purchased_products(session, trigger_pids)
+    if edad is not None:
+        extra_vars["cross_sell_age"] = edad
+        extra_vars["edad_regalon"] = edad
+
+    sent_ids = [int(x) for x in (extra_vars.get("cross_sell_sent_ids") or []) if str(x).isdigit()]
+    queue_ids = [int(x) for x in (extra_vars.get("cross_sell_queue") or []) if str(x).isdigit()]
+
+    if not queue_ids and not extra_vars.get("cross_sell_queue_built"):
+        products = build_cross_sell_product_queue(
+            session,
+            contact.email,
+            edad_regalon=edad,
+            trigger_product_ids=trigger_pids,
+            already_sent_ids=sent_ids,
+            max_products=max_products,
+            lookback_days=lookback,
+        )
+        queue_ids = [int(p["shopify_id"]) for p in products if p.get("shopify_id")]
+        extra_vars["cross_sell_queue"] = queue_ids
+        extra_vars["cross_sell_queue_built"] = True
+
+    product, remaining = pick_next_cross_sell_product(
+        session, contact.email, queue_ids, already_sent_ids=sent_ids,
+    )
+    extra_vars["cross_sell_queue"] = remaining
+
+    if not product:
+        return None, extra_vars
+
+    pid = int(product["shopify_id"])
+    extra_vars["cross_sell_current_id"] = pid
+    extra_vars["cross_sell_product"] = product
+    extra_vars["cross_sell_product_title"] = product.get("title") or ""
+    extra_vars["cross_sell_product_price"] = product.get("price") or ""
+    extra_vars["cross_sell_product_image"] = product.get("image_url") or ""
+    extra_vars["cross_sell_handle"] = product.get("handle") or ""
+    # Base URL without coupon — replaced with discount deep-link after coupon gen
+    extra_vars["cross_sell_product_url"] = product.get("url") or ""
+    return product, extra_vars
+
+
+def _finalize_cross_sell_after_send(extra_vars: dict) -> dict:
+    """Mark the current product as sent so the next step advances the queue."""
+    pid = extra_vars.get("cross_sell_current_id")
+    if pid is None:
+        return extra_vars
+    sent = [int(x) for x in (extra_vars.get("cross_sell_sent_ids") or []) if str(x).isdigit()]
+    try:
+        pid_i = int(pid)
+    except (TypeError, ValueError):
+        return extra_vars
+    if pid_i not in sent:
+        sent.append(pid_i)
+    extra_vars["cross_sell_sent_ids"] = sent
+    extra_vars.pop("cross_sell_current_id", None)
+    return extra_vars
+
+
+def _product_discount_url(product: dict, coupon_code: str | None) -> str:
+    handle = (product.get("handle") or "").strip("/")
+    base = product.get("url") or (f"https://www.happylapiz.cl/products/{handle}" if handle else "https://www.happylapiz.cl")
+    if not coupon_code or not handle:
+        return base
+    return f"https://www.happylapiz.cl/discount/{coupon_code}?redirect=/products/{handle}"
+
+
 def _send_email_step(
     session: Session,
     auto: Automation,
@@ -650,6 +782,21 @@ def _send_email_step(
             if raw_url:
                 sep = "&" if "?" in raw_url else "?"
                 event_extra["checkout_url_with_coupon"] = f"{raw_url}{sep}discount={coupon_code}"
+
+        # Dynamic sequential cross-sell — single product + discount deep-link
+        cross_product = (extra_vars or {}).get("cross_sell_product")
+        if isinstance(cross_product, dict) and cross_product.get("title"):
+            cta_url = _product_discount_url(cross_product, coupon_code)
+            vars_["cross_sell_product"] = cross_product
+            vars_["cross_sell_product_title"] = cross_product.get("title") or ""
+            vars_["cross_sell_product_price"] = cross_product.get("price") or ""
+            vars_["cross_sell_product_image"] = cross_product.get("image_url") or ""
+            vars_["cross_sell_handle"] = cross_product.get("handle") or ""
+            vars_["cross_sell_product_url"] = cta_url
+            vars_["cross_sell_product_html"] = _build_single_product_html(
+                cross_product, cta_url, "#2563eb"
+            )
+
         # Product recommendations — global criteria from Criterios dinámicos
         from app.services.dynamic_criteria_store import load_criteria_config
         from app.services.product_recommendations import resolve_recommended_products
@@ -864,11 +1011,31 @@ def _process_enrollments(session: Session) -> None:
                 if auto.trigger_type == "birthday_reminder":
                     extra_vars = refresh_birthday_countdown(extra_vars, as_of=now.date())
                     enrollment.extra_vars_json = json.dumps(extra_vars)
+
+                # Dynamic cross-sell: pick next age-matched bestseller before sending
+                if _is_dynamic_cross_sell(auto):
+                    product, extra_vars = _prepare_dynamic_cross_sell(
+                        session, auto, contact, extra_vars,
+                    )
+                    enrollment.extra_vars_json = json.dumps(extra_vars)
+                    if not product:
+                        enrollment.status = "completed"
+                        session.add(enrollment)
+                        session.commit()
+                        logger.info(
+                            "Enrollment %d completed — cross-sell queue exhausted for %s",
+                            enrollment.id, enrollment.contact_email,
+                        )
+                        continue
+
                 effective_step, variant_label = _pick_variant(step)
                 send_result = _send_email_step(
                     session, auto, contact, enrollment.trigger_key,
                     effective_step, enrollment.next_step, extra_vars, variant_label,
                 )
+                if send_result == "sent" and _is_dynamic_cross_sell(auto):
+                    extra_vars = _finalize_cross_sell_after_send(extra_vars)
+                    enrollment.extra_vars_json = json.dumps(extra_vars)
                 if send_result == "permanent":
                     enrollment.status = "cancelled"
                     session.add(enrollment)
@@ -890,6 +1057,15 @@ def _process_enrollments(session: Session) -> None:
             if next_step_num > len(steps):
                 enrollment.status = "completed"
             else:
+                # Dynamic cross-sell: stop early if queue already empty after this send
+                if _is_dynamic_cross_sell(auto):
+                    extra = json.loads(enrollment.extra_vars_json or "{}")
+                    remaining = extra.get("cross_sell_queue") or []
+                    if not remaining and extra.get("cross_sell_queue_built"):
+                        enrollment.status = "completed"
+                        session.add(enrollment)
+                        session.commit()
+                        continue
                 if auto.trigger_type == "product_of_month":
                     extra = json.loads(enrollment.extra_vars_json or "{}")
                     schedules = extra.get("step_schedules") or {}

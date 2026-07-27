@@ -75,6 +75,8 @@ def on_startup():
             ensure_no_open_segment(session)
             from app.services.family_role_segment_seed import ensure_family_role_segments
             ensure_family_role_segments(session)
+            from app.services.dynamic_cross_sell_seed import ensure_dynamic_cross_sell_setup
+            ensure_dynamic_cross_sell_setup(session, hl_shop)
             from app.services.form_embed_snippet import log_shopify_form_sync
             log_shopify_form_sync(session)
             from app.services.form_stats import ensure_form_stats_epoch
