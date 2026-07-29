@@ -745,7 +745,7 @@ def get_pending_contact_ids(session: Session, campaign: Campaign) -> List[int]:
     return [cid for cid in recipient_ids if cid not in attempted]
 
 
-def _ensure_send_records(session: Session, campaign_id: int, contact_ids: List[int]) -> None:
+def _ensure_send_records(session: Session, campaign_id: int, contact_ids: List[int], shop_id: Optional[int] = None) -> None:
     for cid in contact_ids:
         rows = session.exec(
             select(CampaignSend).where(
@@ -754,7 +754,7 @@ def _ensure_send_records(session: Session, campaign_id: int, contact_ids: List[i
             )
         ).all()
         if not rows:
-            session.add(CampaignSend(campaign_id=campaign_id, contact_id=cid))
+            session.add(CampaignSend(campaign_id=campaign_id, contact_id=cid, shop_id=shop_id))
             continue
         if any(r.status in CAMPAIGN_SEND_ATTEMPTED for r in rows):
             continue
@@ -847,7 +847,7 @@ def send_campaign_batch(
         contacts = [c for c in contacts if c]
 
         try:
-            _ensure_send_records(session, campaign_id, [c.id for c in contacts])
+            _ensure_send_records(session, campaign_id, [c.id for c in contacts], shop_id=campaign.shop_id)
             session.commit()
 
             for i, contact in enumerate(contacts):

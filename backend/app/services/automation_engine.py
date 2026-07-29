@@ -557,6 +557,7 @@ def _send_email_step(
 
     if not is_valid_email(contact.email or ""):
         run = AutomationRun(
+            shop_id=auto.shop_id,
             automation_id=auto.id,
             contact_id=contact.id,
             contact_email=contact.email,
@@ -577,6 +578,7 @@ def _send_email_step(
         return "permanent"
 
     run = AutomationRun(
+        shop_id=auto.shop_id,
         automation_id=auto.id,
         contact_id=contact.id,
         contact_email=contact.email,

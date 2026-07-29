@@ -311,6 +311,15 @@ def _run_migrations():
         "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS html_snapshot TEXT",
         "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS subject VARCHAR",
         "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS html_snapshot TEXT",
+        # campaign_sends.shop_id / automation_runs.shop_id existían como columna pero
+        # nunca se completaban al crear la fila (_ensure_send_records / process_step
+        # solo pasaban campaign_id/automation_id) — quedaban NULL en TODOS los envíos
+        # históricos. Encontrado construyendo el visor de correos enviados, que
+        # necesita poder filtrar por tienda directamente sobre estas tablas.
+        """UPDATE campaign_sends cs SET shop_id = c.shop_id
+           FROM campaigns c WHERE cs.campaign_id = c.id AND cs.shop_id IS NULL""",
+        """UPDATE automation_runs ar SET shop_id = a.shop_id
+           FROM automations a WHERE ar.automation_id = a.id AND ar.shop_id IS NULL""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:
