@@ -244,6 +244,8 @@ def _send_evergreen_step(
         send.send_provider = provider
         send.status = "sent"
         send.sent_at = datetime.utcnow()
+        send.subject = subject
+        send.html_snapshot = html
         session.add(send)
         session.commit()
         return send

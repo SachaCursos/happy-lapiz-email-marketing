@@ -1,7 +1,7 @@
 from typing import Any, List, Optional
 from datetime import datetime
 from sqlmodel import Field, SQLModel, Column
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Text
 
 
 class EvergreenCampaign(SQLModel, table=True):
@@ -51,6 +51,10 @@ class EvergreenSend(SQLModel, table=True):
     resend_id: Optional[str] = Field(default=None, index=True)
     send_provider: Optional[str] = Field(default=None)
     status: str = Field(default="queued")
+    # Snapshot de lo realmente enviado (visor de correos enviados) — NULL en filas
+    # de antes de que esto existiera.
+    subject: Optional[str] = Field(default=None)
+    html_snapshot: Optional[str] = Field(default=None, sa_column=Column(Text))
     sent_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     opened_at: Optional[datetime] = None

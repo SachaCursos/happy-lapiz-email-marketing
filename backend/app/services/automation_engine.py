@@ -762,6 +762,8 @@ def _send_email_step(
         run.resend_id = message_id
         run.send_provider = provider
         run.executed_at = datetime.utcnow()
+        run.subject = subject
+        run.html_snapshot = html
         logger.info("Automation %d step %d variant=%s sent to %s", auto.id, step_number, variant or "-", contact.email)
         session.add(run)
         session.commit()

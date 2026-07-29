@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from sqlmodel import Field, SQLModel, Column
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Text
 
 
 class Campaign(SQLModel, table=True):
@@ -39,6 +39,10 @@ class CampaignSend(SQLModel, table=True):
     # queued | sent | delivered | opened | clicked | bounced | complained
     status: str = Field(default="queued")
     variant_sent: Optional[str] = Field(default=None)  # "A", "B", etc.
+    # Snapshot of what was actually sent (para el visor de correos enviados) — NULL
+    # en filas de antes de que esto existiera.
+    subject: Optional[str] = Field(default=None)
+    html_snapshot: Optional[str] = Field(default=None, sa_column=Column(Text))
     sent_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     opened_at: Optional[datetime] = None

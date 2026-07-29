@@ -302,6 +302,15 @@ def _run_migrations():
         "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS gender VARCHAR",
         "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS birthday DATE",
         "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes VARCHAR",
+        # Visor de correos enviados: snapshot del asunto/HTML realmente mandado en
+        # cada envío, para poder verlo después sin depender de que la plantilla no
+        # haya cambiado. NULL en filas históricas anteriores a esto.
+        "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS subject VARCHAR",
+        "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS html_snapshot TEXT",
+        "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS subject VARCHAR",
+        "ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS html_snapshot TEXT",
+        "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS subject VARCHAR",
+        "ALTER TABLE evergreen_sends ADD COLUMN IF NOT EXISTS html_snapshot TEXT",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

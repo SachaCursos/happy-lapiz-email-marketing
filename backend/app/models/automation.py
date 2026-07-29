@@ -1,7 +1,7 @@
 from typing import Optional, Any, List
 from datetime import datetime
 from sqlmodel import Field, SQLModel, Column
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Text
 
 
 class Automation(SQLModel, table=True):
@@ -61,6 +61,10 @@ class AutomationRun(SQLModel, table=True):
     opened_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
     variant_sent: Optional[str] = None  # A/B test variant label ("A", "B", etc.)
+    # Snapshot de lo realmente enviado (visor de correos enviados) — NULL en filas
+    # de antes de que esto existiera.
+    subject: Optional[str] = Field(default=None)
+    html_snapshot: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
 class AutomationCreate(SQLModel):
