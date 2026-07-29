@@ -26,6 +26,7 @@ import {
   Star,
   ClipboardList,
   SlidersHorizontal,
+  Mail,
 } from "lucide-react";
 import { clearToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,7 @@ const nav = [
   { href: "/campaigns",    label: "Campañas",         icon: Send },
   { href: "/evergreen",    label: "Campañas evergreen", icon: RefreshCw },
   { href: "/automations",  label: "Automatizaciones", icon: Zap },
+  { href: "/email-log",    label: "Correos enviados", icon: Mail },
   { href: "/products",    label: "Productos",          icon: ShoppingBag },
   { href: "/variables",   label: "Variables",         icon: Braces },
   { href: "/criterios-dinamicos", label: "Criterios dinámicos", icon: SlidersHorizontal },

@@ -121,6 +121,15 @@ export const evergreenApi = {
   runNow: () => api.post("/evergreen/run-now"),
 };
 
+// Email log (visor de correos enviados)
+export const emailLogApi = {
+  list: (params?: {
+    email?: string; subject?: string; status?: string; source?: string;
+    date_from?: string; date_to?: string; page?: number; page_size?: number;
+  }) => api.get("/email-log", { params }),
+  detail: (source: string, id: number) => api.get(`/email-log/${source}/${id}`),
+};
+
 // Analytics
 export const analyticsApi = {
   overview: () => api.get("/analytics/overview"),

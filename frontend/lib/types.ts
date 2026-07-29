@@ -528,3 +528,41 @@ export interface OverviewStats {
   segments: number;
   templates: number;
 }
+
+export type EmailLogSource = "campaign" | "automation" | "evergreen";
+
+export interface EmailLogEntry {
+  id: number;
+  source: EmailLogSource;
+  source_id: number;
+  source_name: string;
+  contact_id: number | null;
+  contact_email: string;
+  subject: string | null;
+  status: string;
+  send_provider: string | null;
+  sent_at: string | null;
+  has_snapshot: boolean;
+}
+
+export interface EmailLogList {
+  total: number;
+  items: EmailLogEntry[];
+}
+
+export interface EmailLogDetail {
+  source: EmailLogSource;
+  source_id: number;
+  source_name: string;
+  contact_email: string;
+  subject: string | null;
+  html: string | null;
+  status: string;
+  send_provider: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  opened_at: string | null;
+  clicked_at: string | null;
+  bounced_at: string | null;
+  has_snapshot: boolean;
+}
