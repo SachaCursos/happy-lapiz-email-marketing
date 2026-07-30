@@ -21,7 +21,13 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session),
 ):
-    user = session.exec(select(User).where(User.email == form_data.username)).first()
+    email = (form_data.username or "").strip().lower()
+    user = session.exec(select(User).where(User.email == email)).first()
+    if not user:
+        # Case-insensitive fallback for legacy mixed-case emails
+        user = session.exec(
+            select(User).where(User.email.ilike(email))  # type: ignore[attr-defined]
+        ).first()
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
     token = create_access_token(user.email)

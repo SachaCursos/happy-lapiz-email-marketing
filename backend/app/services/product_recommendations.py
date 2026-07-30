@@ -411,3 +411,121 @@ def resolve_recommended_products(
         exclude_ids=exclude_ids,
         max_products=max_products,
     )
+
+
+def midpoint_age_from_edad_recomendada(edad_rec: str | None) -> int | None:
+    """Representative age for filtering when we only know a catalog age band."""
+    s = re.sub(r"[^\d+\-]", "", (edad_rec or "").strip())
+    if not s:
+        return None
+    try:
+        if s.startswith("+"):
+            return int(s[1:]) + 2
+        if s.endswith("+"):
+            return int(s[:-1]) + 2
+        if "-" in s:
+            lo_s, hi_s = s.split("-", 1)
+            return (int(lo_s) + int(hi_s)) // 2
+        return int(s)
+    except ValueError:
+        return None
+
+
+def infer_age_from_purchased_products(
+    session: Session,
+    product_ids: list[int],
+) -> int | None:
+    """Infer a child age from purchased products' edad_recomendada (midpoint of band)."""
+    if not product_ids:
+        return None
+    pk = _product_pk_sql()
+    try:
+        rows = session.execute(text(f"""
+            SELECT sp.edad_recomendada
+            FROM shopify_products sp
+            WHERE {pk} = ANY(:ids)
+              AND sp.edad_recomendada IS NOT NULL
+              AND sp.edad_recomendada <> ''
+              AND LOWER(sp.edad_recomendada) NOT LIKE '%adulto%'
+        """), {"ids": list(product_ids)}).fetchall()
+    except Exception as exc:
+        logger.warning("infer_age_from_purchased_products failed: %s", exc)
+        return None
+    for row in rows:
+        age = midpoint_age_from_edad_recomendada(row[0])
+        if age is not None:
+            return age
+    return None
+
+
+def get_product_by_shopify_id(session: Session, product_id: int) -> dict | None:
+    """Load a single active product by Shopify ID."""
+    products = _fetch_products_by_ids(session, [int(product_id)])
+    return products[0] if products else None
+
+
+def build_cross_sell_product_queue(
+    session: Session,
+    customer_email: str,
+    *,
+    edad_regalon: int | None,
+    trigger_product_ids: list[int] | None = None,
+    already_sent_ids: list[int] | None = None,
+    max_products: int = 8,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+) -> list[dict]:
+    """Bestsellers for the contact's age band, excluding purchased + already recommended."""
+    exclude_ids = _get_purchased_product_ids(session, customer_email)
+    for pid in trigger_product_ids or []:
+        try:
+            exclude_ids.add(int(pid))
+        except (TypeError, ValueError):
+            pass
+    for pid in already_sent_ids or []:
+        try:
+            exclude_ids.add(int(pid))
+        except (TypeError, ValueError):
+            pass
+
+    require_age = edad_regalon is not None
+    return _fetch_bestsellers(
+        session,
+        lookback_days=lookback_days,
+        edad_regalon=edad_regalon,
+        require_age_match=require_age,
+        require_edad_catalog=True,
+        exclude_ids=exclude_ids,
+        max_products=max(1, min(12, int(max_products))),
+    )
+
+
+def pick_next_cross_sell_product(
+    session: Session,
+    customer_email: str,
+    queue_ids: list[int],
+    *,
+    already_sent_ids: list[int] | None = None,
+) -> tuple[dict | None, list[int]]:
+    """Return (next_product, remaining_queue_ids). Skips purchased / inactive / already sent."""
+    purchased = _get_purchased_product_ids(session, customer_email)
+    sent = {int(x) for x in (already_sent_ids or []) if str(x).isdigit()}
+    remaining: list[int] = []
+    chosen: dict | None = None
+
+    for raw in queue_ids:
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if pid in purchased or pid in sent:
+            continue
+        if chosen is None:
+            product = get_product_by_shopify_id(session, pid)
+            if product:
+                chosen = product
+                continue
+            # inactive / missing — skip
+            continue
+        remaining.append(pid)
+
+    return chosen, remaining
