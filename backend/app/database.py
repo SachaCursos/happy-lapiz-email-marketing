@@ -320,6 +320,11 @@ def _run_migrations():
            FROM campaigns c WHERE cs.campaign_id = c.id AND cs.shop_id IS NULL""",
         """UPDATE automation_runs ar SET shop_id = a.shop_id
            FROM automations a WHERE ar.automation_id = a.id AND ar.shop_id IS NULL""",
+        # email_provider.resolve_from_email() usa Shop.display_name() (que cae a
+        # shopify_domain si name es NULL) como nombre del remitente — sin esto,
+        # Happy Lápiz mandaría como "happy-lapiz" en vez de "Happy Lápiz".
+        """UPDATE shops SET name = 'Happy Lápiz'
+           WHERE shopify_domain = 'happy-lapiz.myshopify.com' AND name IS NULL""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

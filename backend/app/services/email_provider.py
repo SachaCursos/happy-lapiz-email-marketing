@@ -48,6 +48,32 @@ def resolve_provider(shop_id: Optional[int]) -> str:
     return settings.EMAIL_PROVIDER or "resend"
 
 
+def resolve_from_email(shop_id: Optional[int], from_email: str) -> str:
+    """Reemplaza el display name del remitente por el de la tienda
+    (Shop.display_name()), manteniendo la misma dirección verificada — así cada
+    tienda se identifica como ella misma en vez de mostrar siempre "Happy Lápiz"
+    (el nombre hardcodeado en RESEND_FROM_EMAIL/SES_FROM_EMAIL), sin necesitar
+    verificar un dominio de envío nuevo por tienda."""
+    if not shop_id:
+        return from_email
+    try:
+        from sqlmodel import Session
+        from app.database import engine
+        from app.models.shop import Shop
+
+        with Session(engine) as session:
+            shop = session.get(Shop, shop_id)
+            if not shop:
+                return from_email
+            _, addr = parseaddr(from_email)
+            if not addr:
+                return from_email
+            return formataddr((shop.display_name(), addr))
+    except Exception:
+        logger.exception("resolve_from_email: no se pudo resolver para shop_id=%s", shop_id)
+        return from_email
+
+
 def _send_via_resend(
     from_email: str, to: List[str], subject: str, html: str,
     headers: Optional[dict], tags: Optional[List[dict]],
@@ -124,8 +150,9 @@ def send_email(
     if provider == "ses":
         # Call sites hardcode RESEND_FROM_EMAIL — si el remitente verificado en SES
         # es otro, SES_FROM_EMAIL lo pisa acá, en el único lugar que lo necesita.
-        ses_from = settings.SES_FROM_EMAIL or from_email
+        ses_from = resolve_from_email(shop_id, settings.SES_FROM_EMAIL or from_email)
         message_id = _send_via_ses(ses_from, to, subject, html, headers, tags)
         return "ses", message_id
+    from_email = resolve_from_email(shop_id, from_email)
     message_id = _send_via_resend(from_email, to, subject, html, headers, tags)
     return "resend", message_id
