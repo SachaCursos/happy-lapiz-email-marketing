@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { analyticsApi } from "@/lib/api";
 import { OverviewStats } from "@/lib/types";
-import { Users, Send, Filter, TrendingUp, ShoppingCart, Mail, Zap, ArrowUpRight, ArrowDownRight, ChevronDown } from "lucide-react";
+import { Users, Send, Filter, TrendingUp, ShoppingCart, Mail, Zap, ArrowUpRight, ArrowDownRight, ChevronDown, DollarSign } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ export default function DashboardPage() {
 
       {/* ── Platform overview cards ── */}
       {!loadingOverview && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
           <StatCard
             label="Contactos activos"
             value={overview?.contacts.opted_in.toLocaleString() ?? "—"}
@@ -342,6 +342,13 @@ export default function DashboardPage() {
             sub={`${clp(revenue?.shopify_total ?? 0)} en ventas`}
             icon={ShoppingCart}
             color="bg-orange-500"
+          />
+          <StatCard
+            label="Costo SES (este mes)"
+            value={`US$ ${(overview?.email_cost.estimated_usd ?? 0).toFixed(2)}`}
+            sub={`${overview?.email_cost.ses_sent_month.toLocaleString() ?? 0} correos · estimado`}
+            icon={DollarSign}
+            color="bg-slate-600"
           />
         </div>
       )}

@@ -527,6 +527,7 @@ export interface OverviewStats {
   sends: { total: number; delivered: number; opened: number; open_rate: number };
   segments: number;
   templates: number;
+  email_cost: { ses_sent_month: number; estimated_usd: number; price_per_1000_usd: number };
 }
 
 export type EmailLogSource = "campaign" | "automation" | "evergreen";

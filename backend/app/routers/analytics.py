@@ -34,6 +34,26 @@ def overview(session: Session = Depends(get_session), _: User = Depends(get_curr
     total_segments = session.exec(select(func.count(Segment.id)).where(Segment.shop_id == shop.id)).one()
     total_templates = session.exec(select(func.count(Template.id)).where(Template.shop_id == shop.id)).one()
 
+    # SES cobra por cantidad de correos enviados ($0.10 USD cada 1000 al día de hoy —
+    # verificar en https://aws.amazon.com/ses/pricing/ si cambia). Mes calendario
+    # actual, mismo criterio de "enviado" que usa el visor de correos.
+    ses_sent_month = session.execute(text("""
+        SELECT COUNT(*) FROM (
+            SELECT cs.id FROM campaign_sends cs
+            WHERE cs.shop_id = :shop_id AND cs.send_provider = 'ses'
+              AND cs.sent_at >= date_trunc('month', now())
+            UNION ALL
+            SELECT ar.id FROM automation_runs ar
+            WHERE ar.shop_id = :shop_id AND ar.send_provider = 'ses'
+              AND COALESCE(ar.executed_at, ar.triggered_at) >= date_trunc('month', now())
+            UNION ALL
+            SELECT es.id FROM evergreen_sends es
+            JOIN contacts c ON c.id = es.contact_id
+            WHERE c.shop_id = :shop_id AND es.send_provider = 'ses'
+              AND es.sent_at >= date_trunc('month', now())
+        ) t
+    """), {"shop_id": shop.id}).scalar() or 0
+
     return {
         "contacts": {"total": total_contacts, "opted_in": opted_in},
         "campaigns": {"total": total_campaigns, "sent": sent_campaigns},
@@ -45,6 +65,11 @@ def overview(session: Session = Depends(get_session), _: User = Depends(get_curr
         },
         "segments": total_segments,
         "templates": total_templates,
+        "email_cost": {
+            "ses_sent_month": ses_sent_month,
+            "estimated_usd": round(ses_sent_month * 0.10 / 1000, 2),
+            "price_per_1000_usd": 0.10,
+        },
     }
 
 
