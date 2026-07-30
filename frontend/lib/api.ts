@@ -121,6 +121,14 @@ export const evergreenApi = {
   runNow: () => api.post("/evergreen/run-now"),
 };
 
+// Dominio de envío propio (SES)
+export const sendingDomainApi = {
+  get: () => api.get("/settings/sending-domain"),
+  create: (domain: string) => api.post("/settings/sending-domain", { domain }),
+  verify: () => api.post("/settings/sending-domain/verify"),
+  remove: () => api.delete("/settings/sending-domain"),
+};
+
 // Email log (visor de correos enviados)
 export const emailLogApi = {
   list: (params?: {

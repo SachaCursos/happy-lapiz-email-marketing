@@ -530,6 +530,18 @@ export interface OverviewStats {
   email_cost: { ses_sent_month: number; estimated_usd: number; price_per_1000_usd: number };
 }
 
+export interface DnsRecord {
+  type: string;
+  name: string;
+  value: string;
+}
+
+export interface SendingDomainStatus {
+  domain: string | null;
+  verified: boolean;
+  dns_records: DnsRecord[];
+}
+
 export type EmailLogSource = "campaign" | "automation" | "evergreen";
 
 export interface EmailLogEntry {

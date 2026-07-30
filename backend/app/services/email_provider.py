@@ -49,11 +49,12 @@ def resolve_provider(shop_id: Optional[int]) -> str:
 
 
 def resolve_from_email(shop_id: Optional[int], from_email: str) -> str:
-    """Reemplaza el display name del remitente por el de la tienda
-    (Shop.display_name()), manteniendo la misma dirección verificada — así cada
-    tienda se identifica como ella misma en vez de mostrar siempre "Happy Lápiz"
-    (el nombre hardcodeado en RESEND_FROM_EMAIL/SES_FROM_EMAIL), sin necesitar
-    verificar un dominio de envío nuevo por tienda."""
+    """Remitente final para esta tienda. Con un dominio propio verificado
+    (Shop.sending_domain / SES Easy DKIM, ver ses_domain.py) manda desde ahí
+    directamente. Si no, reusa la dirección compartida pero reemplaza el
+    display name por el de la tienda (Shop.display_name()) — así cada tienda
+    se identifica como ella misma en vez de mostrar siempre "Happy Lápiz" (el
+    nombre hardcodeado en RESEND_FROM_EMAIL/SES_FROM_EMAIL)."""
     if not shop_id:
         return from_email
     try:
@@ -65,6 +66,8 @@ def resolve_from_email(shop_id: Optional[int], from_email: str) -> str:
             shop = session.get(Shop, shop_id)
             if not shop:
                 return from_email
+            if shop.sending_domain and shop.sending_domain_verified:
+                return formataddr((shop.display_name(), f"hola@{shop.sending_domain}"))
             _, addr = parseaddr(from_email)
             if not addr:
                 return from_email

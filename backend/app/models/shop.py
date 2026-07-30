@@ -36,6 +36,12 @@ class Shop(SQLModel, table=True):
     # "resend" | "ses" para fijar el proveedor de esta tienda explícitamente.
     email_provider: Optional[str] = None
 
+    # Dominio de envío propio verificado en SES (Easy DKIM) — None = usa la
+    # dirección compartida (settings.SES_FROM_EMAIL) con el nombre de esta
+    # tienda como display name (ver email_provider.resolve_from_email).
+    sending_domain: Optional[str] = None
+    sending_domain_verified: bool = Field(default=False, sa_column_kwargs={"server_default": "false"})
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

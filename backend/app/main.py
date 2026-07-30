@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.database import create_db_and_tables
-from app.routers import auth, contacts, segments, templates, campaigns, webhooks, ses_webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks, surveys, dynamic_criteria, shopify_oauth, email_log
+from app.routers import auth, contacts, segments, templates, campaigns, webhooks, ses_webhooks, analytics, sync, automations, forms, admin, coupons, shopify_webhooks, evergreen, html_blocks, favorite_blocks, surveys, dynamic_criteria, shopify_oauth, email_log, sending_domain
 from app.models import gift_recipient as _gift_recipient_model  # noqa: F401 — ensures table is created
 from app.models import form as _form_model  # noqa: F401 — form_views table
 from app.models import evergreen as _evergreen_model  # noqa: F401
@@ -44,6 +44,7 @@ app.include_router(surveys.router, prefix="/api/surveys", tags=["surveys"])
 app.include_router(dynamic_criteria.router, prefix="/api/dynamic-criteria", tags=["dynamic-criteria"])
 app.include_router(shopify_oauth.router, prefix="/api/shopify", tags=["shopify-oauth"])
 app.include_router(email_log.router, prefix="/api/email-log", tags=["email-log"])
+app.include_router(sending_domain.router, prefix="/api/settings/sending-domain", tags=["sending-domain"])
 
 
 @app.on_event("startup")

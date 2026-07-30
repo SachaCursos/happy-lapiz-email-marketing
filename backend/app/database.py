@@ -325,6 +325,9 @@ def _run_migrations():
         # Happy Lápiz mandaría como "happy-lapiz" en vez de "Happy Lápiz".
         """UPDATE shops SET name = 'Happy Lápiz'
            WHERE shopify_domain = 'happy-lapiz.myshopify.com' AND name IS NULL""",
+        # Dominios de envío propios por tienda (SES) — ver ses_domain.py.
+        "ALTER TABLE shops ADD COLUMN IF NOT EXISTS sending_domain VARCHAR",
+        "ALTER TABLE shops ADD COLUMN IF NOT EXISTS sending_domain_verified BOOLEAN NOT NULL DEFAULT false",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:
