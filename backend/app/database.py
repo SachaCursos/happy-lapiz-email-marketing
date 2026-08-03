@@ -328,6 +328,38 @@ def _run_migrations():
         # Dominios de envío propios por tienda (SES) — ver ses_domain.py.
         "ALTER TABLE shops ADD COLUMN IF NOT EXISTS sending_domain VARCHAR",
         "ALTER TABLE shops ADD COLUMN IF NOT EXISTS sending_domain_verified BOOLEAN NOT NULL DEFAULT false",
+        # Evergreen campaigns eran globales (sin shop_id) — cualquier tienda podía
+        # ver/gestionar las campañas evergreen de todas las demás, y el motor de
+        # envío diario matcheaba contactos de TODAS las tiendas contra cada
+        # campaña sin distinción. Encontrado auditando qué falta para soportar
+        # más de una tienda real.
+        "ALTER TABLE evergreen_campaigns ADD COLUMN IF NOT EXISTS shop_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_evergreen_campaigns_shop_id ON evergreen_campaigns(shop_id)",
+        """UPDATE evergreen_campaigns SET shop_id = (
+               SELECT id FROM shops WHERE shopify_domain = 'happy-lapiz.myshopify.com' LIMIT 1
+           ) WHERE shop_id IS NULL""",
+        # contacts.email: de único globalmente a único por tienda. Auditado contra
+        # producción real antes de aplicar esto — solo 8 filas con shop_id NULL,
+        # todas de la semana del bootstrap multi-tenant; se intenta resolver la
+        # tienda real vía shopify_orders, y si no matchea, caen en Happy Lápiz
+        # (única tienda con datos de esa época). El resto de las tablas que
+        # todavía tienen shop_id NULL en vivo (automation_enrollments,
+        # shopify_orders, etc.) quedan fuera de esto a propósito — no son parte
+        # de este fix, necesitan su propia auditoría de escritura.
+        """UPDATE contacts c SET shop_id = sub.shop_id
+           FROM (
+               SELECT DISTINCT ON (lower(email)) lower(email) AS email, shop_id
+               FROM shopify_orders
+               WHERE shop_id IS NOT NULL AND email IS NOT NULL
+               ORDER BY lower(email), created_at DESC
+           ) sub
+           WHERE lower(c.email) = sub.email AND c.shop_id IS NULL""",
+        """UPDATE contacts SET shop_id = (
+               SELECT id FROM shops WHERE shopify_domain = 'happy-lapiz.myshopify.com' LIMIT 1
+           ) WHERE shop_id IS NULL""",
+        "ALTER TABLE contacts ALTER COLUMN shop_id SET NOT NULL",
+        "DROP INDEX IF EXISTS ix_contacts_email",
+        "ALTER TABLE contacts ADD CONSTRAINT contacts_shop_id_email_key UNIQUE (shop_id, email)",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

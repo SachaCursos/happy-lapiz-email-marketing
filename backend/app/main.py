@@ -59,14 +59,17 @@ def on_startup():
     start_scheduler()
     try:
         with Session(engine) as session:
-            # Managed block templates + REGALO birthday automation are Happy
-            # Lápiz-specific seed data today — resolve its shop explicitly
+            # REGALO birthday automation + dynamic cross-sell are Happy Lápiz-specific
+            # seed data (real brand assets baked in) — resolve its shop explicitly
             # rather than guessing "first shop in DB" once more tenants exist.
             hl_shop = session.exec(
                 select(Shop).where(Shop.shopify_domain == "happy-lapiz.myshopify.com")
             ).first()
-            if hl_shop:
-                ensure_managed_block_templates(session, hl_shop.id)
+            # Managed block templates are brand-neutral — seed them for every
+            # active shop, not just Happy Lápiz.
+            active_shops = session.exec(select(Shop).where(Shop.status == "active")).all()
+            for shop in active_shops:
+                ensure_managed_block_templates(session, shop.id)
             from app.services.birthday_automation_seed import ensure_birthday_reminder_setup
             ensure_birthday_reminder_setup(session, hl_shop)
             from app.services.email_sender import finalize_stuck_sending_campaigns

@@ -420,6 +420,9 @@ def run_evergreen_campaigns(force: bool = False) -> dict:
                     days_idle = _days_since_last_email(session, contact.id, contact.email)
 
                     for eg in campaigns:
+                        if eg.shop_id is not None and contact.shop_id != eg.shop_id:
+                            continue
+
                         if days_idle is not None and days_idle < eg.min_days_inactive:
                             continue
 

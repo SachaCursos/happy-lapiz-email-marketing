@@ -8,6 +8,7 @@ class EvergreenCampaign(SQLModel, table=True):
     __tablename__ = "evergreen_campaigns"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    shop_id: Optional[int] = Field(default=None, foreign_key="shops.id", index=True)
     name: str = Field(index=True)
     subject: str
     preview_text: Optional[str] = None

@@ -7,10 +7,12 @@ from pydantic import field_validator
 
 class Contact(SQLModel, table=True):
     __tablename__ = "contacts"
-    # Target end-state uniqueness (applied to the live DB by alembic revision
-    # 0004_tighten_shop_id_constraints, which also drops the old single-column
-    # unique constraint on email — until that migration runs in prod, the DB
-    # still enforces global-unique email, this just reflects where we're headed).
+    # Per-shop-unique email — applied to the live DB by the self-healing
+    # migration block in database.py (backfill any NULL shop_id, then swap
+    # the old global-unique index for this composite one). NOT the alembic
+    # 0004_tighten_shop_id_constraints migration — that one bundles 18 other
+    # tables that still have live code paths writing NULL shop_id and isn't
+    # safe to run yet; this constraint only concerns contacts.
     __table_args__ = (UniqueConstraint("shop_id", "email", name="contacts_shop_id_email_key"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)

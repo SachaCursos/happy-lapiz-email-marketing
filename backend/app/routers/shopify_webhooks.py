@@ -16,7 +16,7 @@ Triggers cubiertos (espejo de Klaviyo):
     added_to_cart           carts/create / carts/update
 
   Compliance (obligatorios para toda app de Shopify que accede a datos de clientes):
-    customers/data_request  → log + 200 (borrado/entrega real es trabajo futuro)
+    customers/data_request  → export por mail al comerciante (shop_owner_email) + 200
     customers/redact        → log + 200
     shop/redact              → log + 200
 
@@ -50,6 +50,7 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.deps import get_current_shop
 from app.models.shop import Shop
+from app.services.email_provider import send_email
 from app.services.shopify_client import shopify_headers, shopify_rest_url
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,48 @@ def _redact_customer(cur, shop_id: int, email: str) -> None:
         "UPDATE coupon_sends SET contact_email = %s WHERE shop_id = %s AND contact_email = %s",
         (placeholder, shop_id, email),
     )
+
+
+def _export_customer_data(cur, shop_id: int, email: str) -> dict:
+    """Read one customer's data across the same tables _redact_customer touches
+    (Shopify customers/data_request: deliver, don't erase)."""
+    if not shop_id or not email:
+        return {}
+
+    def _rows(sql: str) -> list[dict]:
+        cur.execute(sql, (shop_id, email))
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    return {
+        "contacts": _rows(
+            "SELECT * FROM contacts WHERE shop_id = %s AND email = %s"
+        ),
+        "automation_enrollments": _rows(
+            "SELECT * FROM automation_enrollments WHERE shop_id = %s AND contact_email = %s"
+        ),
+        "automation_runs": _rows(
+            "SELECT * FROM automation_runs WHERE shop_id = %s AND contact_email = %s"
+        ),
+        "form_submissions": _rows(
+            "SELECT * FROM form_submissions WHERE shop_id = %s AND email = %s"
+        ),
+        "gift_recipients": _rows(
+            "SELECT * FROM gift_recipients WHERE shop_id = %s AND email = %s"
+        ),
+        "shopify_events": _rows(
+            "SELECT * FROM shopify_events WHERE shop_id = %s AND email = %s"
+        ),
+        "shopify_checkouts": _rows(
+            "SELECT * FROM shopify_checkouts WHERE shop_id = %s AND email = %s"
+        ),
+        "carritos_abandonados": _rows(
+            "SELECT * FROM carritos_abandonados WHERE shop_id = %s AND email = %s"
+        ),
+        "coupon_sends": _rows(
+            "SELECT * FROM coupon_sends WHERE shop_id = %s AND contact_email = %s"
+        ),
+    }
 
 
 def _redact_shop_data(cur, shop_id: int) -> None:
@@ -516,11 +559,45 @@ def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: dat
             logger.info("shop/redact: datos de shop_id=%s eliminados", shop_id)
         else:
             # customers/data_request exige *entregar* los datos al comerciante,
-            # no borrarlos — eso todavía no está implementado. Por ahora queda
-            # registrado en shopify_events para trackear que Shopify lo pidió
-            # y cuándo, y se responde 200 para que no reintente.
+            # no borrarlos. Se junta lo que tenemos de ese email en esta tienda
+            # y se manda por mail al dueño de la tienda (shop_owner_email).
             _log_event(cur, topic, subject_id, email, payload, now, shop_id, trigger)
-            logger.info("customers/data_request recibido (shop_id=%s) — export manual pendiente", shop_id)
+            if email:
+                export = _export_customer_data(cur, shop_id, email)
+                cur.execute("SELECT name, shopify_domain, shop_owner_email FROM shops WHERE id = %s", (shop_id,))
+                shop_row = cur.fetchone()
+                owner_email = shop_row[2] if shop_row else None
+                shop_label = (shop_row[0] or shop_row[1]) if shop_row else str(shop_id)
+                if owner_email:
+                    export_json = json.dumps(export, indent=2, ensure_ascii=False, default=str)
+                    html = f"""
+                    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;margin:0 auto;">
+                      <h2>Solicitud de datos de cliente (GDPR/CCPA)</h2>
+                      <p>Shopify pidió, en nombre de un cliente de <strong>{shop_label}</strong>,
+                         una copia de los datos que tenemos sobre <strong>{email}</strong>.</p>
+                      <p>Adjuntamos el detalle en formato JSON abajo.</p>
+                      <pre style="background:#f3f4f6;padding:12px;border-radius:8px;font-size:12px;
+                         white-space:pre-wrap;word-break:break-word;">{export_json}</pre>
+                    </div>
+                    """
+                    try:
+                        send_email(
+                            shop_id=shop_id,
+                            from_email=settings.RESEND_FROM_EMAIL,
+                            to=[owner_email],
+                            subject=f"Solicitud de datos de cliente: {email}",
+                            html=html,
+                        )
+                        logger.info("customers/data_request: export enviado a %s (shop_id=%s)", owner_email, shop_id)
+                    except Exception:
+                        logger.exception("customers/data_request: fallo el envío del export (shop_id=%s)", shop_id)
+                else:
+                    logger.warning(
+                        "customers/data_request: shop_id=%s no tiene shop_owner_email, no se pudo enviar el export",
+                        shop_id,
+                    )
+            else:
+                logger.info("customers/data_request recibido sin email (shop_id=%s)", shop_id)
 
 
 @router.post("/webhooks")

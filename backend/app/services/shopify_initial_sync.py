@@ -180,6 +180,25 @@ def run_initial_sync(shop_id: int) -> None:
             session.add(shop)
             session.commit()
             logger.info("Initial sync completo para shop_id=%s: %s", shop_id, stats)
+
+            # Contenido inicial para tiendas nuevas: Happy Lápiz tiene sus propias
+            # automatizaciones de marca (cumpleaños/REGALO, cross-sell), pero el
+            # resto arranca sin nada que enviar. generate_yearly_plan ya es
+            # brand-neutral (usa los productos/color de esta tienda) e idempotente
+            # (salta las entradas que ya existen), así que es seguro dispararlo acá.
+            if shop.shopify_domain != "happy-lapiz.myshopify.com":
+                try:
+                    from sqlmodel import select
+                    from app.models.user import User
+                    from app.services.yearly_plan_generator import generate_yearly_plan
+
+                    admin = session.exec(
+                        select(User).where(User.shop_id == shop.id).order_by(User.id)
+                    ).first()
+                    generate_yearly_plan(session, shop, admin.id if admin else None)
+                    logger.info("Plan de contenido anual generado para shop_id=%s", shop_id)
+                except Exception:
+                    logger.exception("No se pudo generar el plan de contenido anual para shop_id=%s", shop_id)
         except Exception as exc:
             logger.exception("Initial sync falló para shop_id=%s", shop_id)
             shop.initial_sync_status = "failed"

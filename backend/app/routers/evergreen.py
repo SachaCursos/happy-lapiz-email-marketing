@@ -5,9 +5,10 @@ from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
 from app.core.config import settings
-from app.core.deps import get_current_user, require_editor
+from app.core.deps import get_current_user, get_current_shop, require_editor
 from app.database import get_session
 from app.models.contact import Contact
+from app.models.shop import Shop
 from app.models.evergreen import (
     EvergreenCampaign,
     EvergreenCampaignCreate,
@@ -40,9 +41,15 @@ class ReorderBody(BaseModel):
 
 
 @router.get("", response_model=List[EvergreenCampaignRead])
-def list_evergreen(session: Session = Depends(get_session), _: User = Depends(get_current_user)):
+def list_evergreen(
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
+):
     return session.exec(
-        select(EvergreenCampaign).order_by(
+        select(EvergreenCampaign)
+        .where(EvergreenCampaign.shop_id == shop.id)
+        .order_by(
             EvergreenCampaign.sort_order.asc(),
             EvergreenCampaign.id.asc(),
         )
@@ -54,8 +61,11 @@ def create_evergreen(
     payload: EvergreenCampaignCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
-    max_order = session.exec(select(func.max(EvergreenCampaign.sort_order))).one() or 0
+    max_order = session.exec(
+        select(func.max(EvergreenCampaign.sort_order)).where(EvergreenCampaign.shop_id == shop.id)
+    ).one() or 0
     data = payload.model_dump()
     steps = normalize_evergreen_steps(
         data["subject"],
@@ -64,7 +74,7 @@ def create_evergreen(
         data.get("steps"),
     )
     data["steps"] = steps
-    eg = EvergreenCampaign(**data, sort_order=max_order + 1, created_by=current_user.id)
+    eg = EvergreenCampaign(**data, shop_id=shop.id, sort_order=max_order + 1, created_by=current_user.id)
     session.add(eg)
     session.commit()
     session.refresh(eg)
@@ -76,21 +86,25 @@ def reorder_evergreen(
     body: ReorderBody,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     for idx, eg_id in enumerate(body.ordered_ids):
         eg = session.get(EvergreenCampaign, eg_id)
-        if eg:
+        if eg and eg.shop_id == shop.id:
             eg.sort_order = idx
             session.add(eg)
     session.commit()
     return session.exec(
-        select(EvergreenCampaign).order_by(EvergreenCampaign.sort_order.asc())
+        select(EvergreenCampaign)
+        .where(EvergreenCampaign.shop_id == shop.id)
+        .order_by(EvergreenCampaign.sort_order.asc())
     ).all()
 
 
 @router.post("/run-now")
 def run_evergreen_now(_: User = Depends(require_editor)):
-    """Manual trigger for the daily evergreen dispatcher (admin/debug)."""
+    """Manual trigger for the daily evergreen dispatcher (admin/debug) — runs
+    for every shop, each campaign already scoped to its own contacts."""
     entry = run_evergreen_campaigns(force=True)
     followups = process_evergreen_followups()
     return {"entry": entry, "followups": followups}
@@ -101,9 +115,10 @@ def get_evergreen(
     evergreen_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     eg = session.get(EvergreenCampaign, evergreen_id)
-    if not eg:
+    if not eg or eg.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña evergreen no encontrada")
     return eg
 
@@ -114,9 +129,10 @@ def update_evergreen(
     payload: EvergreenCampaignUpdate,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     eg = session.get(EvergreenCampaign, evergreen_id)
-    if not eg:
+    if not eg or eg.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña evergreen no encontrada")
     updates = payload.model_dump(exclude_unset=True)
     for k, v in updates.items():
@@ -141,9 +157,10 @@ def delete_evergreen(
     evergreen_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_editor),
+    shop: Shop = Depends(get_current_shop),
 ):
     eg = session.get(EvergreenCampaign, evergreen_id)
-    if not eg:
+    if not eg or eg.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña evergreen no encontrada")
     session.delete(eg)
     session.commit()
@@ -154,9 +171,10 @@ def evergreen_stats(
     evergreen_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     eg = session.get(EvergreenCampaign, evergreen_id)
-    if not eg:
+    if not eg or eg.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña evergreen no encontrada")
 
     sends = session.exec(
@@ -183,9 +201,10 @@ def send_test_evergreen(
     evergreen_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
 ):
     eg = session.get(EvergreenCampaign, evergreen_id)
-    if not eg:
+    if not eg or eg.shop_id != shop.id:
         raise HTTPException(status_code=404, detail="Campaña evergreen no encontrada")
     steps = get_evergreen_steps(eg)
     step1 = steps[0]
@@ -194,7 +213,7 @@ def send_test_evergreen(
         raise HTTPException(status_code=400, detail="Plantilla no encontrada")
 
     contact = session.exec(
-        select(Contact).where(Contact.email == current_user.email.lower())
+        select(Contact).where(Contact.email == current_user.email.lower(), Contact.shop_id == shop.id)
     ).first()
     regalado = uses_regalado_vars(tpl.html_content, step1["subject"])
 

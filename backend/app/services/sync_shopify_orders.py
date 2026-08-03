@@ -372,7 +372,8 @@ def sync_contacts_from_shopify_orders() -> dict:
         FROM order_stats os
         JOIN latest_order lo ON lo.email = os.email AND lo.shop_id = os.shop_id
         WHERE NOT EXISTS (
-            SELECT 1 FROM contacts c WHERE lower(c.email) = os.email
+            SELECT 1 FROM contacts c
+            WHERE lower(c.email) = os.email AND c.shop_id = os.shop_id
         )
         RETURNING id
     """)
@@ -392,6 +393,7 @@ def sync_contacts_from_shopify_orders() -> dict:
         FROM order_stats os
         JOIN latest_order lo ON lo.email = os.email AND lo.shop_id = os.shop_id
         WHERE lower(c.email) = os.email
+          AND c.shop_id = os.shop_id
           AND (
               c.last_purchase   IS DISTINCT FROM os.last_purchase
               OR c.orders_count IS DISTINCT FROM os.orders_count
