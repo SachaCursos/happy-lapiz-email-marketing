@@ -255,6 +255,18 @@ def _redact_shop_data(cur, shop_id: int) -> None:
     app/uninstalled). Ordered to respect FK constraints — children before the
     parents they reference (campaign_sends before campaigns/contacts, everything
     that references users.created_by before users, etc).
+
+    shopify_orders carries real PII (email, phone, name, shipping address) and
+    is included below. Caveat: it's also written by a separate external ETL
+    pipeline (happylapiz-etl) that syncs independently of this app's own OAuth
+    token — if that pipeline still has its own Shopify access and keeps
+    syncing this shop after uninstall, it can re-populate rows we just
+    deleted. Stopping that requires a matching fix in the ETL pipeline itself
+    (out of this repo); this deletion is still correct for everything this
+    app's own webhook can control.
+    shopify_order_line_items/shopify_customers (also ETL-owned) are left out:
+    line items hold no personal data, and shopify_customers has no shop_id
+    column at all, so there's no safe way to scope a delete to one tenant.
     """
     if not shop_id:
         return
@@ -264,7 +276,8 @@ def _redact_shop_data(cur, shop_id: int) -> None:
         "campaigns", "automations", "signup_forms",
         "templates", "segments", "coupon_campaigns",
         "contacts", "gift_recipients",
-        "shopify_events", "shopify_checkouts", "carritos_abandonados", "shopify_products",
+        "shopify_events", "shopify_checkouts", "carritos_abandonados",
+        "shopify_products", "shopify_orders",
         "users",
     ]
     for table in tables_in_fk_order:
