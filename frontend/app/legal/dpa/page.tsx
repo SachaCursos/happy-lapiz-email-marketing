@@ -99,8 +99,8 @@ export default function DataProcessingAgreementPage() {
               anonimizamos/eliminamos su información automáticamente. Cuando se solicita una
               copia de los datos (
               <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">customers/data_request</code>
-              ), lo registramos y coordinamos con el Comercio para entregar la información
-              dentro del plazo exigido.
+              ), generamos automáticamente un export de esa información y se lo enviamos por
+              email al dueño del Comercio.
             </p>
           </section>
 
