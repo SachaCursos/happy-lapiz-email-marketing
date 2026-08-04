@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Iterator
 
 from sqlalchemy import text
@@ -10,10 +9,8 @@ from sqlmodel import Session, select
 
 from app.models.contact import Contact
 from app.models.form import FormSubmission
-from app.models.gift_recipient import GiftRecipient
 from app.services.regalado_vars import (
     get_regalado_field,
-    gift_recipient_to_regalado_dict,
     merge_regalado_sources,
     submission_to_regalado_dict,
 )
@@ -28,78 +25,17 @@ def _contact_allowed(session: Session, email: str) -> tuple[bool, Contact | None
     return True, contact
 
 
-def iter_gift_popup_on_mmdd(
-    session: Session, month: int, day: int
-) -> Iterator[tuple[str, dict, Contact | None]]:
-    rows = session.execute(
-        text("""
-            SELECT DISTINCT ON (LOWER(email))
-                email, nombre_regalado, relacion, fecha_nacimiento_regalado
-            FROM gift_recipients
-            WHERE fecha_nacimiento_regalado IS NOT NULL
-              AND EXTRACT(MONTH FROM fecha_nacimiento_regalado) = :month
-              AND EXTRACT(DAY FROM fecha_nacimiento_regalado) = :day
-            ORDER BY LOWER(email), created_at DESC
-        """),
-        {"month": month, "day": day},
-    ).mappings().all()
-
-    for row in rows:
-        em = (row["email"] or "").lower()
-        if not em:
-            continue
-        allowed, contact = _contact_allowed(session, em)
-        if not allowed:
-            continue
-        gr = GiftRecipient(
-            email=em,
-            nombre_regalado=row["nombre_regalado"] or "",
-            relacion=row["relacion"] or "",
-            fecha_nacimiento_regalado=row["fecha_nacimiento_regalado"],
-        )
-        yield em, gift_recipient_to_regalado_dict(gr), contact
-
-
-def iter_form_on_mmdd(
-    session: Session, form_id: int, month: int, day: int
-) -> Iterator[tuple[str, dict, Contact | None]]:
-    mm = f"{month:02d}"
-    dd = f"{day:02d}"
-    patterns = (f"%-{mm}-{dd}", f"%-{dd}-{mm}", f"%/{mm}/{dd}", f"%/{dd}/{mm}")
-
-    rows = session.exec(
-        select(FormSubmission)
-        .where(FormSubmission.form_id == int(form_id))
-        .where(
-            text(
-                "("
-                "fecha_nacimiento_regalado LIKE ANY (ARRAY[:p1,:p2,:p3,:p4]) OR "
-                "fecha_nacimiento_regalado2 LIKE ANY (ARRAY[:p1,:p2,:p3,:p4])"
-                ")"
-            ).bindparams(p1=patterns[0], p2=patterns[1], p3=patterns[2], p4=patterns[3])
-        )
-        .order_by(FormSubmission.created_at.desc())
-    ).all()
-
-    seen: set[str] = set()
-    for sub in rows:
-        em = (sub.email or "").lower()
-        if not em or em in seen:
-            continue
-        seen.add(em)
-        allowed, contact = _contact_allowed(session, em)
-        if not allowed:
-            continue
-        yield em, submission_to_regalado_dict(sub), contact
-
-
 def iter_contacts_on_mmdd(
     session: Session,
     month: int,
     day: int,
     birthday_field: str = "fecha_nacimiento",
 ) -> Iterator[tuple[str, dict, Contact]]:
-    """Opted-in contacts whose birthday matches month/day (JSON + form overlay)."""
+    """Opted-in contacts whose birthday matches month/day (JSON + form overlay).
+
+    Distinct from the regalados-based iterators below: this is for reminding a
+    contact about THEIR OWN birthday (data_source="contacts"), not a regalado's.
+    """
     mm = f"{month:02d}"
     dd = f"{day:02d}"
     pattern = f"%-{mm}-{dd}"
@@ -167,135 +103,79 @@ def iter_contacts_on_mmdd(
         yield em, data, contact
 
 
-def iter_all_forms_on_mmdd(
-    session: Session, month: int, day: int
-) -> Iterator[tuple[str, dict, Contact | None]]:
-    """Latest regalado submission per email (any signup form) matching month/day."""
-    mm = f"{month:02d}"
-    dd = f"{day:02d}"
-    patterns = (f"%-{mm}-{dd}", f"%-{dd}-{mm}", f"%/{mm}/{dd}", f"%/{dd}/{mm}")
+# ── Regalados (gift-recipient birthdays) — contact.regalados is the single
+# source of truth; these only differ in WHO is eligible per automation
+# data_source config, not in where the regalado data itself comes from. ──────
 
+def _form_emails(session: Session, form_id: int) -> set[str]:
+    """Emails that submitted a specific signup form (data_source="form" scoping)."""
     rows = session.exec(
-        select(FormSubmission)
-        .where(
-            text(
-                "("
-                "fecha_nacimiento_regalado LIKE ANY (ARRAY[:p1,:p2,:p3,:p4]) OR "
-                "fecha_nacimiento_regalado2 LIKE ANY (ARRAY[:p1,:p2,:p3,:p4])"
-                ")"
-            ).bindparams(p1=patterns[0], p2=patterns[1], p3=patterns[2], p4=patterns[3])
-        )
-        .order_by(FormSubmission.created_at.desc())
+        select(FormSubmission.email).where(FormSubmission.form_id == int(form_id))
     ).all()
-
-    seen: set[str] = set()
-    for sub in rows:
-        em = (sub.email or "").lower()
-        if not em or em in seen:
-            continue
-        seen.add(em)
-        allowed, contact = _contact_allowed(session, em)
-        if not allowed:
-            continue
-        yield em, submission_to_regalado_dict(sub), contact
+    return {(e or "").lower() for e in rows if e}
 
 
-def iter_all_forms_with_regalado(
+def iter_contacts_with_regalados(
     session: Session,
+    *,
+    month: int | None = None,
+    day: int | None = None,
+    emails: set[str] | None = None,
 ) -> Iterator[tuple[str, dict, Contact | None]]:
-    seen: set[str] = set()
-    for sub in session.exec(
-        select(FormSubmission)
-        .where(
-            text(
-                "fecha_nacimiento_regalado IS NOT NULL "
-                "OR fecha_nacimiento_regalado2 IS NOT NULL"
+    """Opted-in contacts with a non-empty `regalados` list.
+
+    month/day, if given, restrict to contacts with at least one regalado whose
+    fecha_nacimiento matches that month/day. `emails`, if given (not None),
+    restricts to that set — used to preserve a birthday automation's
+    data_source="form" scoping to one specific form's submitters; pass None
+    (the default) for the broad "gift_popup"/catch-all eligibility.
+    """
+    if emails is not None and not emails:
+        return
+
+    conditions = [
+        "c.regalados IS NOT NULL",
+        "jsonb_array_length(c.regalados) > 0",
+        "c.opted_in = TRUE",
+    ]
+    params: dict = {}
+    if month is not None and day is not None:
+        conditions.append("""
+            EXISTS (
+                SELECT 1 FROM jsonb_array_elements(c.regalados) elem
+                WHERE elem->>'fecha_nacimiento' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                  AND EXTRACT(MONTH FROM (elem->>'fecha_nacimiento')::date) = :month
+                  AND EXTRACT(DAY FROM (elem->>'fecha_nacimiento')::date) = :day
             )
-        )
-        .order_by(FormSubmission.created_at.desc())
-    ):
-        em = (sub.email or "").lower()
-        if not em or em in seen:
-            continue
-        seen.add(em)
-        allowed, contact = _contact_allowed(session, em)
-        if not allowed:
-            continue
-        yield em, submission_to_regalado_dict(sub), contact
-
-
-def iter_gift_flow_on_mmdd(
-    session: Session, month: int, day: int
-) -> Iterator[tuple[str, dict, Contact | None]]:
-    """Gift popup + signup forms (deduped by email, gift_recipients first)."""
-    seen: set[str] = set()
-    for item in iter_gift_popup_on_mmdd(session, month, day):
-        seen.add(item[0])
-        yield item
-    for item in iter_all_forms_on_mmdd(session, month, day):
-        if item[0] not in seen:
-            seen.add(item[0])
-            yield item
-
-
-def iter_gift_flow_all(
-    session: Session,
-) -> Iterator[tuple[str, dict, Contact | None]]:
-    """All future candidates from gift popup and signup forms."""
-    seen: set[str] = set()
-    for item in iter_gift_popup_all(session):
-        seen.add(item[0])
-        yield item
-    for item in iter_all_forms_with_regalado(session):
-        if item[0] not in seen:
-            seen.add(item[0])
-            yield item
-
-
-def iter_gift_popup_all(session: Session) -> Iterator[tuple[str, dict, Contact | None]]:
-    """Latest gift recipient per email (light columns only) — for will_enter counts."""
-    rows = session.execute(
-        text("""
-            SELECT DISTINCT ON (LOWER(email))
-                email, nombre_regalado, relacion, fecha_nacimiento_regalado
-            FROM gift_recipients
-            WHERE fecha_nacimiento_regalado IS NOT NULL
-            ORDER BY LOWER(email), created_at DESC
         """)
+        params["month"] = month
+        params["day"] = day
+    if emails is not None:
+        conditions.append("LOWER(c.email) = ANY(:emails)")
+        params["emails"] = list(emails)
+
+    rows = session.execute(
+        text(f"SELECT id, email, regalados FROM contacts c WHERE {' AND '.join(conditions)}"),
+        params,
     ).mappings().all()
 
     for row in rows:
         em = (row["email"] or "").lower()
         if not em:
             continue
-        allowed, contact = _contact_allowed(session, em)
-        if not allowed:
+        contact = session.get(Contact, row["id"])
+        if not contact or not contact.opted_in:
             continue
-        gr = GiftRecipient(
-            email=em,
-            nombre_regalado=row["nombre_regalado"] or "",
-            relacion=row["relacion"] or "",
-            fecha_nacimiento_regalado=row["fecha_nacimiento_regalado"],
-        )
-        yield em, gift_recipient_to_regalado_dict(gr), contact
+        yield em, {"regalados": row["regalados"] or []}, contact
 
 
-def iter_form_all(
-    session: Session, form_id: int
-) -> Iterator[tuple[str, dict, Contact | None]]:
-    seen: set[str] = set()
-    for sub in session.exec(
-        select(FormSubmission)
-        .where(FormSubmission.form_id == int(form_id))
-        .order_by(FormSubmission.created_at.desc())
-    ):
-        em = (sub.email or "").lower()
-        if not em or em in seen:
-            continue
-        if not sub.fecha_nacimiento_regalado and not sub.fecha_nacimiento_regalado2:
-            continue
-        seen.add(em)
-        allowed, contact = _contact_allowed(session, em)
-        if not allowed:
-            continue
-        yield em, submission_to_regalado_dict(sub), contact
+def iter_gift_flow_all(session: Session) -> Iterator[tuple[str, dict, Contact | None]]:
+    """data_source="gift_popup": broad catch, any contact with regalado data
+    (both the gift widget and the main signup form write into the same
+    contact.regalados, so there's no need to distinguish the channel here)."""
+    return iter_contacts_with_regalados(session)
+
+
+def iter_form_all(session: Session, form_id: int) -> Iterator[tuple[str, dict, Contact | None]]:
+    """data_source="form": only contacts who submitted that specific form."""
+    return iter_contacts_with_regalados(session, emails=_form_emails(session, form_id))

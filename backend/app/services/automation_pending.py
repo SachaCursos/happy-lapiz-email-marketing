@@ -16,7 +16,6 @@ from app.services.birthday_config import (
     supports_will_enter_preview,
 )
 from app.services.birthday_triggers import iter_form_all, iter_gift_flow_all
-from app.services.regalado_vars import get_regalado_field, parse_birthday_mmdd
 
 CONTACTS_PER_STEP_LIMIT = 40
 _WILL_ENTER_CACHE_TTL = 300  # seconds
@@ -113,11 +112,12 @@ def _already_in_flow(session: Session, auto_id: int, trigger_key: str) -> bool:
 
 
 def _will_enter_count(auto: Automation, session: Session) -> dict:
+    from app.services.birthday_enrollment import iter_regalado_birthdays
+
     data_source = resolve_birthday_data_source(auto)
     enroll_early_days = resolve_enroll_early_days(auto, data_source)
     config = auto.trigger_config or {}
     days_before = int(config.get("days_before", 30))
-    birthday_field = config.get("birthday_field", "fecha_nacimiento")
     today = datetime.utcnow().date()
 
     if data_source == "gift_popup":
@@ -132,26 +132,28 @@ def _will_enter_count(auto: Automation, session: Session) -> dict:
     dedupe: set[tuple] = set()
 
     for email, data, contact in candidates:
-        raw_date = get_regalado_field(data, birthday_field)
-        schedule = _first_send_date(raw_date, days_before, today) if raw_date else None
-        if not schedule:
-            continue
+        # Every upcoming regalado birthday for this contact counts — same
+        # source try_enroll_birthday uses for the real enrollment.
+        for date_field, raw_date, _regalado in iter_regalado_birthdays(data):
+            schedule = _first_send_date(raw_date, days_before, today)
+            if not schedule:
+                continue
 
-        bday, first_send = schedule
-        days_until = (first_send - today).days
-        if days_until <= enroll_early_days:
-            continue
+            bday, first_send = schedule
+            days_until = (first_send - today).days
+            if days_until <= enroll_early_days:
+                continue
 
-        owner_key = contact.id if contact else email
-        trigger_key = f"birthday:{owner_key}:{birthday_field}:{bday.year}:{days_before}"
-        dedupe_key = (email, birthday_field, bday.year, days_before)
-        if dedupe_key in dedupe:
-            continue
-        dedupe.add(dedupe_key)
+            owner_key = contact.id if contact else email
+            trigger_key = f"birthday:{owner_key}:{date_field}:{bday.year}:{days_before}"
+            dedupe_key = (email, date_field, bday.year, days_before)
+            if dedupe_key in dedupe:
+                continue
+            dedupe.add(dedupe_key)
 
-        if _already_in_flow(session, auto.id, trigger_key):
-            continue
+            if _already_in_flow(session, auto.id, trigger_key):
+                continue
 
-        count += 1
+            count += 1
 
     return {"count": count}

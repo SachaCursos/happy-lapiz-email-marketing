@@ -1617,19 +1617,12 @@ def _check_form_submitted(auto: Automation, session: Session) -> None:
         email = (sub.email or "").lower().strip()
         if not email:
             continue
+        # extra_data already carries "regalados" (the full list, set at submit
+        # time in forms.py) — _enroll_form_submitted's _parse_regalados reads
+        # that directly, so no need to also copy the (now unused) flat
+        # relacion_regalado/nombre_regalado/fecha_nacimiento_regalado(2)
+        # columns like this used to.
         extra_data = dict(sub.extra_data or {}) if isinstance(sub.extra_data, dict) else {}
-        if sub.relacion_regalado:
-            extra_data.setdefault("para_quien", sub.relacion_regalado)
-        if sub.nombre_regalado:
-            extra_data.setdefault("destinatario_nombre", sub.nombre_regalado)
-        if sub.fecha_nacimiento_regalado:
-            extra_data.setdefault("cual_es_su_fecha_de_nacimiento", sub.fecha_nacimiento_regalado)
-        if sub.relacion_regalado2:
-            extra_data.setdefault("relacion_regalado2", sub.relacion_regalado2)
-        if sub.nombre_regalado2:
-            extra_data.setdefault("nombre_regalado2", sub.nombre_regalado2)
-        if sub.fecha_nacimiento_regalado2:
-            extra_data.setdefault("fecha_nacimiento_regalado2", sub.fecha_nacimiento_regalado2)
         if _enroll_form_submitted(
             auto, session, int(form_id), email, sub.name, extra_data, sub.coupon_code
         ):

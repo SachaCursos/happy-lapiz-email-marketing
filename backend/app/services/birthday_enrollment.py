@@ -22,7 +22,6 @@ from app.services.birthday_triggers import (
     iter_gift_flow_all,
 )
 from app.services.regalado_vars import (
-    get_regalado_field,
     parse_birthday_mmdd,
     prepare_regalado_vars,
 )
@@ -32,10 +31,20 @@ logger = logging.getLogger(__name__)
 # How many days off the intended "X días antes" window is still acceptable.
 BIRTHDAY_STEP_TOLERANCE_DAYS = 5
 
-REGALADO_BIRTHDAY_SPECS: tuple[tuple[str, str, str], ...] = (
+# Legacy fallback for data_source="contacts", which still returns flat
+# fecha_nacimiento_regalado(/2) keys (see iter_contacts_on_mmdd) rather than a
+# `regalados` list.
+REGALADO_LEGACY_SPECS: tuple[tuple[str, str, str], ...] = (
     ("fecha_nacimiento_regalado", "nombre_regalado", "relacion_regalado"),
     ("fecha_nacimiento_regalado2", "nombre_regalado2", "relacion_regalado2"),
 )
+
+
+def _regalado_field_label(index: int) -> str:
+    """Mirrors the legacy column-name scheme (…_regalado, _regalado2, _regalado3…)
+    so trigger_key stays stable across this refactor for slots 1-2, which
+    existing enrollments may already be deduplicated against."""
+    return "fecha_nacimiento_regalado" if index == 0 else f"fecha_nacimiento_regalado{index + 1}"
 
 
 def intended_days_before_for_step(
@@ -139,10 +148,36 @@ def first_send_date(raw_date: str, days_before: int, today: date) -> tuple[date,
     return bday, first_send
 
 
-def iter_regalado_birthdays(data: dict) -> Iterator[tuple[str, str, str, str, str]]:
-    """Yield (date_field, raw_date, mmdd, name_field, relation_field) per regalado."""
+def iter_regalado_birthdays(data: dict) -> Iterator[tuple[str, str, dict]]:
+    """Yield (date_field_label, raw_date, regalado_dict) per regalado, deduped
+    by mm-dd. Prefers data['regalados'] (the contact.regalados-backed sources,
+    any count up to MAX_REGALADOS); falls back to the legacy flat
+    fecha_nacimiento_regalado(/2) keys for data_source="contacts"."""
     seen_mmdd: set[str] = set()
-    for date_field, name_field, relation_field in REGALADO_BIRTHDAY_SPECS:
+    regalados = data.get("regalados")
+    if isinstance(regalados, list) and regalados:
+        for idx, item in enumerate(regalados):
+            if not isinstance(item, dict):
+                continue
+            raw = str(
+                item.get("fecha_nacimiento")
+                or item.get("fecha")
+                or item.get("cual_es_su_fecha_de_nacimiento")
+                or ""
+            ).strip()
+            if not raw:
+                continue
+            mmdd = parse_birthday_mmdd(raw)
+            if not mmdd or mmdd in seen_mmdd:
+                continue
+            seen_mmdd.add(mmdd)
+            yield _regalado_field_label(idx), raw, {
+                "nombre": item.get("nombre") or item.get("destinatario_nombre") or "",
+                "relacion": item.get("relacion") or item.get("para_quien") or "",
+            }
+        return
+
+    for date_field, name_field, relation_field in REGALADO_LEGACY_SPECS:
         raw = (data.get(date_field) or "").strip()
         if not raw:
             continue
@@ -150,7 +185,10 @@ def iter_regalado_birthdays(data: dict) -> Iterator[tuple[str, str, str, str, st
         if not mmdd or mmdd in seen_mmdd:
             continue
         seen_mmdd.add(mmdd)
-        yield date_field, raw, mmdd, name_field, relation_field
+        yield date_field, raw, {
+            "nombre": data.get(name_field) or "",
+            "relacion": data.get(relation_field) or "",
+        }
 
 
 def _delay_hours_until(first_send: date, now: datetime) -> float:
@@ -173,14 +211,12 @@ def _build_extra_vars(
     contact: Contact | None,
     email: str,
     data: dict,
+    regalado: dict,
     *,
-    name_field: str,
-    relation_field: str,
     bday: date,
-    days_before: int,
 ) -> dict:
-    child_name = (data.get(name_field) or "").strip() or get_regalado_field(data, name_field)
-    relation = (data.get(relation_field) or "").strip() or get_regalado_field(data, relation_field)
+    child_name = (regalado.get("nombre") or "").strip()
+    relation = (regalado.get("relacion") or "").strip()
     contact_name = (contact.name if contact else None) or data.get("nombre") or email
     first = str(contact_name).split()[0]
     extra_vars = {
@@ -223,7 +259,7 @@ def try_enroll_birthday(
     owner_key = contact.id if contact else email_l
     enrolled = 0
 
-    for date_field, raw_date, _mmdd, name_field, relation_field in iter_regalado_birthdays(data):
+    for date_field, raw_date, regalado in iter_regalado_birthdays(data):
         schedule = first_send_date(raw_date, days_before, today)
         if not schedule:
             continue
@@ -252,10 +288,8 @@ def try_enroll_birthday(
             contact,
             email_l,
             data,
-            name_field=name_field,
-            relation_field=relation_field,
+            regalado,
             bday=bday,
-            days_before=days_before,
         )
         enrollment = AutomationEnrollment(
             automation_id=auto.id,

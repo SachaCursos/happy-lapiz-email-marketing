@@ -360,6 +360,13 @@ def _run_migrations():
         "ALTER TABLE contacts ALTER COLUMN shop_id SET NOT NULL",
         "DROP INDEX IF EXISTS ix_contacts_email",
         "ALTER TABLE contacts ADD CONSTRAINT contacts_shop_id_email_key UNIQUE (shop_id, email)",
+        # Quién le compra regalos cada contacto — reemplaza las columnas planas
+        # relacion_regalado/nombre_regalado/fecha_nacimiento_regalado(2) de
+        # form_submissions (capadas a 2) como fuente de verdad del motor de
+        # cumpleaños/REGALO. Ver _backfill_contact_regalados abajo para migrar
+        # lo histórico, y app/services/regalado_vars.py::merge_regalados_into_contact
+        # para cómo se escribe de ahora en adelante.
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS regalados JSONB",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:
@@ -369,6 +376,99 @@ def _run_migrations():
                 session.commit()
             except Exception:
                 session.rollback()
+
+    _backfill_contact_regalados()
+
+
+def _backfill_contact_regalados():
+    """One-time backfill of contacts.regalados from historical form_submissions
+    (flat columns + extra_data.regalados/regalados_extra) and gift_recipients
+    rows. Skips contacts that already have a non-empty regalados list, so this
+    is safe to re-run on every deploy without duplicating entries."""
+    from app.models.contact import Contact
+    from app.services.regalado_vars import merge_regalados_into_contact
+
+    with Session(engine) as session:
+        try:
+            has_col = session.execute(text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_name = 'contacts' AND column_name = 'regalados'"
+            )).scalar()
+            if not has_col:
+                return
+
+            target_ids = session.execute(text("""
+                SELECT DISTINCT c.id FROM contacts c
+                WHERE (c.regalados IS NULL OR jsonb_array_length(c.regalados) = 0)
+                  AND (
+                    EXISTS (
+                        SELECT 1 FROM form_submissions fs
+                        WHERE lower(fs.email) = lower(c.email)
+                          AND (fs.nombre_regalado IS NOT NULL OR fs.extra_data::text LIKE '%regalados%')
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM gift_recipients gr WHERE lower(gr.email) = lower(c.email)
+                    )
+                  )
+            """)).fetchall()
+
+            for (contact_id,) in target_ids:
+                contact = session.get(Contact, contact_id)
+                if not contact:
+                    continue
+                nuevos: list[dict] = []
+
+                subs = session.execute(text("""
+                    SELECT relacion_regalado, nombre_regalado, fecha_nacimiento_regalado,
+                           relacion_regalado2, nombre_regalado2, fecha_nacimiento_regalado2,
+                           extra_data
+                    FROM form_submissions WHERE lower(email) = lower(:email)
+                    ORDER BY created_at ASC
+                """), {"email": contact.email}).mappings().all()
+                for sub in subs:
+                    if sub["nombre_regalado"]:
+                        nuevos.append({
+                            "relacion": sub["relacion_regalado"],
+                            "nombre": sub["nombre_regalado"],
+                            "fecha": sub["fecha_nacimiento_regalado"],
+                        })
+                    if sub["nombre_regalado2"]:
+                        nuevos.append({
+                            "relacion": sub["relacion_regalado2"],
+                            "nombre": sub["nombre_regalado2"],
+                            "fecha": sub["fecha_nacimiento_regalado2"],
+                        })
+                    ed = sub["extra_data"]
+                    if isinstance(ed, dict):
+                        for key in ("regalados", "regalados_extra"):
+                            for r in (ed.get(key) or []):
+                                if isinstance(r, dict):
+                                    nuevos.append({
+                                        "relacion": r.get("para_quien") or r.get("relacion"),
+                                        "nombre": r.get("destinatario_nombre") or r.get("nombre"),
+                                        "fecha": r.get("cual_es_su_fecha_de_nacimiento") or r.get("fecha"),
+                                    })
+
+                gifts = session.execute(text("""
+                    SELECT relacion, nombre_regalado, fecha_nacimiento_regalado
+                    FROM gift_recipients WHERE lower(email) = lower(:email)
+                    ORDER BY created_at ASC
+                """), {"email": contact.email}).mappings().all()
+                for g in gifts:
+                    fecha = g["fecha_nacimiento_regalado"]
+                    nuevos.append({
+                        "relacion": g["relacion"],
+                        "nombre": g["nombre_regalado"],
+                        "fecha": str(fecha) if fecha else None,
+                    })
+
+                if nuevos:
+                    merge_regalados_into_contact(contact, nuevos)
+                    session.add(contact)
+
+            session.commit()
+        except Exception:
+            session.rollback()
 
 
 def get_session():

@@ -78,20 +78,6 @@ def _parse_regalados(extra_data: dict | None) -> list[dict]:
     return []
 
 
-def _regalado_column_values(regalados: list[dict]) -> dict:
-    """Map parsed regalados to form_submissions columns (1st and 2nd recipient)."""
-    vals: dict = {}
-    if len(regalados) > 0:
-        vals["relacion_regalado"] = regalados[0]["relacion"] or None
-        vals["nombre_regalado"] = regalados[0]["nombre"] or None
-        vals["fecha_nacimiento_regalado"] = regalados[0]["fecha"] or None
-    if len(regalados) > 1:
-        vals["relacion_regalado2"] = regalados[1]["relacion"] or None
-        vals["nombre_regalado2"] = regalados[1]["nombre"] or None
-        vals["fecha_nacimiento_regalado2"] = regalados[1]["fecha"] or None
-    return vals
-
-
 # ── Authenticated CRUD ────────────────────────────────────────────────────────
 
 @router.get("", response_model=List[SignupFormRead])
@@ -448,9 +434,12 @@ def submit_form(
             }
             for r in regalados
         ]}
-    regalado_cols = _regalado_column_values(regalados)
 
-    # Duplicate check: one submission per email, unless adding a new unregistered child
+    # Duplicate check: one submission per email, unless adding a new unregistered child.
+    # "Already registered" now checks contact.regalados (pre-merge) instead of scanning
+    # past FormSubmission rows — it's the same dedupe question either way (did this
+    # contact already register this specific person), and contact.regalados is the
+    # single place that answers it once the merge below has happened for prior submits.
     existing_subs = session.exec(
         select(FormSubmission).where(
             FormSubmission.form_id == form_id,
@@ -468,13 +457,13 @@ def submit_form(
             nombre_nuevo = (_ed.get("destinatario_nombre") or "").strip().lower()
             if nombre_nuevo:
                 nombres_nuevos = [nombre_nuevo]
+        existing_names = {
+            (item.get("nombre") or "").strip().lower()
+            for item in (contact.regalados or [])
+            if isinstance(item, dict)
+        }
         for nombre_nuevo in nombres_nuevos:
-            already_registered = any(
-                (sub.nombre_regalado or "").strip().lower() == nombre_nuevo
-                or (sub.nombre_regalado2 or "").strip().lower() == nombre_nuevo
-                for sub in existing_subs
-            )
-            if already_registered:
+            if nombre_nuevo in existing_names:
                 existing_coupon = next((s.coupon_code for s in existing_subs if s.coupon_code), None)
                 if not existing_coupon and f.coupon_campaign_id and shop:
                     existing_coupon = _generate_dynamic_coupon(session, f.coupon_campaign_id, email, shop)
@@ -483,9 +472,10 @@ def submit_form(
                 session.commit()
                 return {"ok": False, "already_submitted": True, "coupon_code": existing_coupon}
 
-    # Persist 3+ recipients in extra_data JSON
-    if len(regalados) > 2:
-        _ed = {**_ed, "regalados_extra": regalados[2:]}
+    if regalados:
+        from app.services.regalado_vars import merge_regalados_into_contact
+        merge_regalados_into_contact(contact, regalados)
+        session.add(contact)
 
     session.add(FormSubmission(
         form_id=form_id,
@@ -496,12 +486,6 @@ def submit_form(
         extra_data=_ed or None,
         coupon_code=coupon_code,
         ab_variant=payload.ab_variant or None,
-        relacion_regalado=regalado_cols.get("relacion_regalado"),
-        nombre_regalado=regalado_cols.get("nombre_regalado"),
-        fecha_nacimiento_regalado=regalado_cols.get("fecha_nacimiento_regalado"),
-        relacion_regalado2=regalado_cols.get("relacion_regalado2"),
-        nombre_regalado2=regalado_cols.get("nombre_regalado2"),
-        fecha_nacimiento_regalado2=regalado_cols.get("fecha_nacimiento_regalado2"),
         shop_id=f.shop_id,
     ))
     if visitor_sid:
@@ -1571,6 +1555,10 @@ def _build_embed_js(cfg: dict) -> str:
             var prevLabel = addRegBtn.textContent;
             addRegBtn.textContent = {txt_add_regalado_ok};
             setTimeout(function() {{ addRegBtn.textContent = prevLabel; }}, 2200);
+            // Backend keeps at most 5 regalados per contacto — savedRegalados holds
+            // the ones already "added", the 5th is whatever's left in the visible
+            // fields and gets captured automatically at submit (mergeRegaladosIntoPayload).
+            if (savedRegalados.length >= 4) {{ addRegBtn.style.display = 'none'; }}
             return;
           }}
 
@@ -1750,7 +1738,16 @@ def submit_gift_form(
     contact = session.exec(
         select(Contact).where(Contact.email == email, Contact.shop_id == shop_id)
     ).first()
-    contact_id = contact.id if contact else None
+    if not contact:
+        contact = Contact(
+            email=email,
+            opted_in=True,
+            opted_in_at=datetime.utcnow(),
+            shop_id=shop_id,
+        )
+        session.add(contact)
+        session.flush()
+    contact_id = contact.id
 
     recipient = GiftRecipient(
         shop_id=shop_id,
@@ -1762,6 +1759,16 @@ def submit_gift_form(
         source_url=payload.source_url,
     )
     session.add(recipient)
+
+    # gift_recipients keeps its own log row (above); contact.regalados is now
+    # the source of truth the birthday/REGALO automation actually reads.
+    from app.services.regalado_vars import merge_regalados_into_contact
+    merge_regalados_into_contact(contact, [{
+        "relacion": payload.relacion,
+        "nombre": payload.nombre_regalado,
+        "fecha_nacimiento": payload.fecha_nacimiento_regalado,
+    }])
+    session.add(contact)
     session.commit()
     session.refresh(recipient)
 

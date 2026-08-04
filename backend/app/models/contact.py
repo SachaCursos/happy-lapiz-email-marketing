@@ -58,6 +58,10 @@ class Contact(SQLModel, table=True):
     family_role: Optional[str] = Field(default=None, index=True)
     birthday: Optional[date] = None
     notes: Optional[str] = None
+    # Quién le compra regalos este contacto — [{relacion, nombre, fecha_nacimiento (ISO)}],
+    # máx 5. Única fuente de verdad para el motor de cumpleaños/REGALO — ver
+    # app/services/regalado_vars.py::merge_regalados_into_contact.
+    regalados: Optional[Any] = Field(default=None, sa_column=Column(JSON))
 
 
 class ContactCreate(SQLModel):

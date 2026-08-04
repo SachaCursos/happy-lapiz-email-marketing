@@ -138,53 +138,62 @@ def _regalado_from_list(regalados: list, idx: int) -> tuple[str, str | None, str
     return rel, nombre, fecha
 
 
+MAX_REGALADOS = 5
+
+
 def prepare_regalado_vars(vars_: dict) -> dict:
-    """Set display-ready regalado variables with name fallback to relation (tu-form)."""
+    """Set display-ready regalado variables (up to MAX_REGALADOS) with name
+    fallback to relation (tu-form). Slots 1-2 also read the legacy flat keys
+    (nombre_regalado/relacion_regalado/…) for templates/callers that set those
+    directly instead of a `regalados` list; slots 3+ only come from the list."""
     regalados = vars_.get("regalados")
     if not isinstance(regalados, list):
         regalados = []
 
-    r1_rel = relacion_to_tu(_pick(vars_, "relacion_regalado", "relacion", "para_quien"))
-    r2_rel = relacion_to_tu(_pick(vars_, "relacion_regalado2", "relacion2", "para_quien2"))
-    n1 = sanitize_regalado_name(_pick(vars_, "nombre_regalado", "destinatario_nombre"))
-    n2 = sanitize_regalado_name(_pick(vars_, "nombre_regalado2", "destinatario_nombre2"))
-    fecha1 = _pick(vars_, "fecha_nacimiento_regalado", "fecha_nacimiento", "cual_es_su_fecha_de_nacimiento")
-    fecha2 = _pick(vars_, "fecha_nacimiento_regalado2", "fecha_nacimiento2", "cual_es_su_fecha_de_nacimiento2")
+    legacy_rel = [
+        _pick(vars_, "relacion_regalado", "relacion", "para_quien"),
+        _pick(vars_, "relacion_regalado2", "relacion2", "para_quien2"),
+    ]
+    legacy_nombre = [
+        sanitize_regalado_name(_pick(vars_, "nombre_regalado", "destinatario_nombre")),
+        sanitize_regalado_name(_pick(vars_, "nombre_regalado2", "destinatario_nombre2")),
+    ]
+    legacy_fecha = [
+        _pick(vars_, "fecha_nacimiento_regalado", "fecha_nacimiento", "cual_es_su_fecha_de_nacimiento"),
+        _pick(vars_, "fecha_nacimiento_regalado2", "fecha_nacimiento2", "cual_es_su_fecha_de_nacimiento2"),
+    ]
 
-    if regalados:
-        lr, ln, lf = _regalado_from_list(regalados, 0)
-        if lr:
-            r1_rel = lr
-        if ln:
-            n1 = ln
-        if lf:
-            fecha1 = lf or fecha1
-        if len(regalados) > 1:
-            lr2, ln2, lf2 = _regalado_from_list(regalados, 1)
-            if lr2:
-                r2_rel = lr2
-            if ln2:
-                n2 = ln2
-            if lf2:
-                fecha2 = lf2 or fecha2
+    rels: list[str] = []
+    nombres: list[str | None] = []
+    fechas: list[str] = []
+    for i in range(MAX_REGALADOS):
+        rel = relacion_to_tu(legacy_rel[i]) if i < 2 else ""
+        nombre = legacy_nombre[i] if i < 2 else None
+        fecha = legacy_fecha[i] if i < 2 else ""
+        if i < len(regalados):
+            lr, ln, lf = _regalado_from_list(regalados, i)
+            if lr:
+                rel = lr
+            if ln:
+                nombre = ln
+            if lf:
+                fecha = lf or fecha
+        rels.append(rel)
+        nombres.append(nombre)
+        fechas.append(fecha)
 
-    display1 = n1 or r1_rel
-    display2 = n2 or r2_rel
-    parts = [p for p in (display1, display2) if p]
+    displays = [nombres[i] or rels[i] for i in range(MAX_REGALADOS)]
+    parts = [p for p in displays if p]
 
-    vars_.update({
-        "nombre_regalado": display1,
-        "nombre_regalado2": display2,
-        "relacion": r1_rel,
-        "relacion_regalado": r1_rel,
-        "relacion2": r2_rel,
-        "relacion_regalado2": r2_rel,
-        "fecha_nacimiento": fecha1,
-        "fecha_nacimiento_regalado": fecha1,
-        "fecha_nacimiento2": fecha2,
-        "fecha_nacimiento_regalado2": fecha2,
-        "nombres_regalados": " y ".join(parts),
-    })
+    out: dict[str, str] = {"nombres_regalados": " y ".join(parts)}
+    for i in range(MAX_REGALADOS):
+        suffix = "" if i == 0 else str(i + 1)
+        out[f"nombre_regalado{suffix}"] = displays[i]
+        out[f"relacion{suffix}"] = rels[i]
+        out[f"relacion_regalado{suffix}"] = rels[i]
+        out[f"fecha_nacimiento{suffix}"] = fechas[i]
+        out[f"fecha_nacimiento_regalado{suffix}"] = fechas[i]
+    vars_.update(out)
     return vars_
 
 
@@ -372,3 +381,78 @@ def infer_relation_field(name_field: str, relation_field: str) -> str:
     if name_field in ("nombre_regalado2", "destinatario_nombre2"):
         return "relacion2"
     return relation_field
+
+
+# ── Contact.regalados: single source of truth (replaces form_submissions'
+# capped-at-2 flat columns and gift_recipients as a read path) ────────────────
+
+def parse_full_birthdate_iso(raw_date: str | None) -> str | None:
+    """Parse a free-text birthdate (day-first, same assumption as
+    parse_birthday_mmdd) into 'YYYY-MM-DD'. None if unparseable."""
+    raw = (raw_date or "").strip()
+    if not raw:
+        return None
+    try:
+        if len(raw) == 10 and raw[4] in ("-", "/"):
+            return datetime.strptime(raw.replace("/", "-"), "%Y-%m-%d").date().isoformat()
+        for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(raw, fmt).date().isoformat()
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _normalize_name_key(name: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", (name or "").strip().lower())
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def merge_regalados_into_contact(contact: Any, nuevos: list[dict]) -> bool:
+    """Merge newly-submitted regalados into contact.regalados: dedupe by
+    normalized name (a resubmission for the same person refreshes their data
+    in place, it doesn't add a duplicate), capped at MAX_REGALADOS distinct
+    people. `nuevos` items use the same loose keys forms.py already parses
+    (relacion/para_quien, nombre/destinatario_nombre,
+    fecha/fecha_nacimiento/cual_es_su_fecha_de_nacimiento — free text, parsed
+    to ISO here). Returns True if contact.regalados changed."""
+    existing = contact.regalados if isinstance(contact.regalados, list) else []
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+
+    def _add(item: dict, *, is_new: bool) -> None:
+        relacion = _pick(item, "relacion", "para_quien", "relacion_regalado")
+        nombre = sanitize_regalado_name(
+            _pick(item, "nombre", "destinatario_nombre", "nombre_regalado")
+        ) or ""
+        if not nombre and not relacion:
+            return
+        if is_new:
+            fecha = parse_full_birthdate_iso(
+                _pick(item, "fecha_nacimiento", "fecha", "cual_es_su_fecha_de_nacimiento")
+            )
+        else:
+            fecha = item.get("fecha_nacimiento") or None
+        key = _normalize_name_key(nombre) if nombre else f"_sin_nombre_{len(order)}"
+        if key not in merged:
+            order.append(key)
+        merged[key] = {"relacion": relacion, "nombre": nombre, "fecha_nacimiento": fecha}
+
+    for item in existing:
+        if isinstance(item, dict):
+            _add(item, is_new=False)
+    for item in nuevos:
+        if isinstance(item, dict):
+            _add(item, is_new=True)
+
+    order = order[-MAX_REGALADOS:]
+    new_list = [merged[k] for k in order]
+
+    if new_list == existing:
+        return False
+    contact.regalados = new_list
+    return True
