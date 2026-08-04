@@ -24,6 +24,26 @@ const FAMILY_ROLE_OPTIONS = [
   { value: "no_identificado", label: "No identificado" },
 ];
 
+/** Regiones de Chile tal como aparecen en Shopify (province / shipping address). */
+const CHILE_REGION_OPTIONS = [
+  { value: "Arica and Parinacota", label: "Arica and Parinacota" },
+  { value: "Tarapacá", label: "Tarapacá" },
+  { value: "Antofagasta", label: "Antofagasta" },
+  { value: "Atacama", label: "Atacama" },
+  { value: "Coquimbo", label: "Coquimbo" },
+  { value: "Valparaíso", label: "Valparaíso" },
+  { value: "Santiago", label: "Santiago" },
+  { value: "O'Higgins", label: "O'Higgins" },
+  { value: "Maule", label: "Maule" },
+  { value: "Ñuble", label: "Ñuble" },
+  { value: "Biobío", label: "Biobío" },
+  { value: "Araucanía", label: "Araucanía" },
+  { value: "Los Ríos", label: "Los Ríos" },
+  { value: "Los Lagos", label: "Los Lagos" },
+  { value: "Aysén", label: "Aysén" },
+  { value: "Magallanes", label: "Magallanes" },
+];
+
 const FIELDS = [
   { value: "email",                label: "Email",                  type: "string" },
   { value: "family_role",          label: "Rol familiar",           type: "enum", options: FAMILY_ROLE_OPTIONS },
@@ -32,7 +52,7 @@ const FIELDS = [
   { value: "ticket_medio",         label: "Ticket medio ($)",       type: "number" },
   { value: "last_purchase",        label: "Última compra",          type: "date" },
   { value: "shipping_city",        label: "Ciudad de envío",        type: "location" },
-  { value: "shipping_province",    label: "Región de envío",        type: "location" },
+  { value: "shipping_province",    label: "Región de envío",        type: "enum", options: CHILE_REGION_OPTIONS },
   { value: "language",             label: "Idioma",                 type: "string" },
   { value: "origin_utm",           label: "Origen UTM",             type: "string" },
   { value: "opted_in",             label: "Opt-in activo",          type: "boolean" },
