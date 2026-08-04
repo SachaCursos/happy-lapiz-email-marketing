@@ -91,6 +91,14 @@ def _run_migrations():
             created_by INTEGER,
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         )""",
+        # Slot-1 regalado columns existed from the original table definition on
+        # production, but never got a self-healing migration of their own —
+        # environments whose form_submissions table predates that (e.g. staging)
+        # are missing them entirely, which breaks _backfill_contact_regalados's
+        # SELECT below. Idempotent either way.
+        "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS relacion_regalado VARCHAR",
+        "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS nombre_regalado VARCHAR",
+        "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS fecha_nacimiento_regalado VARCHAR",
         "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS relacion_regalado2 VARCHAR",
         "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS nombre_regalado2 VARCHAR",
         "ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS fecha_nacimiento_regalado2 VARCHAR",
