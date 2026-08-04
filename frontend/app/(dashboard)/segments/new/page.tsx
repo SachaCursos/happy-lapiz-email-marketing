@@ -24,6 +24,26 @@ const FAMILY_ROLE_OPTIONS = [
   { value: "no_identificado", label: "No identificado" },
 ];
 
+/** Regiones de Chile tal como aparecen en Shopify (province / shipping address). */
+const CHILE_REGION_OPTIONS = [
+  { value: "Arica and Parinacota", label: "Arica and Parinacota" },
+  { value: "Tarapacá", label: "Tarapacá" },
+  { value: "Antofagasta", label: "Antofagasta" },
+  { value: "Atacama", label: "Atacama" },
+  { value: "Coquimbo", label: "Coquimbo" },
+  { value: "Valparaíso", label: "Valparaíso" },
+  { value: "Santiago", label: "Santiago" },
+  { value: "O'Higgins", label: "O'Higgins" },
+  { value: "Maule", label: "Maule" },
+  { value: "Ñuble", label: "Ñuble" },
+  { value: "Biobío", label: "Biobío" },
+  { value: "Araucanía", label: "Araucanía" },
+  { value: "Los Ríos", label: "Los Ríos" },
+  { value: "Los Lagos", label: "Los Lagos" },
+  { value: "Aysén", label: "Aysén" },
+  { value: "Magallanes", label: "Magallanes" },
+];
+
 const FIELDS = [
   { value: "email",                label: "Email",                  type: "string" },
   { value: "family_role",          label: "Rol familiar",           type: "enum", options: FAMILY_ROLE_OPTIONS },
@@ -31,8 +51,8 @@ const FIELDS = [
   { value: "total_spent",          label: "Total gastado ($)",       type: "number" },
   { value: "ticket_medio",         label: "Ticket medio ($)",       type: "number" },
   { value: "last_purchase",        label: "Última compra",          type: "date" },
-  { value: "shipping_city",        label: "Ciudad de envío",        type: "string" },
-  { value: "shipping_province",    label: "Región de envío",        type: "string" },
+  { value: "shipping_city",        label: "Ciudad de envío",        type: "location" },
+  { value: "shipping_province",    label: "Región de envío",        type: "enum", options: CHILE_REGION_OPTIONS },
   { value: "language",             label: "Idioma",                 type: "string" },
   { value: "origin_utm",           label: "Origen UTM",             type: "string" },
   { value: "opted_in",             label: "Opt-in activo",          type: "boolean" },
@@ -63,6 +83,10 @@ const OPS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
     { value: "starts",   label: "empieza por" },
   ],
   enum: [
+    { value: "eq",  label: "es" },
+    { value: "neq", label: "no es" },
+  ],
+  location: [
     { value: "eq",  label: "es" },
     { value: "neq", label: "no es" },
   ],
@@ -98,6 +122,100 @@ function parseFormSubmissionValue(
 }
 
 interface ContactOption { id: number; name: string; email: string; }
+
+function LocationPicker({
+  kind,
+  value,
+  options,
+  onChange,
+  loading,
+}: {
+  kind: "city" | "province";
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+  loading?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function h(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  // Provinces: plain select (only ~16 Shopify regions)
+  if (kind === "province") {
+    return (
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={loading || options.length === 0}
+        className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white min-w-[200px]"
+      >
+        <option value="">
+          {loading ? "Cargando regiones…" : options.length === 0 ? "Sin regiones" : "Seleccionar región…"}
+        </option>
+        {options.map((p) => (
+          <option key={p} value={p}>{p}</option>
+        ))}
+      </select>
+    );
+  }
+
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((c) => c.toLowerCase().includes(q)).slice(0, 80)
+    : options.slice(0, 80);
+
+  return (
+    <div className="relative min-w-[220px]" ref={ref}>
+      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+      <input
+        type="text"
+        value={open ? search : value}
+        onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+        onFocus={() => { setSearch(value); setOpen(true); }}
+        placeholder={loading ? "Cargando ciudades…" : "Buscar ciudad…"}
+        disabled={loading}
+        className="w-full pl-9 pr-8 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+      />
+      {value && !open && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500"
+        >
+          <X size={14} />
+        </button>
+      )}
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-56 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-gray-400">Sin coincidencias</p>
+          ) : (
+            filtered.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => { onChange(c); setSearch(""); setOpen(false); }}
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 border-b border-gray-50 last:border-0 ${
+                  c === value ? "bg-brand-50 text-brand-700 font-medium" : "text-gray-800"
+                }`}
+              >
+                {c}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ContactPicker({
   selected,
@@ -444,6 +562,14 @@ export default function NewSegmentPage() {
     staleTime: 60_000,
   });
 
+  const { data: shippingLocations, isLoading: loadingLocations } = useQuery({
+    queryKey: ["shipping-locations"],
+    queryFn: () => contactsApi.shippingLocations().then((r) => r.data),
+    staleTime: 10 * 60_000,
+  });
+  const provinceOptions = shippingLocations?.provinces ?? [];
+  const cityOptions = shippingLocations?.cities ?? [];
+
   const defaultFormId = signupForms[0]?.id;
   const [rules, setRules] = useState<SegmentRule[]>([emptyRule()]);
   const [manualContacts, setManualContacts] = useState<ContactOption[]>([]);
@@ -597,6 +723,8 @@ export default function NewSegmentPage() {
                               ? defaultCampaignEngagementValue(engagementKindForField(nextField))
                             : nextType === "enum"
                               ? (enumOpts?.[0]?.value ?? "")
+                            : nextType === "location"
+                              ? ""
                             : nextType === "boolean"
                               ? true
                               : "";
@@ -721,6 +849,14 @@ export default function NewSegmentPage() {
                           <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
+                    ) : fieldType === "location" ? (
+                      <LocationPicker
+                        kind={rule.field === "shipping_province" ? "province" : "city"}
+                        value={String(rule.value ?? "")}
+                        options={rule.field === "shipping_province" ? provinceOptions : cityOptions}
+                        loading={loadingLocations}
+                        onChange={(v) => updateRule(i, { value: v })}
+                      />
                     ) : (
                       <input
                         type={fieldType === "number" ? "number" : fieldType === "date" ? "date" : "text"}

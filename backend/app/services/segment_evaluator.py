@@ -329,6 +329,15 @@ def _build_clause(node: dict) -> Optional[Any]:
     if col is None or fn is None:
         return None
 
+    # Comparación case-insensitive (+ trim) para ciudad/región de envío
+    if field in ("shipping_city", "shipping_province") and op in ("eq", "neq") and isinstance(value, str):
+        from sqlalchemy import func as sa_func
+        needle = value.strip()
+        if not needle:
+            return None
+        matched = sa_func.lower(sa_func.trim(col)) == needle.lower()
+        return ~matched if op == "neq" else matched
+
     # Comparación case-insensitive para campos de texto con eq/neq
     if field in STRING_FIELDS and op == "eq" and isinstance(value, str):
         return col.ilike(value)

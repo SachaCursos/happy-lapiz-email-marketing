@@ -78,6 +78,87 @@ def count_contacts(session: Session = Depends(get_session), _: User = Depends(ge
     return {"count": count}
 
 
+# Chile region order (north → south), matching Shopify province names for CL stores.
+_CHILE_PROVINCE_ORDER = [
+    "Arica and Parinacota",
+    "Tarapacá",
+    "Antofagasta",
+    "Atacama",
+    "Coquimbo",
+    "Valparaíso",
+    "Santiago",
+    "O'Higgins",
+    "Maule",
+    "Ñuble",
+    "Biobío",
+    "Araucanía",
+    "Los Ríos",
+    "Los Lagos",
+    "Aysén",
+    "Magallanes",
+]
+
+
+@router.get("/shipping-locations")
+def shipping_locations(
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
+):
+    """Distinct shipping provinces/cities from contacts (Shopify order addresses).
+
+    Values match what Shopify stores on orders — used by segment builders as
+    selectable options instead of free text.
+    """
+    prov_rows = session.execute(text("""
+        SELECT TRIM(shipping_province) AS p, COUNT(*)::int AS n
+        FROM contacts
+        WHERE shop_id = :shop_id
+          AND shipping_province IS NOT NULL
+          AND TRIM(shipping_province) <> ''
+          AND TRIM(shipping_province) <> '-'
+        GROUP BY 1
+        ORDER BY n DESC
+    """), {"shop_id": shop.id}).fetchall()
+
+    order_idx = {name: i for i, name in enumerate(_CHILE_PROVINCE_ORDER)}
+    provinces = sorted(
+        [r[0] for r in prov_rows],
+        key=lambda p: (order_idx.get(p, 100), p.lower()),
+    )
+
+    # Canonical city spelling = most frequent TRIM(value) per case-insensitive key
+    city_rows = session.execute(text("""
+        SELECT TRIM(shipping_city) AS city,
+               COUNT(*)::int AS n
+        FROM contacts
+        WHERE shop_id = :shop_id
+          AND shipping_city IS NOT NULL
+          AND TRIM(shipping_city) <> ''
+          AND TRIM(shipping_city) !~ '^[0-9\\-\\.]+$'
+          AND char_length(TRIM(shipping_city)) >= 3
+        GROUP BY TRIM(shipping_city)
+        ORDER BY LOWER(TRIM(shipping_city)), n DESC, city ASC
+    """), {"shop_id": shop.id}).fetchall()
+    # Deduplicate case variants keeping the most frequent spelling
+    seen_keys: set[str] = set()
+    cities: list[str] = []
+    for (city, _n) in city_rows:
+        key = city.lower()
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        cities.append(city)
+    cities.sort(key=lambda c: c.lower())
+
+    return {
+        "provinces": provinces,
+        "cities": cities,
+        "province_count": len(provinces),
+        "city_count": len(cities),
+    }
+
+
 def _do_unsubscribe(email: str, session: Session) -> Optional[str]:
     """Returns the contact's shop display name (or None if not found/no shop),
     so the caller can show the real store name on the public confirmation page."""
