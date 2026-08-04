@@ -3,6 +3,8 @@ recipients) as the source of truth for the birthday/REGALO automation. These
 cover the merge/normalize logic and the up-to-5 template variable expansion —
 no DB needed, these are pure functions over plain dicts and an in-memory
 Contact instance."""
+from datetime import date
+
 from app.models.contact import Contact
 from app.services.regalado_vars import (
     MAX_REGALADOS,
@@ -10,7 +12,7 @@ from app.services.regalado_vars import (
     parse_full_birthdate_iso,
     prepare_regalado_vars,
 )
-from app.services.birthday_enrollment import iter_regalado_birthdays
+from app.services.birthday_enrollment import first_send_date, iter_regalado_birthdays
 
 
 def make_contact(**overrides) -> Contact:
@@ -159,3 +161,23 @@ def test_iter_regalado_birthdays_dedupes_same_mmdd():
     ]}
     results = list(iter_regalado_birthdays(data))
     assert len(results) == 1
+
+
+# ── first_send_date: leap-day birthdays in non-leap years ──────────────────
+# Found live in production logs: date(2026, 2, 29) raises ValueError, which
+# silently dropped that regalado's reminder every single run (caught by an
+# outer try/except at the automation-trigger level, so it never surfaced as
+# an error to anyone — just a birthday reminder that never sent).
+
+def test_first_send_date_leap_day_in_non_leap_year_falls_back_to_feb_28():
+    result = first_send_date("29-02-2020", 30, date(2026, 1, 1))
+    assert result is not None
+    bday, first_send = result
+    assert bday == date(2026, 2, 28)
+
+
+def test_first_send_date_leap_day_in_leap_year_stays_feb_29():
+    result = first_send_date("29-02-2020", 30, date(2028, 1, 1))
+    assert result is not None
+    bday, _first_send = result
+    assert bday == date(2028, 2, 29)

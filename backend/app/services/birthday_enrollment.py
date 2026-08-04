@@ -135,15 +135,31 @@ def refresh_birthday_countdown(extra_vars: dict, *, as_of: date | None = None) -
     return out
 
 
+def _safe_date(year: int, month: int, day: int) -> date | None:
+    """date() raises for Feb 29 in a non-leap year — observe it on Feb 28
+    that year instead of erroring (and skipping the reminder) every time a
+    leap-day birthday's cycle lands on a non-leap year."""
+    try:
+        return date(year, month, day)
+    except ValueError:
+        if month == 2 and day == 29:
+            return date(year, 2, 28)
+        return None
+
+
 def first_send_date(raw_date: str, days_before: int, today: date) -> tuple[date, date] | None:
     """Return (birthday_this_cycle, first_send_date) or None."""
     mmdd = parse_birthday_mmdd(raw_date)
     if not mmdd:
         return None
     month, day = map(int, mmdd.split("-"))
-    bday = date(today.year, month, day)
+    bday = _safe_date(today.year, month, day)
+    if bday is None:
+        return None
     if bday < today:
-        bday = date(today.year + 1, month, day)
+        bday = _safe_date(today.year + 1, month, day)
+        if bday is None:
+            return None
     first_send = bday - timedelta(days=days_before)
     return bday, first_send
 

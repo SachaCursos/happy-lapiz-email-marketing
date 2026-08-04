@@ -136,19 +136,25 @@ def submit_gift_form(
     shop = session.exec(select(Shop).where(Shop.shopify_domain == payload.shop_domain, Shop.status == "active")).first() if payload.shop_domain else None
     shop_id = shop.id if shop else None
 
-    contact = session.exec(
-        select(Contact).where(Contact.email == email, Contact.shop_id == shop_id)
-    ).first()
-    if not contact:
-        contact = Contact(
-            email=email,
-            opted_in=True,
-            opted_in_at=datetime.utcnow(),
-            shop_id=shop_id,
-        )
-        session.add(contact)
-        session.flush()
-    contact_id = contact.id
+    # contacts.shop_id is NOT NULL — without a resolved shop (widget didn't
+    # send shop_domain, or it didn't match an installed shop) there's no
+    # tenant to attach a new Contact to, so skip creating/updating one and
+    # just keep the gift_recipients log row below (shop_id nullable there).
+    contact = None
+    if shop_id is not None:
+        contact = session.exec(
+            select(Contact).where(Contact.email == email, Contact.shop_id == shop_id)
+        ).first()
+        if not contact:
+            contact = Contact(
+                email=email,
+                opted_in=True,
+                opted_in_at=datetime.utcnow(),
+                shop_id=shop_id,
+            )
+            session.add(contact)
+            session.flush()
+    contact_id = contact.id if contact else None
 
     recipient = GiftRecipient(
         shop_id=shop_id,
@@ -163,18 +169,20 @@ def submit_gift_form(
 
     # gift_recipients keeps its own log row (above); contact.regalados is now
     # the source of truth the birthday/REGALO automation actually reads.
-    from app.services.regalado_vars import merge_regalados_into_contact
-    merge_regalados_into_contact(contact, [{
-        "relacion": payload.relacion,
-        "nombre": payload.nombre_regalado,
-        "fecha_nacimiento": payload.fecha_nacimiento_regalado,
-    }])
-    session.add(contact)
+    if contact is not None:
+        from app.services.regalado_vars import merge_regalados_into_contact
+        merge_regalados_into_contact(contact, [{
+            "relacion": payload.relacion,
+            "nombre": payload.nombre_regalado,
+            "fecha_nacimiento": payload.fecha_nacimiento_regalado,
+        }])
+        session.add(contact)
     session.commit()
     session.refresh(recipient)
 
-    from app.services.birthday_enrollment import enroll_birthday_for_email
-    enroll_birthday_for_email(session, email)
+    if contact is not None:
+        from app.services.birthday_enrollment import enroll_birthday_for_email
+        enroll_birthday_for_email(session, email)
 
     return {"ok": True, "id": recipient.id}
 
