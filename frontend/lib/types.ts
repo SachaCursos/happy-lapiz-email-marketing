@@ -577,5 +577,7 @@ export interface EmailLogDetail {
   opened_at: string | null;
   clicked_at: string | null;
   bounced_at: string | null;
+  bounce_type: string | null;
+  bounce_diagnostic: string | null;
   has_snapshot: boolean;
 }

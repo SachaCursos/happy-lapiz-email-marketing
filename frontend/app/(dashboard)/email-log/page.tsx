@@ -77,6 +77,12 @@ function DetailModal({ source, id, onClose }: { source: EmailLogSource; id: numb
             {data.opened_at && <span>Abierto: {formatDateTime(data.opened_at)}</span>}
             {data.clicked_at && <span>Click: {formatDateTime(data.clicked_at)}</span>}
             {data.bounced_at && <span className="text-red-500">Rebotado: {formatDateTime(data.bounced_at)}</span>}
+            {data.bounce_type && (
+              <span className="text-red-500" title={data.bounce_diagnostic || undefined}>
+                Motivo: {data.bounce_type}
+                {data.bounce_diagnostic ? ` — ${data.bounce_diagnostic}` : ""}
+              </span>
+            )}
           </div>
         )}
 

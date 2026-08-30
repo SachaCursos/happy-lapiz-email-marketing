@@ -360,6 +360,8 @@ def _run_migrations():
         "ALTER TABLE contacts ALTER COLUMN shop_id SET NOT NULL",
         "DROP INDEX IF EXISTS ix_contacts_email",
         "ALTER TABLE contacts ADD CONSTRAINT contacts_shop_id_email_key UNIQUE (shop_id, email)",
+        "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS bounce_type VARCHAR",
+        "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS bounce_diagnostic TEXT",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

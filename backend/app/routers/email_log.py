@@ -57,6 +57,7 @@ _DETAIL_QUERIES = {
         SELECT cs.campaign_id AS source_id, cs.subject, cs.html_snapshot,
                ct.email AS contact_email, cs.status, cs.send_provider, cs.sent_at,
                cs.delivered_at, cs.opened_at, cs.clicked_at, cs.bounced_at,
+               cs.bounce_type, cs.bounce_diagnostic,
                c.name AS source_name
         FROM campaign_sends cs
         JOIN campaigns c ON c.id = cs.campaign_id
@@ -67,7 +68,8 @@ _DETAIL_QUERIES = {
         SELECT ar.automation_id AS source_id, ar.subject, ar.html_snapshot,
                ar.contact_email, ar.status, ar.send_provider,
                ar.executed_at AS sent_at, NULL AS delivered_at,
-               ar.opened_at, ar.clicked_at, NULL AS bounced_at, a.name AS source_name
+               ar.opened_at, ar.clicked_at, NULL AS bounced_at,
+               NULL AS bounce_type, NULL AS bounce_diagnostic, a.name AS source_name
         FROM automation_runs ar
         JOIN automations a ON a.id = ar.automation_id
         WHERE ar.id = :id AND ar.shop_id = :shop_id
@@ -76,6 +78,7 @@ _DETAIL_QUERIES = {
         SELECT es.evergreen_id AS source_id, es.subject, es.html_snapshot,
                ct.email AS contact_email, es.status, es.send_provider, es.sent_at,
                es.delivered_at, es.opened_at, es.clicked_at, es.bounced_at,
+               NULL AS bounce_type, NULL AS bounce_diagnostic,
                eg.name AS source_name
         FROM evergreen_sends es
         JOIN evergreen_campaigns eg ON eg.id = es.evergreen_id
@@ -118,6 +121,8 @@ class EmailLogDetail(BaseModel):
     opened_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
     bounced_at: Optional[datetime] = None
+    bounce_type: Optional[str] = None
+    bounce_diagnostic: Optional[str] = None
     has_snapshot: bool
 
 
@@ -221,5 +226,7 @@ def get_email_log_detail(
         opened_at=row.opened_at,
         clicked_at=row.clicked_at,
         bounced_at=row.bounced_at,
+        bounce_type=row.bounce_type,
+        bounce_diagnostic=row.bounce_diagnostic,
         has_snapshot=row.html_snapshot is not None,
     )
