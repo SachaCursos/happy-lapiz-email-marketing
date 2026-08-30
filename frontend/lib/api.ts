@@ -152,6 +152,12 @@ export const analyticsApi = {
     if (dateTo) params.set("date_to", dateTo);
     return api.get(`/analytics/revenue?${params.toString()}`);
   },
+  customerKpis: (dateFrom?: string, dateTo?: string) => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    return api.get(`/analytics/customer-kpis?${params.toString()}`);
+  },
 };
 
 // Signup Forms
