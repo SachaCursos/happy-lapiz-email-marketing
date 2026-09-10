@@ -70,7 +70,7 @@ def _parse_shopify_dt(value: str | None) -> datetime | None:
         return None
 
 
-def _upsert_order_from_payload(conn, order: dict) -> bool:
+def _upsert_order_from_payload(conn, order: dict, shop_id: int | None = None) -> bool:
     """Insert shopify_orders + line items from a Shopify REST order. Returns True if new."""
     order_id = str(order.get("id") or "")
     if not order_id:
@@ -92,13 +92,14 @@ def _upsert_order_from_payload(conn, order: dict) -> bool:
             id, order_number, email, phone, financial_status, fulfillment_status,
             total_price, subtotal_price, total_tax, total_discounts, currency, created_at,
             customer_id, raw, synced_at, first_name, last_name, order_name, payment_gateway,
-            line_items_json, cancelled_at, cancel_reason, tags, shipping_city, shipping_province
+            line_items_json, cancelled_at, cancel_reason, tags, shipping_city, shipping_province,
+            shop_id
         ) VALUES (
             :id, :order_number, :email, :phone, :financial_status, :fulfillment_status,
             :total_price, :subtotal_price, :total_tax, :total_discounts, :currency, :created_at,
             :customer_id, CAST(:raw AS jsonb), :synced_at, :first_name, :last_name, :order_name,
             :payment_gateway, CAST(:line_items_json AS jsonb), :cancelled_at, :cancel_reason,
-            :tags, :shipping_city, :shipping_province
+            :tags, :shipping_city, :shipping_province, :shop_id
         )
         ON CONFLICT (id) DO UPDATE SET
             email = COALESCE(EXCLUDED.email, shopify_orders.email),
@@ -109,6 +110,7 @@ def _upsert_order_from_payload(conn, order: dict) -> bool:
             raw = EXCLUDED.raw,
             synced_at = EXCLUDED.synced_at,
             line_items_json = EXCLUDED.line_items_json,
+            shop_id = COALESCE(shopify_orders.shop_id, EXCLUDED.shop_id),
             updated_at = NOW()
         RETURNING (xmax = 0) AS inserted
     """), {
@@ -137,6 +139,7 @@ def _upsert_order_from_payload(conn, order: dict) -> bool:
         "tags": order.get("tags"),
         "shipping_city": ship.get("city"),
         "shipping_province": ship.get("province"),
+        "shop_id": shop_id,
     })
     row = result.fetchone()
     inserted = bool(row and row[0])
@@ -190,6 +193,17 @@ def pull_recent_orders_from_shopify(lookback_hours: float = 72) -> dict:
         "order": "created_at asc",
     }
 
+    shop_id = None
+    try:
+        with engine.connect() as conn:
+            if domain:
+                shop_id = conn.execute(
+                    text("SELECT id FROM shops WHERE shopify_domain = :d LIMIT 1"),
+                    {"d": domain},
+                ).scalar()
+    except Exception as exc:
+        logger.warning("Could not resolve shop_id for %s: %s", domain, exc)
+
     fetched = inserted = 0
     try:
         with httpx.Client(timeout=60) as client:
@@ -209,7 +223,7 @@ def pull_recent_orders_from_shopify(lookback_hours: float = 72) -> dict:
                 with engine.begin() as conn:
                     for order in orders:
                         fetched += 1
-                        if _upsert_order_from_payload(conn, order):
+                        if _upsert_order_from_payload(conn, order, shop_id=shop_id):
                             inserted += 1
                 link = r.headers.get("Link") or r.headers.get("link") or ""
                 next_url = None
@@ -225,7 +239,13 @@ def pull_recent_orders_from_shopify(lookback_hours: float = 72) -> dict:
         logger.exception("pull_recent_orders_from_shopify failed: %s", exc)
         return {"ok": False, "error": str(exc)[:300], "fetched": fetched, "inserted": inserted}
 
-    summary = {"ok": True, "fetched": fetched, "inserted": inserted, "lookback_hours": lookback_hours}
+    summary = {
+        "ok": True,
+        "fetched": fetched,
+        "inserted": inserted,
+        "lookback_hours": lookback_hours,
+        "shop_id": shop_id,
+    }
     if fetched:
         logger.info("pull_recent_orders_from_shopify: %s", summary)
     return summary
