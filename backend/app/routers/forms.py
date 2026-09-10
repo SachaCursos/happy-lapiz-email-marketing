@@ -488,11 +488,33 @@ def submit_preflight(form_id: int):
     return Response(status_code=204, headers=_cors_headers())
 
 
-def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: str, shop: Shop) -> str | None:
-    """Generate a unique Shopify coupon code for a form submission. Returns code or None on failure."""
+def _generate_dynamic_coupon(
+    session: Session,
+    coupon_campaign_id: int,
+    email: str,
+    shop: Shop,
+    *,
+    automation_id: int | None = None,
+) -> str | None:
+    """Generate a unique Shopify coupon code for a form submission or automation.
+
+    automation_id is recorded on coupon_sends so revenue attribution can credit the
+    order that redeems this code back to the automation that issued it. It also
+    scopes the "already has a code" lookup below — two automations can share the
+    same coupon_campaign_id (discount), so without this a contact enrolled in both
+    could be handed the other automation's code instead of getting their own.
+    """
     existing = session.execute(text(
-        "SELECT code FROM coupon_sends WHERE coupon_campaign_id = :cid AND contact_email = :email AND shop_id = :shop_id LIMIT 1"
-    ), {"cid": coupon_campaign_id, "email": email.lower(), "shop_id": shop.id}).fetchone()
+        """
+        SELECT code FROM coupon_sends
+        WHERE coupon_campaign_id = :cid AND contact_email = :email AND shop_id = :shop_id
+          AND automation_id IS NOT DISTINCT FROM :automation_id
+        LIMIT 1
+        """
+    ), {
+        "cid": coupon_campaign_id, "email": email.lower(), "shop_id": shop.id,
+        "automation_id": automation_id,
+    }).fetchone()
     if existing:
         return existing[0]
 
@@ -541,10 +563,13 @@ def _generate_dynamic_coupon(session: Session, coupon_campaign_id: int, email: s
             pass
 
     session.execute(text("""
-        INSERT INTO coupon_sends (coupon_campaign_id, contact_email, code, shop_id)
-        VALUES (:ccamp, :email, :code, :shop_id)
+        INSERT INTO coupon_sends (coupon_campaign_id, contact_email, code, shop_id, automation_id)
+        VALUES (:ccamp, :email, :code, :shop_id, :automation_id)
         ON CONFLICT DO NOTHING
-    """), {"ccamp": coupon_campaign_id, "email": email.lower(), "code": code, "shop_id": shop.id})
+    """), {
+        "ccamp": coupon_campaign_id, "email": email.lower(), "code": code, "shop_id": shop.id,
+        "automation_id": automation_id,
+    })
     return code
 
 

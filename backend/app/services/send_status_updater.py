@@ -37,6 +37,8 @@ def apply_send_status_update(
     new_status: str,
     *,
     webhook_email: str | None = None,
+    bounce_type: str | None = None,
+    bounce_diagnostic: str | None = None,
 ) -> bool:
     """Busca message_id en CampaignSend/AutomationRun/EvergreenSend (en ese orden)
     y actualiza su estado + timestamps + dispara el auto-fix de typos en bounce.
@@ -54,6 +56,8 @@ def apply_send_status_update(
             send.clicked_at = now
         elif new_status == "bounced":
             send.bounced_at = now
+            send.bounce_type = bounce_type
+            send.bounce_diagnostic = bounce_diagnostic
         session.add(send)
         session.commit()
         logger.info("CampaignSend actualizado: id=%s status=%s", send.id, new_status)

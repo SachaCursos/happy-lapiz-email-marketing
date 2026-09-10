@@ -375,6 +375,32 @@ def _run_migrations():
         # lo histórico, y app/services/regalado_vars.py::merge_regalados_into_contact
         # para cómo se escribe de ahora en adelante.
         "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS regalados JSONB",
+        "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS bounce_type VARCHAR",
+        "ALTER TABLE campaign_sends ADD COLUMN IF NOT EXISTS bounce_diagnostic TEXT",
+        # coupon_sends.automation_id — coupon_sends already tracked campaign_id for
+        # codes issued during a campaign send, but automations (birthday reminders,
+        # etc.) issue codes too via _generate_dynamic_coupon and had no column to
+        # record which automation issued them. Found auditing why a sale that
+        # redeemed the "Cumpleaños regalon" automation's coupon wasn't attributed:
+        # two automations can share the same coupon_campaign_id (discount), so
+        # email + coupon_campaign_id alone can't tell which automation sent the
+        # code — it needs its own column, not a join through coupon_campaign_id.
+        "ALTER TABLE coupon_sends ADD COLUMN IF NOT EXISTS automation_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_coupon_sends_automation_id ON coupon_sends (automation_id)",
+        # shopify_orders.shop_id backfill — deferred above ("shopify_orders...
+        # necesitan su propia auditoría de escritura"). Found: both the orders/create
+        # webhook and the REST polling sync build the shopify_orders INSERT without
+        # shop_id, even though shop_id is already a resolved local variable used by
+        # every other statement in the same function — just never passed into this
+        # one INSERT. So every order synced since 2026-07-25 landed with shop_id
+        # NULL and silently dropped out of every shop-scoped attribution/segment
+        # query (so.shop_id = :shop_id matches nothing). The write path is fixed
+        # separately; this backfills the rows already stuck with shop_id NULL.
+        # Safe to assign all of them to the Happy Lápiz shop: the only other shop
+        # in this database is a test store with zero real orders.
+        """UPDATE shopify_orders SET shop_id = (
+               SELECT id FROM shops WHERE shopify_domain = 'happy-lapiz.myshopify.com' LIMIT 1
+           ) WHERE shop_id IS NULL""",
     ]
     # Each migration gets its own transaction — a failure in one never aborts the rest
     for sql in migrations:

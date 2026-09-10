@@ -99,6 +99,19 @@ def _extract_email(event: dict, event_type: Optional[str]) -> Optional[str]:
     return destinations[0] if destinations else None
 
 
+def _extract_bounce_detail(event: dict) -> tuple[Optional[str], Optional[str]]:
+    """(bounceType/bounceSubType combinados, diagnosticCode del primer destinatario)."""
+    bounce = event.get("bounce") or {}
+    bounce_type = bounce.get("bounceType")
+    bounce_subtype = bounce.get("bounceSubType")
+    combined_type = (
+        f"{bounce_type}/{bounce_subtype}" if bounce_type and bounce_subtype else bounce_type
+    )
+    recipients = bounce.get("bouncedRecipients") or []
+    diagnostic = recipients[0].get("diagnosticCode") if recipients else None
+    return combined_type, diagnostic
+
+
 @router.post("/ses")
 async def ses_webhook(request: Request, session: Session = Depends(get_session)):
     try:
@@ -139,7 +152,15 @@ async def ses_webhook(request: Request, session: Session = Depends(get_session))
     if not new_status or not message_id:
         return {"ok": True}
 
+    bounce_type, bounce_diagnostic = (
+        _extract_bounce_detail(event) if event_type == "Bounce" else (None, None)
+    )
     apply_send_status_update(
-        session, message_id, new_status, webhook_email=_extract_email(event, event_type)
+        session,
+        message_id,
+        new_status,
+        webhook_email=_extract_email(event, event_type),
+        bounce_type=bounce_type,
+        bounce_diagnostic=bounce_diagnostic,
     )
     return {"ok": True}

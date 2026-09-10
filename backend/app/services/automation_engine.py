@@ -746,7 +746,9 @@ def _send_email_step(
         if auto.coupon_campaign_id and shop:
             try:
                 from app.routers.forms import _generate_dynamic_coupon
-                coupon_code = _generate_dynamic_coupon(session, auto.coupon_campaign_id, contact.email, shop)
+                coupon_code = _generate_dynamic_coupon(
+                    session, auto.coupon_campaign_id, contact.email, shop, automation_id=auto.id,
+                )
             except Exception as exc:
                 logger.warning("Coupon generation failed for %s: %s", contact.email, exc)
 

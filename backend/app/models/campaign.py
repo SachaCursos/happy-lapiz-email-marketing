@@ -48,6 +48,10 @@ class CampaignSend(SQLModel, table=True):
     opened_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
     bounced_at: Optional[datetime] = None
+    # "Permanent" | "Transient" | "Undetermined" — de bounceType en el evento SES.
+    bounce_type: Optional[str] = Field(default=None)
+    # diagnosticCode del destinatario rebotado (ej. "smtp; 550 5.1.1 ... unknown user").
+    bounce_diagnostic: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
 class CampaignCreate(SQLModel):

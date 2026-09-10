@@ -451,9 +451,19 @@ def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: dat
         cur.execute("""
             INSERT INTO shopify_orders (id, order_number, email, phone, financial_status, fulfillment_status,
                 total_price, subtotal_price, total_tax, total_discounts, currency, created_at, customer_id,
-                raw, synced_at, first_name, last_name, order_name, payment_gateway, line_items_json)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::jsonb)
-            ON CONFLICT (id) DO NOTHING
+                raw, synced_at, first_name, last_name, order_name, payment_gateway, line_items_json, shop_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::jsonb, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                email = COALESCE(EXCLUDED.email, shopify_orders.email),
+                financial_status = COALESCE(EXCLUDED.financial_status, shopify_orders.financial_status),
+                fulfillment_status = COALESCE(EXCLUDED.fulfillment_status, shopify_orders.fulfillment_status),
+                total_price = EXCLUDED.total_price,
+                total_discounts = EXCLUDED.total_discounts,
+                raw = EXCLUDED.raw,
+                synced_at = EXCLUDED.synced_at,
+                line_items_json = EXCLUDED.line_items_json,
+                shop_id = COALESCE(shopify_orders.shop_id, EXCLUDED.shop_id),
+                updated_at = NOW()
         """, (
             order_id,
             payload.get("order_number"),
@@ -475,6 +485,7 @@ def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: dat
             payload.get("name"),
             payload.get("payment_gateway"),
             _json.dumps(items),
+            shop_id,
         ))
         order_number = payload.get("order_number")
         for item in items:

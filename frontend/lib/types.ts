@@ -530,6 +530,17 @@ export interface OverviewStats {
   email_cost: { ses_sent_month: number; estimated_usd: number; price_per_1000_usd: number };
 }
 
+export interface CustomerKpis {
+  date_from: string;
+  date_to: string;
+  conversion: { leads: number; converted: number; rate_pct: number };
+  ltv: { cohort_customers: number; ltv_60d: number; ltv_365d: number; ltv_historic: number };
+  purchase_frequency: {
+    cohort_customers: number;
+    buckets: { label: string; count: number; pct: number }[];
+  };
+}
+
 export interface DnsRecord {
   type: string;
   name: string;
@@ -577,5 +588,7 @@ export interface EmailLogDetail {
   opened_at: string | null;
   clicked_at: string | null;
   bounced_at: string | null;
+  bounce_type: string | null;
+  bounce_diagnostic: string | null;
   has_snapshot: boolean;
 }

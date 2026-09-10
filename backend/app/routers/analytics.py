@@ -186,18 +186,18 @@ def revenue_stats(
     campaign_recipients_row = session.execute(text("""
         SELECT COUNT(DISTINCT contact_id)
         FROM campaign_sends
-        WHERE sent_at IS NOT NULL
+        WHERE shop_id = :shop_id AND sent_at IS NOT NULL
           AND sent_at >= :from AND sent_at < :to
-    """), {"from": dt_from, "to": dt_to}).fetchone()
+    """), {"from": dt_from, "to": dt_to, "shop_id": shop.id}).fetchone()
     campaigns_recipients = int(campaign_recipients_row[0] or 0)
 
     automation_recipients_row = session.execute(text("""
         SELECT COUNT(DISTINCT LOWER(contact_email))
         FROM automation_runs
-        WHERE status = 'sent'
+        WHERE shop_id = :shop_id AND status = 'sent'
           AND executed_at IS NOT NULL
           AND executed_at >= :from AND executed_at < :to
-    """), {"from": dt_from, "to": dt_to}).fetchone()
+    """), {"from": dt_from, "to": dt_to, "shop_id": shop.id}).fetchone()
     automations_recipients = int(automation_recipients_row[0] or 0)
 
     # ── 4. Klaviyo campaigns (historical data) ─────────────────────────────────
@@ -249,6 +249,114 @@ def revenue_stats(
         "campaigns": campaigns_list,
         "automations": automations_list,
         "klaviyo_campaigns": klaviyo_list,
+    }
+
+
+@router.get("/customer-kpis")
+def customer_kpis(
+    date_from: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
+):
+    """Conversión de lead a cliente, LTV por cohorte y distribución de frecuencia
+    de compra. Todo sincronizado al mismo rango de fechas que /revenue."""
+    now = datetime.now(timezone.utc)
+    dt_from = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc) if date_from else now - timedelta(days=30)
+    dt_to = (datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc) + timedelta(days=1)) if date_to else now
+
+    # Algunos pedidos aún tienen shop_id NULL por un bug de sincronización que se
+    # está corrigiendo en otra rama — se tratan como propios de esta tienda mientras
+    # tanto, igual que hace campaign_attribution.py (shop_match).
+    shop_match = "(o.shop_id = :shop_id OR o.shop_id IS NULL)"
+
+    params = {"from": dt_from, "to": dt_to, "shop_id": shop.id}
+
+    # ── 1. Conversión lead → cliente ────────────────────────────────────────────
+    # origin_utm='shopify' marca contactos creados por el sync de pedidos porque
+    # ya habían comprado — no son leads de marketing, son clientes desde el día 1,
+    # así que se excluyen o inflarían la tasa de conversión artificialmente.
+    conversion_row = session.execute(text(f"""
+        SELECT
+            COUNT(DISTINCT c.id) AS leads,
+            COUNT(DISTINCT c.id) FILTER (WHERE o.id IS NOT NULL) AS converted
+        FROM contacts c
+        LEFT JOIN shopify_orders o
+            ON LOWER(o.email) = LOWER(c.email) AND {shop_match}
+        WHERE c.shop_id = :shop_id AND c.created_at >= :from AND c.created_at < :to
+          AND c.origin_utm IS DISTINCT FROM 'shopify'
+    """), params).fetchone()
+    leads = int(conversion_row[0] or 0)
+    converted = int(conversion_row[1] or 0)
+
+    # ── 2 y 3. Cohorte de clientes cuya PRIMERA compra cae en el período ────────
+    cohort_rows = session.execute(text(f"""
+        WITH customer_orders AS (
+            SELECT LOWER(o.email) AS email, o.created_at, o.total_price::numeric AS total_price
+            FROM shopify_orders o
+            WHERE {shop_match} AND o.email IS NOT NULL
+        ),
+        first_order AS (
+            SELECT email, MIN(created_at) AS first_order_at
+            FROM customer_orders
+            GROUP BY email
+        ),
+        cohort AS (
+            SELECT email, first_order_at FROM first_order
+            WHERE first_order_at >= :from AND first_order_at < :to
+        )
+        SELECT
+            COUNT(co.*) AS order_count,
+            COALESCE(SUM(co.total_price), 0) AS ltv_historic,
+            COALESCE(SUM(co.total_price) FILTER (
+                WHERE co.created_at < c.first_order_at + interval '60 days'
+            ), 0) AS ltv_60d,
+            COALESCE(SUM(co.total_price) FILTER (
+                WHERE co.created_at < c.first_order_at + interval '365 days'
+            ), 0) AS ltv_365d
+        FROM cohort c
+        JOIN customer_orders co ON co.email = c.email
+        GROUP BY c.email
+    """), params).fetchall()
+
+    cohort_count = len(cohort_rows)
+    ltv_60d = round(sum(float(r[2]) for r in cohort_rows) / cohort_count) if cohort_count else 0
+    ltv_365d = round(sum(float(r[3]) for r in cohort_rows) / cohort_count) if cohort_count else 0
+    ltv_historic = round(sum(float(r[1]) for r in cohort_rows) / cohort_count) if cohort_count else 0
+
+    freq_counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    for r in cohort_rows:
+        bucket = min(int(r[0]), 4)
+        freq_counts[bucket] += 1
+
+    freq_buckets = [
+        {
+            "label": "1 compra" if n == 1 else (f"{n} compras" if n < 4 else "4+ compras"),
+            "count": freq_counts[n],
+            "pct": round(freq_counts[n] / cohort_count * 100, 1) if cohort_count else 0,
+        }
+        for n in (1, 2, 3, 4)
+    ]
+
+    return {
+        "date_from": dt_from.date().isoformat(),
+        "date_to": (dt_to - timedelta(days=1)).date().isoformat(),
+        "conversion": {
+            "leads": leads,
+            "converted": converted,
+            "rate_pct": round(converted / leads * 100, 1) if leads else 0,
+        },
+        "ltv": {
+            "cohort_customers": cohort_count,
+            "ltv_60d": ltv_60d,
+            "ltv_365d": ltv_365d,
+            "ltv_historic": ltv_historic,
+        },
+        "purchase_frequency": {
+            "cohort_customers": cohort_count,
+            "buckets": freq_buckets,
+        },
     }
 
 

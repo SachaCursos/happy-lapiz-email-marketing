@@ -3,8 +3,8 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { analyticsApi } from "@/lib/api";
-import { OverviewStats } from "@/lib/types";
-import { Users, Send, Filter, TrendingUp, ShoppingCart, Mail, Zap, ArrowUpRight, ArrowDownRight, ChevronDown, DollarSign } from "lucide-react";
+import { OverviewStats, CustomerKpis } from "@/lib/types";
+import { Users, Send, Filter, TrendingUp, ShoppingCart, Mail, Zap, ArrowUpRight, ArrowDownRight, ChevronDown, DollarSign, UserCheck, Wallet, Repeat } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -181,6 +181,12 @@ export default function DashboardPage() {
     staleTime: 2 * 60_000,
   });
 
+  const { data: customerKpis, isLoading: loadingKpis } = useQuery<CustomerKpis>({
+    queryKey: ["customer-kpis", from, to],
+    queryFn: () => analyticsApi.customerKpis(from, to).then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+
   const presetLabel = PRESETS.find((p) => p.key === preset)?.label ?? "Período";
   const dateLabel = `${from} — ${to}`;
 
@@ -309,6 +315,77 @@ export default function DashboardPage() {
               </div>
             </div>
           </>
+        )}
+      </div>
+
+      {/* ── Customer KPIs block ── */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-6 shadow-sm">
+        <div className="mb-5">
+          <h2 className="font-bold text-gray-900 text-base">Métricas de clientes</h2>
+          <p className="text-xs text-gray-400 mt-0.5">{dateLabel}</p>
+        </div>
+
+        {loadingKpis ? (
+          <div className="animate-pulse grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-gray-100 rounded-xl" />)}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Conversión lead → cliente */}
+            <div>
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-600 mb-2">
+                <UserCheck size={14} className="text-gray-400" />
+                Conversión de lead a cliente
+              </div>
+              <p className="text-3xl font-black text-gray-900">{customerKpis?.conversion.rate_pct ?? 0}%</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {(customerKpis?.conversion.converted ?? 0).toLocaleString()} de {(customerKpis?.conversion.leads ?? 0).toLocaleString()} suscriptores nuevos del período
+              </p>
+            </div>
+
+            {/* LTV por cohorte */}
+            <div>
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-600 mb-2">
+                <Wallet size={14} className="text-gray-400" />
+                LTV de clientes nuevos
+              </div>
+              <div className="flex gap-6">
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{clp(customerKpis?.ltv.ltv_60d ?? 0)}</p>
+                  <p className="text-xs text-gray-400">60 días</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{clp(customerKpis?.ltv.ltv_365d ?? 0)}</p>
+                  <p className="text-xs text-gray-400">1 año</p>
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{clp(customerKpis?.ltv.ltv_historic ?? 0)}</p>
+                  <p className="text-xs text-gray-400">Histórico</p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">
+                Sobre {(customerKpis?.ltv.cohort_customers ?? 0).toLocaleString()} clientes cuya primera compra fue en el período
+              </p>
+            </div>
+
+            {/* Distribución de frecuencia de compra */}
+            <div>
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-600 mb-2">
+                <Repeat size={14} className="text-gray-400" />
+                Frecuencia de recompra
+              </div>
+              <div className="space-y-1">
+                {(customerKpis?.purchase_frequency.buckets ?? []).map((b) => (
+                  <div key={b.label} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-500">{b.label}</span>
+                    <span className="font-semibold text-gray-900">
+                      {b.pct}% <span className="text-xs text-gray-400 font-normal">({b.count.toLocaleString()})</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
