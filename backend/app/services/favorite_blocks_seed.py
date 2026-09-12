@@ -856,3 +856,255 @@ def birthday_day_blocks() -> list[dict]:
         ),
         _block_from_catalog_entry(_catalog("Pie — Footer con baja"), "footer_bday_day"),
     ]
+
+
+# ── Recuperación de navegación: activo en el sitio / producto visto / carrito ──
+# Jerarquía de embudo (implementada en automation_engine._funnel_stage_reached):
+# checkout/compra > agregó al carrito > vio un producto > activo en el sitio.
+# Un contacto solo recibe la automatización de la etapa más avanzada a la que
+# llegó — estas plantillas asumen que ya se aplicó ese filtro antes de enviarlas.
+
+ACTIVE_ON_SITE_NAME = "Activo en el sitio — Seguimos aquí"
+ACTIVE_ON_SITE_SUBJECT = "¿Sigues por aquí, {{ first_name or nombre or 'amigo/a' }}? 👀"
+ACTIVE_ON_SITE_PREVIEW = "Vimos que pasaste por Happy Lápiz — esto es lo que más le gusta a nuestra comunidad."
+
+VIEWED_PRODUCT_1_NAME = "Producto visto — Recordatorio 1"
+VIEWED_PRODUCT_1_SUBJECT = "¿Sigues pensando en esto, {{ first_name or nombre or 'amigo/a' }}? 👀"
+VIEWED_PRODUCT_1_PREVIEW = "Guardamos lo que estabas mirando en Happy Lápiz."
+
+VIEWED_PRODUCT_2_NAME = "Producto visto — Recordatorio 2"
+VIEWED_PRODUCT_2_SUBJECT = "Aún puedes llevarte lo que viste 🎁"
+VIEWED_PRODUCT_2_PREVIEW = "Antes de que se agote, dale una segunda mirada."
+
+CART_ADDED_1_NAME = "Carrito con productos — Recordatorio 1"
+CART_ADDED_1_SUBJECT = "¿Olvidaste algo en tu carrito, {{ first_name or nombre or 'amigo/a' }}? 🛒"
+CART_ADDED_1_PREVIEW = "Dejaste estos productos esperando por ti."
+
+CART_ADDED_2_NAME = "Carrito con productos — Recordatorio 2"
+CART_ADDED_2_SUBJECT = "Tu carrito te espera — no lo dejes ir 🛍️"
+CART_ADDED_2_PREVIEW = "Aún tienes tiempo de completar tu compra."
+
+
+def _tracking_cta_block(text_label: str, url: str, bg_color: str, block_id: str) -> dict:
+    return make_block(
+        "button",
+        {
+            "text": text_label,
+            "url": url,
+            "bg_color": bg_color,
+            "text_color": "#ffffff",
+            "align": "center",
+            "border_radius": "30",
+            "font_size": "15",
+            "letter_spacing": "0",
+            "font_family": FF,
+            "full_width": False,
+        },
+        block_id,
+    )
+
+
+def _tracking_products_block(block_id: str) -> dict:
+    """Renders {{ products_html }} — filled server-side (automation_engine) with the
+    actual product cards (image/título/precio) the contact viewed or added to cart."""
+    return make_block(
+        "product_grid",
+        {
+            "variable": "products_html",
+            "bg_color": "#ffffff",
+            "padding_y": "8",
+            "padding_x": "24",
+        },
+        block_id,
+    )
+
+
+def activo_en_el_sitio_blocks() -> list[dict]:
+    """1 solo correo: no hay un producto específico que referenciar, así que
+    invita a explorar el catálogo en vez de mostrar productos."""
+    hero = _hero_logo_content(
+        "Te vimos por Happy L&#225;piz",
+        "&#161;Hola {{ first_name or nombre or 'amigo/a' }}! &#128075;",
+        "Notamos que pasaste por nuestra tienda. Si buscabas algo en especial, "
+        "aqu&#237; te dejamos algunas ideas para encontrarlo m&#225;s r&#225;pido.",
+        logo_width=92,
+        logo_margin_bottom=12,
+        subtitle_size=11,
+        title_size=22,
+        body_size=14,
+        text_gap=10,
+    )
+    body = (
+        f"<p style=\"margin:0;font-size:15px;line-height:1.75;color:#374151;font-family:{FF};\">"
+        "En <strong>Happy L&#225;piz</strong> encontrar&#225;s juguetes y material educativo "
+        "organizado por edad e inter&#233;s, pensado para acompa&#241;ar el aprendizaje de los "
+        "m&#225;s peque&#241;os de la casa."
+        "</p>"
+    )
+    tip = (
+        "<div style=\"background:#eff6ff;border-radius:12px;padding:20px 24px;text-align:center;\">"
+        "<p style=\"font-size:14px;color:#1d4ed8;margin:0;line-height:1.6;\">"
+        "<strong>&#128161; Tip:</strong> Filtra por edad en la tienda y encuentra el regalo ideal en minutos."
+        "</p></div>"
+    )
+    return [
+        make_block(
+            "text",
+            {
+                "content": hero,
+                "bg_color": "#0369a1",
+                "text_color": "#ffffff",
+                "padding_y": "28",
+                "padding_x": "28",
+                "font_family": FF,
+            },
+            "hero_active_site",
+        ),
+        make_block(
+            "text",
+            {
+                "content": body,
+                "bg_color": "#ffffff",
+                "text_color": "#374151",
+                "padding_y": "24",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            "body_active_site",
+        ),
+        _tracking_cta_block(
+            "Explorar el catálogo →",
+            "https://www.happylapiz.cl/collections/all",
+            "#0369a1",
+            "cta_active_site",
+        ),
+        make_block(
+            "text",
+            {
+                "content": tip,
+                "bg_color": "#ffffff",
+                "text_color": "#1d4ed8",
+                "padding_y": "8",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            "tip_active_site",
+        ),
+        _block_from_catalog_entry(_catalog("Pie — Footer con baja"), "footer_active_site"),
+    ]
+
+
+def _viewed_product_blocks(*, urgent: bool) -> list[dict]:
+    if urgent:
+        subtitle = "&#218;ltima oportunidad"
+        title = "&#161;Todav&#237;a puedes llevarte esto! &#127873;"
+        body = (
+            "Hola {{ first_name or nombre }}, esto que viste en Happy L&#225;piz sigue "
+            "disponible — no dejes que se te escape."
+        )
+        bg = "#7c3aed"
+    else:
+        subtitle = "Vimos que te gust&#243; esto"
+        title = "&#161;Sigue disponible para ti! &#128064;"
+        body = (
+            "Hola {{ first_name or nombre }}, guardamos lo que estuviste mirando en "
+            "nuestra tienda, por si quieres darle una segunda mirada."
+        )
+        bg = "#8b5cf6"
+    hero = _hero_logo_content(
+        subtitle, title, body,
+        logo_width=92, logo_margin_bottom=12, subtitle_size=11, title_size=21, body_size=14, text_gap=10,
+    )
+    tip = (
+        "<div style=\"background:#f5f3ff;border-radius:12px;padding:18px 22px;text-align:center;\">"
+        "<p style=\"font-size:14px;color:#5b21b6;margin:0;line-height:1.6;\">"
+        "<strong>&#128161; Tip:</strong> Nuestros productos est&#225;n pensados por edad — revisa la "
+        "ficha para confirmar que es el ideal para tu peque."
+        "</p></div>"
+    )
+    return [
+        make_block(
+            "text",
+            {"content": hero, "bg_color": bg, "text_color": "#ffffff", "padding_y": "28", "padding_x": "28", "font_family": FF},
+            f"hero_viewed_{'2' if urgent else '1'}",
+        ),
+        _tracking_products_block(f"products_viewed_{'2' if urgent else '1'}"),
+        _tracking_cta_block(
+            "Ver más en la tienda →",
+            "https://www.happylapiz.cl/collections/all",
+            bg,
+            f"cta_viewed_{'2' if urgent else '1'}",
+        ),
+        make_block(
+            "text",
+            {"content": tip, "bg_color": "#ffffff", "text_color": "#5b21b6", "padding_y": "8", "padding_x": "32", "font_family": FF},
+            f"tip_viewed_{'2' if urgent else '1'}",
+        ),
+        _block_from_catalog_entry(_catalog("Pie — Footer con baja"), f"footer_viewed_{'2' if urgent else '1'}"),
+    ]
+
+
+def viewed_product_1_blocks() -> list[dict]:
+    return _viewed_product_blocks(urgent=False)
+
+
+def viewed_product_2_blocks() -> list[dict]:
+    return _viewed_product_blocks(urgent=True)
+
+
+def _cart_added_blocks(*, urgent: bool) -> list[dict]:
+    if urgent:
+        subtitle = "Tu carrito sigue aqu&#237;"
+        title = "&#161;No lo dejes ir! &#128190;"
+        body = (
+            "Hola {{ first_name or nombre }}, esto sigue esperando en tu carrito. "
+            "Complétalo antes de que se agote."
+        )
+        bg = "#b45309"
+    else:
+        subtitle = "&#191;Olvidaste algo?"
+        title = "Dejaste esto en tu carrito &#128722;"
+        body = (
+            "Hola {{ first_name or nombre }}, notamos que agregaste estos productos a tu "
+            "carrito pero no alcanzaste a completar la compra."
+        )
+        bg = "#d97706"
+    hero = _hero_logo_content(
+        subtitle, title, body,
+        logo_width=92, logo_margin_bottom=12, subtitle_size=11, title_size=21, body_size=14, text_gap=10,
+    )
+    tip = (
+        "<div style=\"background:#fffbeb;border-radius:12px;padding:18px 22px;text-align:center;\">"
+        "<p style=\"font-size:14px;color:#92400e;margin:0;line-height:1.6;\">"
+        "<strong>&#128230; Env&#237;o:</strong> despachamos a todo Chile — completa tu compra y te lo "
+        "hacemos llegar."
+        "</p></div>"
+    )
+    return [
+        make_block(
+            "text",
+            {"content": hero, "bg_color": bg, "text_color": "#ffffff", "padding_y": "28", "padding_x": "28", "font_family": FF},
+            f"hero_cart_{'2' if urgent else '1'}",
+        ),
+        _tracking_products_block(f"products_cart_{'2' if urgent else '1'}"),
+        _tracking_cta_block(
+            "Completar mi compra →",
+            "https://www.happylapiz.cl/cart",
+            bg,
+            f"cta_cart_{'2' if urgent else '1'}",
+        ),
+        make_block(
+            "text",
+            {"content": tip, "bg_color": "#ffffff", "text_color": "#92400e", "padding_y": "8", "padding_x": "32", "font_family": FF},
+            f"tip_cart_{'2' if urgent else '1'}",
+        ),
+        _block_from_catalog_entry(_catalog("Pie — Footer con baja"), f"footer_cart_{'2' if urgent else '1'}"),
+    ]
+
+
+def cart_added_1_blocks() -> list[dict]:
+    return _cart_added_blocks(urgent=False)
+
+
+def cart_added_2_blocks() -> list[dict]:
+    return _cart_added_blocks(urgent=True)

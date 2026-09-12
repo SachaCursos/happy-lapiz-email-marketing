@@ -41,8 +41,83 @@ from app.services.email_sender import (
 from app.services.email_provider import send_email
 from app.core.unsub_token import unsub_url
 from app.services.segment_evaluator import evaluate_segment, evaluate_segment_ids
+from app.services.template_block_compiler import _product_block_html
 
 logger = logging.getLogger(__name__)
+
+# On-site funnel stages, ranked so a contact who progressed further doesn't also
+# get the lower-stage nudge for the same visit (e.g. someone who added a product
+# to cart shouldn't also receive the "viewed a product" or "active on site" email).
+FUNNEL_ACTIVE_ON_SITE = 1
+FUNNEL_VIEWED_PRODUCT = 2
+FUNNEL_ADDED_TO_CART = 3
+FUNNEL_CHECKOUT = 4
+
+
+def _funnel_stage_reached(session: Session, email: str, since) -> int:
+    """Highest on-site/purchase funnel stage this email reached at/after `since`."""
+    email = (email or "").lower().strip()
+    if not email:
+        return 0
+    checkout = session.execute(text("""
+        SELECT 1 FROM shopify_checkouts WHERE email = :email AND updated_at >= :since LIMIT 1
+    """), {"email": email, "since": since}).first()
+    if checkout:
+        return FUNNEL_CHECKOUT
+    cart = session.execute(text("""
+        SELECT 1 FROM shopify_events
+        WHERE automation_triggered = 'added_to_cart' AND email = :email AND created_at >= :since
+        LIMIT 1
+    """), {"email": email, "since": since}).first()
+    if cart:
+        return FUNNEL_ADDED_TO_CART
+    viewed = session.execute(text("""
+        SELECT 1 FROM shopify_events
+        WHERE automation_triggered = 'viewed_product' AND email = :email AND created_at >= :since
+        LIMIT 1
+    """), {"email": email, "since": since}).first()
+    if viewed:
+        return FUNNEL_VIEWED_PRODUCT
+    return FUNNEL_ACTIVE_ON_SITE
+
+
+def _build_tracked_products_html(session: Session, shop_id: int | None, product_ids: list[str]) -> str:
+    """Product cards (image/title/price/link) for Shopify product ids seen in
+    viewed_product / added_to_cart tracking events, so the email shows exactly
+    what the contact looked at or put in their cart."""
+    product_ids = product_ids[:6]
+    if not product_ids:
+        return ""
+    placeholders = ", ".join(f":id{i}" for i in range(len(product_ids)))
+    params: dict = {f"id{i}": pid for i, pid in enumerate(product_ids)}
+    query = f"SELECT id, title, image_url, price, handle, url_product FROM shopify_products WHERE id IN ({placeholders})"
+    if shop_id is not None:
+        query += " AND shop_id = :shop_id"
+        params["shop_id"] = shop_id
+    rows = session.execute(text(query), params).fetchall()
+    by_id = {r[0]: r for r in rows}
+
+    parts = []
+    for pid in product_ids:
+        row = by_id.get(pid)
+        if not row:
+            continue
+        _, title, image_url, price, handle, url_product = row
+        url = url_product or (f"https://www.happylapiz.cl/products/{handle}" if handle else "https://www.happylapiz.cl")
+        try:
+            price_str = f"${int(price):,}".replace(",", ".") if price else ""
+        except (TypeError, ValueError):
+            price_str = ""
+        parts.append(_product_block_html({
+            "title": title or "",
+            "image_url": image_url or "",
+            "price": price_str,
+            "url": url,
+            "button_text": "Ver producto",
+            "button_color": "#111111",
+            "show_button": True,
+        }))
+    return "".join(parts)
 
 
 def _get_steps(auto: Automation) -> list:
@@ -1276,6 +1351,135 @@ def _check_abandoned_cart(auto: Automation, session: Session) -> None:
         _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
 
 
+def _check_grouped_tracking_events(auto: Automation, session: Session, trigger_type: str, own_rank: int) -> None:
+    """Shared handler for viewed_product / added_to_cart: these come from the site's
+    JS tracking pixel (not a Shopify webhook), one row per product action, with no
+    cart/session id to group by. Group by contact + calendar day instead, so
+    someone who looked at (or added) several products gets one email listing all
+    of them rather than one email per product.
+
+    Also enforces funnel priority: skip a contact who, within this same lookback
+    window, already reached a *later* stage (added to cart, or reached checkout) —
+    they'll get that automation's email instead, not this one too.
+    """
+    config = auto.trigger_config or {}
+    lookback_hours = float(config.get("lookback_hours", 24))
+    now = datetime.utcnow()
+    cutoff_recent = now - timedelta(hours=lookback_hours)
+
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 2))))
+
+    rows = session.execute(text("""
+        SELECT email, payload
+        FROM shopify_events
+        WHERE automation_triggered = :trigger_type
+          AND email IS NOT NULL AND email <> ''
+          AND created_at >= :recent
+        ORDER BY created_at ASC
+        LIMIT 500
+    """), {"trigger_type": trigger_type, "recent": cutoff_recent}).fetchall()
+    if not rows:
+        return
+
+    by_email: dict[str, list[dict]] = {}
+    for email, payload in rows:
+        email_l = (email or "").lower().strip()
+        if not email_l:
+            continue
+        by_email.setdefault(email_l, []).append(payload or {})
+
+    day_key = now.strftime("%Y-%m-%d")
+    for email, payloads in by_email.items():
+        contact = session.exec(select(Contact).where(Contact.email == email)).first()
+        if not contact or not contact.opted_in:
+            continue
+        if not _passes_contact_filters(config, contact):
+            continue
+        if _funnel_stage_reached(session, email, cutoff_recent) > own_rank:
+            continue
+
+        product_ids: list[str] = []
+        seen: set[str] = set()
+        for payload in payloads:
+            pid = str(payload.get("product_id") or "")
+            if pid and pid not in seen:
+                seen.add(pid)
+                product_ids.append(pid)
+        if not product_ids:
+            continue
+
+        products_html = _build_tracked_products_html(session, auto.shop_id, product_ids)
+        if not products_html:
+            continue
+
+        trigger_key = f"{trigger_type}:{email}:{day_key}"
+        extra_vars = {
+            "nombre": contact.name or email,
+            "first_name": (contact.name or email).split()[0],
+            "products_html": products_html,
+            "product_count": len(product_ids),
+        }
+        _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
+
+
+def _check_viewed_product(auto: Automation, session: Session) -> None:
+    _check_grouped_tracking_events(auto, session, "viewed_product", FUNNEL_VIEWED_PRODUCT)
+
+
+def _check_added_to_cart_no_checkout(auto: Automation, session: Session) -> None:
+    _check_grouped_tracking_events(auto, session, "added_to_cart", FUNNEL_ADDED_TO_CART)
+
+
+def _check_active_on_site(auto: Automation, session: Session) -> None:
+    """Contact was recognized as active on the site (an email Shopify already
+    knows, e.g. from a past order or account) but took no other tracked action.
+    Requires the contact to already exist in our data — this never fires for an
+    anonymous visitor, only for a known lead/customer."""
+    config = auto.trigger_config or {}
+    lookback_hours = float(config.get("lookback_hours", 24))
+    now = datetime.utcnow()
+    cutoff_recent = now - timedelta(hours=lookback_hours)
+
+    steps = _get_steps(auto)
+    if not steps:
+        return
+    first_delay = float(steps[0].get("delay_hours", float(config.get("delay_hours", 3))))
+
+    rows = session.execute(text("""
+        SELECT DISTINCT email
+        FROM shopify_events
+        WHERE automation_triggered = 'active_on_site'
+          AND email IS NOT NULL AND email <> ''
+          AND created_at >= :recent
+        LIMIT 500
+    """), {"recent": cutoff_recent}).fetchall()
+    if not rows:
+        return
+
+    day_key = now.strftime("%Y-%m-%d")
+    for (email,) in rows:
+        email = (email or "").lower().strip()
+        if not email:
+            continue
+        contact = session.exec(select(Contact).where(Contact.email == email)).first()
+        if not contact or not contact.opted_in:
+            continue
+        if not _passes_contact_filters(config, contact):
+            continue
+        if _funnel_stage_reached(session, email, cutoff_recent) > FUNNEL_ACTIVE_ON_SITE:
+            continue
+
+        trigger_key = f"active_on_site:{email}:{day_key}"
+        extra_vars = {
+            "nombre": contact.name or email,
+            "first_name": (contact.name or email).split()[0],
+        }
+        _enroll(session, auto, email, trigger_key, first_delay, extra_vars)
+
+
 def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) -> None:
     config = auto.trigger_config or {}
     lookback_hours = float(config.get("lookback_hours", 48))
@@ -1645,12 +1849,12 @@ HANDLERS = {
     "marked_out_for_delivery":  _make_shopify_handler("marked_out_for_delivery"),
     "cancelled_order":          _make_shopify_handler("cancelled_order"),
     "refunded_order":           _make_shopify_handler("refunded_order"),
-    "added_to_cart":            _make_shopify_handler("added_to_cart"),
+    "added_to_cart":            _check_added_to_cart_no_checkout,
     "coupon_assigned":          _make_shopify_handler("coupon_assigned"),
     "coupon_used":              _make_shopify_handler("coupon_used"),
     "subscribed_to_back_in_stock": _make_shopify_handler("subscribed_to_back_in_stock"),
-    "viewed_product":           _make_shopify_handler("viewed_product"),
-    "active_on_site":           _make_shopify_handler("active_on_site"),
+    "viewed_product":           _check_viewed_product,
+    "active_on_site":           _check_active_on_site,
     "form_submitted":           _check_form_submitted,
     "welcome":                  _check_welcome,
     "post_visit":               _check_post_visit,

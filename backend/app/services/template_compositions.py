@@ -43,6 +43,11 @@ from app.services.favorite_blocks_seed import (
     birthday_reminder_30_blocks,
     galeria_blocks,
     vacaciones_blocks,
+    activo_en_el_sitio_blocks,
+    viewed_product_1_blocks,
+    viewed_product_2_blocks,
+    cart_added_1_blocks,
+    cart_added_2_blocks,
 )
 from app.services.template_block_compiler import blocks_to_html
 
@@ -56,6 +61,11 @@ COMPOSITIONS: dict[str, BlockListFn] = {
     "birthday_15": birthday_reminder_15_blocks,
     "birthday_10": birthday_reminder_10_blocks,
     "birthday_day": birthday_day_blocks,
+    "activo_en_el_sitio": activo_en_el_sitio_blocks,
+    "viewed_product_1": viewed_product_1_blocks,
+    "viewed_product_2": viewed_product_2_blocks,
+    "cart_added_1": cart_added_1_blocks,
+    "cart_added_2": cart_added_2_blocks,
 }
 
 # Auto-upserted on startup / list templates (block editor source of truth)
