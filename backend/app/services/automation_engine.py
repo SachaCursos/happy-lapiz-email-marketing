@@ -1297,12 +1297,17 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
     if not topic:
         return
 
-    # For event-based triggers, only enroll events that haven't been enrolled yet
+    # Multiple automations can share the same Shopify topic (e.g. placed_order and
+    # ordered_product both read "orders/create"), so eligibility can't be gated by a
+    # single shared `processed` flag on the event row — one automation marking an
+    # event processed (because it didn't match *its* filters) would silently hide
+    # that event from every other automation on the same topic. Per-automation
+    # idempotency is already guaranteed by _enroll()'s trigger_key uniqueness check,
+    # so just look at every event in the lookback window each tick.
     rows = session.execute(text("""
         SELECT se.id, se.email, se.payload, se.shopify_id
         FROM shopify_events se
         WHERE se.topic = :topic
-          AND se.processed = FALSE
           AND se.email IS NOT NULL
           AND se.created_at >= :recent
         ORDER BY se.created_at ASC LIMIT 200
@@ -1331,12 +1336,8 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             cust_count = payload.get("customer", {}).get("orders_count")
             count_to_check = int(cust_count) if cust_count is not None else (contact.orders_count or 0)
             if not _passes_order_count_filter(order_count_filter, count_to_check):
-                session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
-                session.commit()
                 continue
         if not _passes_contact_filters(config, contact):
-            session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
-            session.commit()
             continue
 
         items = payload.get("line_items", [])
@@ -1344,8 +1345,6 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
         # Apply items count filter (number of distinct line items in this order)
         items_count_filter = config.get("items_count_filter")
         if items_count_filter and not _passes_order_count_filter(items_count_filter, len(items)):
-            session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
-            session.commit()
             continue
 
         # Apply product filter for ordered_product trigger
@@ -1354,8 +1353,6 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             item_product_ids = {str(item.get("product_id", "")) for item in items}
             filter_ids = {str(p) for p in product_filter_ids}
             if not item_product_ids.intersection(filter_ids):
-                session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
-                session.commit()
                 continue
 
         # Resolve delay based on shipping city (overrides the step default when rules exist)
@@ -1378,10 +1375,7 @@ def _check_shopify_event(auto: Automation, session: Session, trigger_type: str) 
             "shipping_province": payload.get("shipping_address", {}).get("province", ""),
             "purchased_product_ids": [str(item.get("product_id", "")) for item in items],
         }
-        enrolled = _enroll(session, auto, email, trigger_key, effective_delay, extra_vars)
-        if enrolled:
-            session.execute(text("UPDATE shopify_events SET processed = TRUE WHERE id = :id"), {"id": row[0]})
-            session.commit()
+        _enroll(session, auto, email, trigger_key, effective_delay, extra_vars)
 
 
 def _check_birthday_reminder(auto: Automation, session: Session) -> None:
