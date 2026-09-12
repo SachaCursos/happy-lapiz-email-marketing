@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterator
+from zoneinfo import ZoneInfo
 
 from sqlmodel import Session, select
 
@@ -207,8 +208,23 @@ def iter_regalado_birthdays(data: dict) -> Iterator[tuple[str, str, dict]]:
         }
 
 
-def _delay_hours_until(first_send: date, now: datetime) -> float:
-    target = datetime(first_send.year, first_send.month, first_send.day)
+def _local_send_utc(d: date, hour: int, tz_name: str) -> datetime:
+    """Naive UTC datetime for `hour`:00 local time on date `d`."""
+    local_dt = datetime.combine(d, time(hour, 0), tzinfo=ZoneInfo(tz_name))
+    return local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _delay_hours_until(
+    first_send: date,
+    now: datetime,
+    *,
+    send_hour: int | None = None,
+    tz_name: str = "America/Santiago",
+) -> float:
+    if send_hour is not None:
+        target = _local_send_utc(first_send, send_hour, tz_name)
+    else:
+        target = datetime(first_send.year, first_send.month, first_send.day)
     if target <= now:
         return 0.0
     return (target - now).total_seconds() / 3600.0
@@ -275,6 +291,11 @@ def try_enroll_birthday(
     owner_key = contact.id if contact else email_l
     enrolled = 0
 
+    config = auto.trigger_config or {}
+    send_hour = config.get("send_hour")
+    send_hour = int(send_hour) if send_hour is not None else None
+    tz_name = str(config.get("timezone") or "America/Santiago")
+
     for date_field, raw_date, regalado in iter_regalado_birthdays(data):
         schedule = first_send_date(raw_date, days_before, today)
         if not schedule:
@@ -293,7 +314,9 @@ def try_enroll_birthday(
             continue
 
         if enroll_early_days > 0 and today < first_send:
-            delay_hours = _delay_hours_until(first_send, now)
+            delay_hours = _delay_hours_until(first_send, now, send_hour=send_hour, tz_name=tz_name)
+        elif send_hour is not None and first_send >= today:
+            delay_hours = _delay_hours_until(first_send, now, send_hour=send_hour, tz_name=tz_name)
         else:
             steps = auto.steps or []
             if isinstance(steps, str):

@@ -545,9 +545,13 @@ BIRTHDAY_15_NAME = "Cumpleaños regalado — 15 días antes"
 BIRTHDAY_15_SUBJECT = "Faltan 15 días para el cumple de {{ nombre_regalado or 'tu peque' }} — código REGALO 🎂"
 BIRTHDAY_15_PREVIEW = "Aún estás a tiempo de elegir el regalo perfecto con nuestra promo 1+1."
 
-BIRTHDAY_7_NAME = "Cumpleaños regalado — 7 días antes"
-BIRTHDAY_7_SUBJECT = "¡Última semana! El cumple de {{ nombre_regalado or 'tu peque' }} está a la vuelta 🎈"
-BIRTHDAY_7_PREVIEW = "Últimos días para usar tu código y recibir un regalo extra para el cumpleañero."
+BIRTHDAY_10_NAME = "Cumpleaños regalado — 10 días antes"
+BIRTHDAY_10_SUBJECT = "¡Quedan solo 10 días! El cumple de {{ nombre_regalado or 'tu peque' }} se acerca 🎈"
+BIRTHDAY_10_PREVIEW = "Últimos días para aprovechar el regalo gratis para el cumpleañero con tu código REGALO."
+
+BIRTHDAY_DAY_NAME = "Cumpleaños regalado — Día del cumpleaños"
+BIRTHDAY_DAY_SUBJECT = "¡Hoy es el día! 🎉 Feliz cumpleaños para {{ nombre_regalado or 'tu peque' }}"
+BIRTHDAY_DAY_PREVIEW = "Un mensaje especial para acompañarte en el cumpleaños de {{ relacion or nombre_regalado or 'tu peque' }}."
 
 
 def _regalo_promo_box() -> str:
@@ -567,14 +571,15 @@ def _regalo_promo_box() -> str:
 
 def _birthday_hero(days: int, *, urgent: bool = False) -> str:
     if urgent:
-        subtitle = "&#218;ltima semana"
+        subtitle = f"Quedan {days} d&#237;as"
         title = (
             "&#161;El cumple de {{ nombre_regalado or 'tu peque' }} "
-            "est&#225; a la vuelta de la esquina!"
+            "est&#225; cada vez m&#225;s cerca!"
         )
         body = (
-            "Hola {{ first_name or nombre }}, quedan pocos d&#237;as. "
-            "Aprovecha tu c&#243;digo REGALO antes de que se acabe el tiempo."
+            "Hola {{ first_name or nombre }}, queda poco tiempo. "
+            "Aprovecha tu c&#243;digo REGALO antes de que se acabe la oportunidad de un regalo gratis "
+            "para {{ nombre_regalado or 'tu peque' }}."
         )
         bg = "#be185d"
     elif days <= 15:
@@ -652,13 +657,13 @@ def _birthday_blocks(days: int, *, urgent: bool = False) -> list[dict]:
             f"<p style=\"margin:0;font-size:15px;line-height:1.75;color:#374151;font-family:{FF};\">"
             "<strong>Recuerda:</strong> al usar tu c&#243;digo en el checkout, nuestro equipo identifica "
             "tu pedido y agrega un producto de regalo para {{ nombre_regalado or 'tu peque' }}. "
-            "&#161;No dejes pasar esta semana!"
+            "&#161;No dejes pasar esta oportunidad de un regalo gratis!"
             "</p>"
         )
         tip = (
             "<div style=\"background:#fff1f2;border-radius:12px;padding:18px 22px;text-align:center;\">"
             "<p style=\"font-size:14px;color:#be123c;margin:0;line-height:1.6;\">"
-            "<strong>&#9200; &#218;ltimos d&#237;as:</strong> env&#237;o a todo Chile. "
+            "<strong>&#9200; Quedan pocos d&#237;as:</strong> env&#237;o a todo Chile. "
             "Compra con tiempo para que el regalo llegue antes del cumplea&#241;os."
             "</p></div>"
         )
@@ -751,5 +756,103 @@ def birthday_reminder_15_blocks() -> list[dict]:
     return _birthday_blocks(15)
 
 
-def birthday_reminder_7_blocks() -> list[dict]:
-    return _birthday_blocks(7, urgent=True)
+def birthday_reminder_10_blocks() -> list[dict]:
+    return _birthday_blocks(10, urgent=True)
+
+
+def birthday_day_blocks() -> list[dict]:
+    """Plantilla de cumpleaños (día 0) — mensaje de texto, sin cupón ni CTA."""
+    hero = _hero_logo_content(
+        "&#161;Hoy es el gran d&#237;a!",
+        "&#127881; &#161;Feliz cumplea&#241;os, {{ nombre_regalado or 'tu peque' }}!",
+        "Hola {{ first_name or nombre }}, hoy {{ relacion or nombre_regalado or 'tu peque' }} "
+        "est&#225; de cumplea&#241;os y queremos celebrarlo contigo.",
+        logo_width=92,
+        logo_margin_bottom=12,
+        subtitle_size=11,
+        title_size=23,
+        body_size=14,
+        text_gap=10,
+    )
+    body = (
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:1.8;color:#374151;font-family:{FF};\">"
+        "Sabemos lo especial que es este d&#237;a para ti. Cada cumplea&#241;os es una nueva vuelta al sol, "
+        "una oportunidad para celebrar todo lo que {{ nombre_regalado or 'tu peque' }} ha aprendido, "
+        "re&#237;do y so&#241;ado este &#250;ltimo a&#241;o."
+        "</p>"
+        f"<p style=\"margin:0;font-size:15px;line-height:1.8;color:#374151;font-family:{FF};\">"
+        "Los regalos se disfrutan, pero lo que de verdad se recuerda son los abrazos, las risas "
+        "y las palabras sinceras del d&#237;a de hoy."
+        "</p>"
+    )
+    tip = (
+        "<div style=\"background:#fffbeb;border-radius:12px;padding:22px 24px;\">"
+        "<p style=\"font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;"
+        "color:#b45309;margin:0 0 12px;text-align:center;\">&#128156; Ideas para dec&#237;rselas hoy</p>"
+        f"<p style=\"margin:0 0 8px;font-size:14.5px;color:#78350f;line-height:1.7;font-family:{FF};\">"
+        "&#8226; &#171;Estoy muy orgulloso/a de la persona que est&#225;s siendo.&#187;</p>"
+        f"<p style=\"margin:0 0 8px;font-size:14.5px;color:#78350f;line-height:1.7;font-family:{FF};\">"
+        "&#8226; &#171;Me encanta ver c&#243;mo creces y aprendes cada d&#237;a.&#187;</p>"
+        f"<p style=\"margin:0 0 8px;font-size:14.5px;color:#78350f;line-height:1.7;font-family:{FF};\">"
+        "&#8226; &#171;Gracias por todas las risas y los momentos que me regalas.&#187;</p>"
+        f"<p style=\"margin:0;font-size:14.5px;color:#78350f;line-height:1.7;font-family:{FF};\">"
+        "&#8226; &#171;Hoy celebramos lo importante que eres para nuestra familia.&#187;</p>"
+        "</div>"
+    )
+    closing = (
+        f"<p style=\"margin:0;font-size:14.5px;line-height:1.8;color:#6b7280;text-align:center;font-family:{FF};\">"
+        "De parte de todo el equipo de <strong>Happy L&#225;piz</strong>, "
+        "&#161;feliz cumplea&#241;os para {{ nombre_regalado or 'tu peque' }}! &#127881;"
+        "</p>"
+    )
+    return [
+        make_block(
+            "text",
+            {
+                "content": hero,
+                "bg_color": "#f59e0b",
+                "text_color": "#ffffff",
+                "padding_y": "28",
+                "padding_x": "28",
+                "font_family": FF,
+            },
+            "hero_bday_day",
+        ),
+        make_block(
+            "text",
+            {
+                "content": body,
+                "bg_color": "#ffffff",
+                "text_color": "#374151",
+                "padding_y": "24",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            "body_bday_day",
+        ),
+        make_block(
+            "text",
+            {
+                "content": tip,
+                "bg_color": "#ffffff",
+                "text_color": "#78350f",
+                "padding_y": "8",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            "tip_bday_day",
+        ),
+        make_block(
+            "text",
+            {
+                "content": closing,
+                "bg_color": "#ffffff",
+                "text_color": "#6b7280",
+                "padding_y": "20",
+                "padding_x": "32",
+                "font_family": FF,
+            },
+            "closing_bday_day",
+        ),
+        _block_from_catalog_entry(_catalog("Pie — Footer con baja"), "footer_bday_day"),
+    ]

@@ -15,15 +15,18 @@ from app.core.config import settings
 from app.models.automation import Automation
 from app.models.user import User
 from app.services.favorite_blocks_seed import (
-    BIRTHDAY_7_NAME,
-    BIRTHDAY_7_PREVIEW,
-    BIRTHDAY_7_SUBJECT,
+    BIRTHDAY_10_NAME,
+    BIRTHDAY_10_PREVIEW,
+    BIRTHDAY_10_SUBJECT,
     BIRTHDAY_15_NAME,
     BIRTHDAY_15_PREVIEW,
     BIRTHDAY_15_SUBJECT,
     BIRTHDAY_30_NAME,
     BIRTHDAY_30_PREVIEW,
     BIRTHDAY_30_SUBJECT,
+    BIRTHDAY_DAY_NAME,
+    BIRTHDAY_DAY_PREVIEW,
+    BIRTHDAY_DAY_SUBJECT,
 )
 from app.services.template_compositions import upsert_block_template, resolve_composition
 
@@ -35,12 +38,14 @@ COUPON_CAMPAIGN_NAME = "REGALO — Compra 1 regalo, regalo 1 producto"
 BIRTHDAY_TEMPLATES = [
     ("birthday_30", BIRTHDAY_30_NAME, BIRTHDAY_30_SUBJECT, BIRTHDAY_30_PREVIEW),
     ("birthday_15", BIRTHDAY_15_NAME, BIRTHDAY_15_SUBJECT, BIRTHDAY_15_PREVIEW),
-    ("birthday_7", BIRTHDAY_7_NAME, BIRTHDAY_7_SUBJECT, BIRTHDAY_7_PREVIEW),
+    ("birthday_10", BIRTHDAY_10_NAME, BIRTHDAY_10_SUBJECT, BIRTHDAY_10_PREVIEW),
+    ("birthday_day", BIRTHDAY_DAY_NAME, BIRTHDAY_DAY_SUBJECT, BIRTHDAY_DAY_PREVIEW),
 ]
 
 # Step 2: 15 days after step 1 (30 → 15 days before birthday)
-# Step 3: 8 days after step 2 (15 → 7 days before birthday)
-STEP_DELAYS_HOURS = [0, 15 * 24, 8 * 24]
+# Step 3: 5 days after step 2 (15 → 10 days before birthday)
+# Step 4: 10 days after step 3 (10 → 0 days before birthday, i.e. birthday day)
+STEP_DELAYS_HOURS = [0, 15 * 24, 5 * 24, 10 * 24]
 
 
 def _random_code(prefix: str = "REGALO", length: int = 6) -> str:
@@ -204,8 +209,15 @@ def ensure_birthday_automation(session: Session, admin_id: int | None, shop, *, 
         {
             "step": 3,
             "delay_hours": STEP_DELAYS_HOURS[2],
-            "template_id": tpl_ids["birthday_7"],
-            "subject": BIRTHDAY_7_SUBJECT,
+            "template_id": tpl_ids["birthday_10"],
+            "subject": BIRTHDAY_10_SUBJECT,
+            "condition": None,
+        },
+        {
+            "step": 4,
+            "delay_hours": STEP_DELAYS_HOURS[3],
+            "template_id": tpl_ids["birthday_day"],
+            "subject": BIRTHDAY_DAY_SUBJECT,
             "condition": None,
         },
     ]

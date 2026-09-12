@@ -646,6 +646,8 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
   const [birthdayEnrollEarlyDays, setBirthdayEnrollEarlyDays] = useState(30);
   const [birthdayField, setBirthdayField] = useState("fecha_nacimiento");
   const [birthdayNameField, setBirthdayNameField] = useState("nombre_regalado");
+  const [birthdaySendHourEnabled, setBirthdaySendHourEnabled] = useState(false);
+  const [birthdaySendHour, setBirthdaySendHour] = useState(8);
   const [formSubmittedFormId, setFormSubmittedFormId] = useState<string>("");
 
   // Product of the month
@@ -755,6 +757,8 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
       setBirthdayEnrollEarlyDays(Number(tc.enroll_early_days ?? (src === "contacts" ? 0 : 30)));
       setBirthdayField(String(tc.birthday_field ?? "fecha_nacimiento"));
       setBirthdayNameField(String(tc.name_field ?? "nombre_regalado"));
+      setBirthdaySendHourEnabled(tc.send_hour !== undefined && tc.send_hour !== null);
+      setBirthdaySendHour(Number(tc.send_hour ?? 8));
     } else if (existingAuto.trigger_type === "form_submitted") {
       setFormSubmittedFormId(String(tc.form_id ?? ""));
     } else if (existingAuto.trigger_type === "product_of_month") {
@@ -873,6 +877,10 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
           ...(birthdayDataSource === "form" && birthdayFormId
             ? { form_id: Number(birthdayFormId) }
             : {}),
+          ...(birthdaySendHourEnabled && {
+            send_hour: birthdaySendHour,
+            timezone: "America/Santiago",
+          }),
         };
       } else if (triggerType === "form_submitted") {
         triggerConfig = { form_id: formSubmittedFormId };
@@ -1134,13 +1142,34 @@ export default function AutomationFormClient({ editId }: { editId?: number }) {
                     : birthdayDataSource === "gift_popup"
                     ? "Solo contactos que completaron el popup de regalados en la tienda."
                     : "Solo contactos que completaron el formulario seleccionado."}
+                  {" "}Usa 0 para enviarlo el mismo día del cumpleaños.
                 </p>
                 <div className="flex items-center gap-2">
-                  <input type="number" min={1} max={365} value={birthdayDaysBefore}
-                    onChange={(e) => setBirthdayDaysBefore(Math.max(1, Number(e.target.value)))}
+                  <input type="number" min={0} max={365} value={birthdayDaysBefore}
+                    onChange={(e) => setBirthdayDaysBefore(Math.max(0, Number(e.target.value)))}
                     className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                  <span className="text-sm text-gray-500">días antes</span>
+                  <span className="text-sm text-gray-500">días antes (0 = el mismo día)</span>
                 </div>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-1">
+                  <input type="checkbox" checked={birthdaySendHourEnabled}
+                    onChange={(e) => setBirthdaySendHourEnabled(e.target.checked)}
+                    className="rounded border-gray-300 focus:ring-2 focus:ring-brand-500" />
+                  Fijar hora de envío
+                </label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Sin esto, el correo puede salir en cualquier momento del día calculado. Actívalo para
+                  asegurar que llegue a una hora exacta (ej.: 8:00 AM el día del cumpleaños).
+                </p>
+                {birthdaySendHourEnabled && (
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={0} max={23} value={birthdaySendHour}
+                      onChange={(e) => setBirthdaySendHour(Math.min(23, Math.max(0, Number(e.target.value))))}
+                      className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                    <span className="text-sm text-gray-500">hora Chile (0–23)</span>
+                  </div>
+                )}
               </div>
               {birthdayDataSource !== "contacts" && (
                 <div>
