@@ -313,6 +313,72 @@ def gift_embed_js():
     )
 
 
+# ── Tracking pixel ───────────────────────────────────────────────────────────
+# Registered before the generic "/{form_id}" route below: FastAPI/Starlette
+# matches routes in declaration order, and "/{form_id}" (no type converter in
+# the path string) matches the literal segment "track.js" too — if this came
+# after it, every request for the tracking script would 401 on get_form's auth
+# dependency before ever reaching this handler, and the pixel would never load
+# in the browser at all.
+
+@router.get("/track.js", response_class=PlainTextResponse)
+def tracking_pixel():
+    """
+    Script de tracking universal para happylapiz.cl.
+    Pégalo en Shopify → Configuración → Checkout → Scripts adicionales,
+    o en el <head> del tema.
+
+    Trackea:
+      - viewed_product  → cuando alguien ve una página de producto
+      - active_on_site  → cuando el email del cliente está disponible (logged in)
+      - added_to_cart   → cuando Shopify dispara el evento cart:add
+    """
+    api = settings.BACKEND_PUBLIC_URL
+    js = f"""(function(){{
+  var API='{api}/api/shopify/track';
+  var SHOP_DOMAIN=(window.Shopify&&window.Shopify.shop)||'';
+  function getEmail(){{
+    // Shopify expone el email del cliente logueado en window.ShopifyAnalytics
+    try{{
+      return (window.ShopifyAnalytics&&window.ShopifyAnalytics.meta&&window.ShopifyAnalytics.meta.email)||
+             (window.__st&&window.__st.cid?null:null)||'';
+    }}catch(e){{return '';}}
+  }}
+  function send(evt,extra){{
+    var email=getEmail();
+    var payload=Object.assign({{event:evt,email:email,url:location.href,shop_domain:SHOP_DOMAIN}},extra||{{}});
+    fetch(API,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload),keepalive:true}}).catch(function(){{}});
+  }}
+  // Viewed Product
+  if(window.ShopifyAnalytics&&ShopifyAnalytics.meta&&ShopifyAnalytics.meta.product){{
+    var p=ShopifyAnalytics.meta.product;
+    send('viewed_product',{{product_id:String(p.id||''),product_title:p.title||''}});
+  }}
+  // Active on site (email available)
+  var email=getEmail();
+  if(email){{
+    send('active_on_site',{{}});
+  }}
+  // Added to cart (Shopify theme event)
+  document.addEventListener('cart:add',function(e){{
+    var item=(e.detail&&e.detail.cart&&e.detail.cart.items&&e.detail.cart.items[0])||{{}};
+    send('added_to_cart',{{product_id:String(item.product_id||''),product_title:item.title||'',url:location.href}});
+  }});
+  // Fallback: listen to fetch/XHR for /cart/add
+  var origFetch=window.fetch;
+  window.fetch=function(input,init){{
+    var url=typeof input==='string'?input:(input&&input.url)||'';
+    if(url.indexOf('/cart/add')!==-1){{
+      setTimeout(function(){{send('added_to_cart',{{url:location.href}});}},500);
+    }}
+    return origFetch.apply(this,arguments);
+  }};
+}})();
+"""
+    return PlainTextResponse(js, media_type="application/javascript",
+                             headers={**_cors_headers(), "Cache-Control": "public, max-age=3600"})
+
+
 @router.get("/{form_id}", response_model=SignupFormRead)
 def get_form(form_id: int, session: Session = Depends(get_session), _: User = Depends(get_current_user), shop: Shop = Depends(get_current_shop)):
     f = session.get(SignupForm, form_id)
@@ -1059,66 +1125,6 @@ def _build_form_landing_page(f: SignupForm) -> str:
   <script src="{script_url}" defer></script>
 </body>
 </html>"""
-
-
-# ── Tracking pixel ───────────────────────────────────────────────────────────
-
-@router.get("/track.js", response_class=PlainTextResponse)
-def tracking_pixel():
-    """
-    Script de tracking universal para happylapiz.cl.
-    Pégalo en Shopify → Configuración → Checkout → Scripts adicionales,
-    o en el <head> del tema.
-
-    Trackea:
-      - viewed_product  → cuando alguien ve una página de producto
-      - active_on_site  → cuando el email del cliente está disponible (logged in)
-      - added_to_cart   → cuando Shopify dispara el evento cart:add
-    """
-    api = settings.BACKEND_PUBLIC_URL
-    js = f"""(function(){{
-  var API='{api}/api/shopify/track';
-  var SHOP_DOMAIN=(window.Shopify&&window.Shopify.shop)||'';
-  function getEmail(){{
-    // Shopify expone el email del cliente logueado en window.ShopifyAnalytics
-    try{{
-      return (window.ShopifyAnalytics&&window.ShopifyAnalytics.meta&&window.ShopifyAnalytics.meta.email)||
-             (window.__st&&window.__st.cid?null:null)||'';
-    }}catch(e){{return '';}}
-  }}
-  function send(evt,extra){{
-    var email=getEmail();
-    var payload=Object.assign({{event:evt,email:email,url:location.href,shop_domain:SHOP_DOMAIN}},extra||{{}});
-    fetch(API,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload),keepalive:true}}).catch(function(){{}});
-  }}
-  // Viewed Product
-  if(window.ShopifyAnalytics&&ShopifyAnalytics.meta&&ShopifyAnalytics.meta.product){{
-    var p=ShopifyAnalytics.meta.product;
-    send('viewed_product',{{product_id:String(p.id||''),product_title:p.title||''}});
-  }}
-  // Active on site (email available)
-  var email=getEmail();
-  if(email){{
-    send('active_on_site',{{}});
-  }}
-  // Added to cart (Shopify theme event)
-  document.addEventListener('cart:add',function(e){{
-    var item=(e.detail&&e.detail.cart&&e.detail.cart.items&&e.detail.cart.items[0])||{{}};
-    send('added_to_cart',{{product_id:String(item.product_id||''),product_title:item.title||'',url:location.href}});
-  }});
-  // Fallback: listen to fetch/XHR for /cart/add
-  var origFetch=window.fetch;
-  window.fetch=function(input,init){{
-    var url=typeof input==='string'?input:(input&&input.url)||'';
-    if(url.indexOf('/cart/add')!==-1){{
-      setTimeout(function(){{send('added_to_cart',{{url:location.href}});}},500);
-    }}
-    return origFetch.apply(this,arguments);
-  }};
-}})();
-"""
-    return PlainTextResponse(js, media_type="application/javascript",
-                             headers={**_cors_headers(), "Cache-Control": "public, max-age=3600"})
 
 
 # ── Embed JS builder ──────────────────────────────────────────────────────────
