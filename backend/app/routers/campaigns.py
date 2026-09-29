@@ -48,6 +48,33 @@ class AudiencePreviewResponse(BaseModel):
     excluded_count: int
     recipient_count: int
 
+
+class SegmentRef(BaseModel):
+    id: int
+    name: str
+    deleted: bool = False
+
+
+class CampaignVariantSnapshot(BaseModel):
+    variant: str
+    subject: Optional[str] = None
+    html: Optional[str] = None
+    has_snapshot: bool = False
+
+
+class CampaignSnapshot(BaseModel):
+    campaign_id: int
+    subject: str
+    preview_text: Optional[str] = None
+    template_id: Optional[int] = None
+    template_name: Optional[str] = None
+    html: Optional[str] = None
+    has_snapshot: bool = False
+    snapshot_source: str  # "sent" (html_snapshot real) | "template" (reconstruido) | "none"
+    variants: List[CampaignVariantSnapshot] = []
+    included_segments: List[SegmentRef] = []
+    excluded_segments: List[SegmentRef] = []
+
 router = APIRouter()
 
 
@@ -435,6 +462,114 @@ def campaign_stats(
         click_rate=round(clicked / base * 100, 1),
         bounce_rate=round(bounced / (sent or 1) * 100, 1),
         variants=variant_stats,
+    )
+
+
+@router.get("/{campaign_id}/snapshot", response_model=CampaignSnapshot)
+def campaign_snapshot(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
+    shop: Shop = Depends(get_current_shop),
+):
+    """Lo que realmente se envió en esta campaña: asunto, preview text, plantilla/HTML
+    y los segmentos incluidos/excluidos usados — útil para auditar una campaña ya
+    enviada, cuya plantilla o segmentos pueden haber cambiado desde entonces."""
+    c = session.get(Campaign, campaign_id)
+    if not c or c.shop_id != shop.id:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
+
+    template_name = None
+    if c.template_id:
+        t = session.get(Template, c.template_id)
+        if t and t.shop_id == shop.id:
+            template_name = t.name
+        else:
+            template_name = f"Plantilla eliminada (#{c.template_id})"
+
+    def _segment_refs(ids: Optional[List[int]]) -> List[SegmentRef]:
+        if not ids:
+            return []
+        found = {
+            s.id: s.name
+            for s in session.exec(
+                select(Segment).where(Segment.id.in_(ids), Segment.shop_id == shop.id)
+            ).all()
+        }
+        return [
+            SegmentRef(id=sid, name=found.get(sid, f"Segmento eliminado (#{sid})"), deleted=sid not in found)
+            for sid in ids
+        ]
+
+    included_ids = c.segment_ids or ([c.segment_id] if c.segment_id else [])
+    included_segments = _segment_refs(included_ids)
+    excluded_segments = _segment_refs(c.exclude_segment_ids)
+
+    # Snapshot "principal": preferimos el HTML tal como se mandó de verdad
+    # (guardado por recipiente en campaign_sends.html_snapshot). Solo si esta
+    # campaña se envió antes de que existiera ese campo, caemos a la plantilla
+    # actual — que puede no coincidir exactamente con lo que se envió.
+    main_row = session.execute(text("""
+        SELECT subject, html_snapshot
+        FROM campaign_sends
+        WHERE campaign_id = :cid AND html_snapshot IS NOT NULL AND variant_sent IS NULL
+        ORDER BY id LIMIT 1
+    """), {"cid": campaign_id}).fetchone()
+
+    html = None
+    snapshot_source = "none"
+    subject_sent = c.subject
+    if main_row:
+        html = main_row.html_snapshot
+        subject_sent = main_row.subject or c.subject
+        snapshot_source = "sent"
+    elif c.template_id:
+        t = session.get(Template, c.template_id)
+        if t and t.shop_id == shop.id:
+            html = t.html_content
+            snapshot_source = "template"
+
+    # Variantes A/B: una entrada por variante, con su propio asunto/HTML enviado.
+    variants: List[CampaignVariantSnapshot] = []
+    for v in (c.variants or []):
+        label = v.get("variant") if isinstance(v, dict) else None
+        if not label:
+            continue
+        vrow = session.execute(text("""
+            SELECT subject, html_snapshot
+            FROM campaign_sends
+            WHERE campaign_id = :cid AND variant_sent = :variant AND html_snapshot IS NOT NULL
+            ORDER BY id LIMIT 1
+        """), {"cid": campaign_id, "variant": label}).fetchone()
+
+        v_html = vrow.html_snapshot if vrow else None
+        v_subject = (vrow.subject if vrow else None) or v.get("subject") or c.subject
+        if v_html is None:
+            v_template_id = v.get("template_id")
+            if v_template_id:
+                vt = session.get(Template, v_template_id)
+                if vt and vt.shop_id == shop.id:
+                    v_html = vt.html_content
+
+        variants.append(CampaignVariantSnapshot(
+            variant=label,
+            subject=v_subject,
+            html=v_html,
+            has_snapshot=vrow is not None,
+        ))
+
+    return CampaignSnapshot(
+        campaign_id=campaign_id,
+        subject=subject_sent,
+        preview_text=c.preview_text,
+        template_id=c.template_id,
+        template_name=template_name,
+        html=html,
+        has_snapshot=snapshot_source == "sent",
+        snapshot_source=snapshot_source,
+        variants=variants,
+        included_segments=included_segments,
+        excluded_segments=excluded_segments,
     )
 
 

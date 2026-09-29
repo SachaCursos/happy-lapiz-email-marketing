@@ -172,6 +172,33 @@ export interface CampaignAudiencePreview {
   recipient_count: number;
 }
 
+export interface SegmentRef {
+  id: number;
+  name: string;
+  deleted: boolean;
+}
+
+export interface CampaignVariantSnapshot {
+  variant: string;
+  subject: string | null;
+  html: string | null;
+  has_snapshot: boolean;
+}
+
+export interface CampaignSnapshot {
+  campaign_id: number;
+  subject: string;
+  preview_text: string | null;
+  template_id: number | null;
+  template_name: string | null;
+  html: string | null;
+  has_snapshot: boolean;
+  snapshot_source: "sent" | "template" | "none";
+  variants: CampaignVariantSnapshot[];
+  included_segments: SegmentRef[];
+  excluded_segments: SegmentRef[];
+}
+
 export type EvergreenStatus = "active" | "paused";
 
 export interface EvergreenStep {

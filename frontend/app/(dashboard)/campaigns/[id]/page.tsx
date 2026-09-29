@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { campaignsApi, contactsApi, segmentsApi, templatesApi } from "@/lib/api";
-import { Campaign, CampaignStats, CampaignConversions, CampaignVariantStat, Segment, Template } from "@/lib/types";
-import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Check, Calendar, UserMinus, BarChart2, ShoppingCart, Pause, Copy, FlaskConical, Trophy } from "lucide-react";
+import { Campaign, CampaignStats, CampaignConversions, CampaignVariantStat, CampaignSnapshot, Segment, Template } from "@/lib/types";
+import { ArrowLeft, TrendingUp, Mail, MousePointer, AlertTriangle, Send, Users, Trash2, Pencil, Save, X, Check, Calendar, UserMinus, BarChart2, ShoppingCart, Pause, Copy, FlaskConical, Trophy, FileText, Ban } from "lucide-react";
 import Link from "next/link";
 import { formatDateTime, statusColor, statusLabel } from "@/lib/utils";
 import { CampaignAudienceSummary } from "@/components/CampaignAudienceSummary";
@@ -115,7 +115,8 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
-  const [activeTab, setActiveTab] = useState<"overview" | "analytics" | "recipients">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "analytics" | "content" | "recipients">("overview");
+  const [activeVariant, setActiveVariant] = useState<string | null>(null);
   const dateRange = useStatsDateRange("all");
   const statsParams = { date_from: dateRange.dateFrom, date_to: dateRange.dateTo };
   const [editing, setEditing] = useState(false);
@@ -230,6 +231,13 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     staleTime: 15 * 60_000,
   });
 
+  const { data: snapshot, isLoading: snapshotLoading } = useQuery<CampaignSnapshot>({
+    queryKey: ["campaign-snapshot", id],
+    queryFn: () => campaignsApi.snapshot(id).then((r) => r.data),
+    enabled: !!campaign,
+    staleTime: 10 * 60_000,
+  });
+
   const failedCount = sends.filter(isFailed).length;
 
   const { data: progress } = useQuery<SendProgress>({
@@ -279,6 +287,13 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
 
   const remaining = progress ? progress.total_in_segment - progress.already_sent : 0;
   const safeLimit = Math.min(limit, remaining);
+
+  const hasVariants = (snapshot?.variants?.length ?? 0) > 0;
+  const selectedVariant = hasVariants
+    ? snapshot!.variants.find((v) => v.variant === activeVariant) ?? snapshot!.variants[0]
+    : null;
+  const displaySubject = selectedVariant ? selectedVariant.subject : snapshot?.subject;
+  const displayHtml = selectedVariant ? selectedVariant.html : snapshot?.html;
   const progressPct = progress && progress.total_in_segment > 0
     ? (progress.already_sent / progress.total_in_segment) * 100
     : 0;
@@ -348,6 +363,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
         {[
           { key: "overview", label: "Resumen", icon: Mail },
           { key: "analytics", label: "Análisis", icon: BarChart2 },
+          { key: "content", label: "Contenido enviado", icon: FileText },
           { key: "recipients", label: "Destinatarios", icon: Users },
         ].map(({ key, label, icon: Icon }) => (
           <button key={key} onClick={() => setActiveTab(key as typeof activeTab)}
@@ -449,6 +465,149 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                 ))}
               </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Contenido enviado tab ───────────────────────────────────────── */}
+      {activeTab === "content" && (
+        <div className="space-y-5">
+          {snapshotLoading ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-400 text-sm">Cargando...</div>
+          ) : !snapshot ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-400 text-sm">No se pudo cargar el contenido enviado.</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-white border border-gray-200 rounded-xl p-5">
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Asunto y plantilla</p>
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Asunto</p>
+                      <p className="text-sm font-medium text-gray-900">{displaySubject || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Preview text</p>
+                      <p className="text-sm text-gray-700">
+                        {snapshot.preview_text || <span className="text-gray-300">Sin preview text</span>}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Plantilla</p>
+                      {snapshot.template_id ? (
+                        <Link href={`/templates/${snapshot.template_id}`} className="text-sm font-medium text-brand-600 hover:underline">
+                          {snapshot.template_name}
+                        </Link>
+                      ) : (
+                        <p className="text-sm text-gray-700">{snapshot.template_name || "—"}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-xl p-5">
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Segmentos usados en el envío</p>
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1.5">Enviado a</p>
+                      {snapshot.included_segments.length === 0 ? (
+                        <p className="text-sm text-gray-300">—</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {snapshot.included_segments.map((s) => (
+                            <span
+                              key={s.id}
+                              title={s.deleted ? "Este segmento ya no existe" : undefined}
+                              className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+                                s.deleted ? "bg-gray-100 text-gray-400 line-through" : "bg-green-50 text-green-700 border border-green-200"
+                              }`}
+                            >
+                              {s.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1.5 flex items-center gap-1"><Ban size={11} /> Excluido</p>
+                      {snapshot.excluded_segments.length === 0 ? (
+                        <p className="text-sm text-gray-300">Ninguno — no se excluyó ningún segmento</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {snapshot.excluded_segments.map((s) => (
+                            <span
+                              key={s.id}
+                              title={s.deleted ? "Este segmento ya no existe" : undefined}
+                              className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+                                s.deleted ? "bg-gray-100 text-gray-400 line-through" : "bg-red-50 text-red-600 border border-red-200"
+                              }`}
+                            >
+                              {s.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <FileText size={15} className="text-gray-400" />
+                    <p className="font-semibold text-gray-900">Correo enviado</p>
+                  </div>
+                  {hasVariants && (
+                    <div className="flex gap-1.5">
+                      {snapshot.variants.map((v) => (
+                        <button
+                          key={v.variant}
+                          onClick={() => setActiveVariant(v.variant)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                            selectedVariant?.variant === v.variant
+                              ? "bg-brand-600 border-brand-600 text-white"
+                              : "border-gray-200 text-gray-500 hover:border-gray-300"
+                          }`}
+                        >
+                          Variante {v.variant}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {snapshot.snapshot_source === "template" && (
+                  <div className="px-5 py-2.5 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
+                    Esta campaña se envió antes de guardarse una copia exacta del correo — se muestra la plantilla actual, que puede haber cambiado desde entonces.
+                  </div>
+                )}
+
+                <div className="p-4">
+                  {!displayHtml ? (
+                    <div className="h-48 flex flex-col items-center justify-center text-gray-400 text-sm gap-2">
+                      <Mail size={26} className="text-gray-300" />
+                      Contenido no disponible para este envío.
+                    </div>
+                  ) : (
+                    <iframe
+                      srcDoc={displayHtml}
+                      sandbox="allow-same-origin"
+                      title={displaySubject || "email"}
+                      className="w-full rounded-lg border border-gray-100"
+                      style={{ minHeight: "300px", height: "700px" }}
+                      onLoad={(e) => {
+                        const f = e.currentTarget;
+                        try {
+                          const h = f.contentDocument?.documentElement?.scrollHeight;
+                          if (h && h > 0) f.style.height = h + "px";
+                        } catch {}
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            </>
           )}
         </div>
       )}

@@ -108,6 +108,7 @@ export const campaignsApi = {
   conversions: (id: number, days = 5, params?: { date_from?: string; date_to?: string }) =>
     api.get(`/campaigns/${id}/conversions`, { params: { days, ...params } }),
   sends: (id: number) => api.get(`/campaigns/${id}/sends`),
+  snapshot: (id: number) => api.get(`/campaigns/${id}/snapshot`),
   audiencePreview: (data: { segment_id?: number; segment_ids?: number[]; exclude_segment_ids?: number[] }) =>
     api.post("/campaigns/audience-preview", data),
 };
