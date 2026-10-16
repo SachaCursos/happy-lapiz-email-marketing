@@ -14,6 +14,19 @@ from app.models.automation import AutomationRun
 
 logger = logging.getLogger(__name__)
 
+# Un rebote es final: el mensaje nunca llegó al destinatario. SES reenvía cada
+# aviso de rebote (MAILER-DAEMON) al remitente con el HTML original adentro,
+# píxel de apertura incluido — al mirar ese aviso en nuestra bandeja SES emite
+# un Open para el destinatario rebotado. Esos eventos posteriores se ignoran.
+_IGNORED_AFTER_BOUNCE = {"sent", "delivered", "opened", "clicked"}
+
+
+def _ignore_after_bounce(current_status: str | None, new_status: str, message_id: str) -> bool:
+    if current_status == "bounced" and new_status in _IGNORED_AFTER_BOUNCE:
+        logger.info("Ignorando evento %s posterior a bounce: messageId=%s", new_status, message_id)
+        return True
+    return False
+
 
 def _maybe_fix_typo_on_bounce(session: Session, new_status: str, bounced_email: str | None) -> None:
     if new_status != "bounced" or not bounced_email:
@@ -47,6 +60,8 @@ def apply_send_status_update(
 
     send = session.exec(select(CampaignSend).where(CampaignSend.resend_id == message_id)).first()
     if send:
+        if _ignore_after_bounce(send.status, new_status, message_id):
+            return True
         send.status = new_status
         if new_status == "delivered":
             send.delivered_at = now
@@ -72,6 +87,8 @@ def apply_send_status_update(
 
     run = session.exec(select(AutomationRun).where(AutomationRun.resend_id == message_id)).first()
     if run:
+        if _ignore_after_bounce(run.status, new_status, message_id):
+            return True
         if new_status == "opened" and not run.opened_at:
             run.opened_at = now
         elif new_status == "clicked" and not run.clicked_at:
@@ -89,6 +106,8 @@ def apply_send_status_update(
 
     eg_send = session.exec(select(EvergreenSend).where(EvergreenSend.resend_id == message_id)).first()
     if eg_send:
+        if _ignore_after_bounce(eg_send.status, new_status, message_id):
+            return True
         eg_send.status = new_status
         if new_status == "delivered":
             eg_send.delivered_at = now
