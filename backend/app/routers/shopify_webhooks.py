@@ -448,6 +448,8 @@ def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: dat
 
         # Sync to normalized order tables so the purchased_product segment filter works
         import json as _json
+        gateways = payload.get("payment_gateway_names")
+        gateway = gateways[0] if isinstance(gateways, list) and gateways else payload.get("gateway")
         cur.execute("""
             INSERT INTO shopify_orders (id, order_number, email, phone, financial_status, fulfillment_status,
                 total_price, subtotal_price, total_tax, total_discounts, currency, created_at, customer_id,
@@ -462,6 +464,7 @@ def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: dat
                 raw = EXCLUDED.raw,
                 synced_at = EXCLUDED.synced_at,
                 line_items_json = EXCLUDED.line_items_json,
+                payment_gateway = COALESCE(EXCLUDED.payment_gateway, shopify_orders.payment_gateway),
                 shop_id = COALESCE(shopify_orders.shop_id, EXCLUDED.shop_id),
                 updated_at = NOW()
         """, (
@@ -483,7 +486,7 @@ def _dispatch_webhook_topic(cur, topic: str, payload: dict, email: str, now: dat
             (payload.get("billing_address") or {}).get("first_name") or (payload.get("customer") or {}).get("first_name"),
             (payload.get("billing_address") or {}).get("last_name") or (payload.get("customer") or {}).get("last_name"),
             payload.get("name"),
-            payload.get("payment_gateway"),
+            gateway,
             _json.dumps(items),
             shop_id,
         ))

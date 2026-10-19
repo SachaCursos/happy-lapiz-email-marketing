@@ -110,6 +110,7 @@ def _upsert_order_from_payload(conn, order: dict, shop_id: int | None = None) ->
             raw = EXCLUDED.raw,
             synced_at = EXCLUDED.synced_at,
             line_items_json = EXCLUDED.line_items_json,
+            payment_gateway = COALESCE(EXCLUDED.payment_gateway, shopify_orders.payment_gateway),
             shop_id = COALESCE(shopify_orders.shop_id, EXCLUDED.shop_id),
             updated_at = NOW()
         RETURNING (xmax = 0) AS inserted
